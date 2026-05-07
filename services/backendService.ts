@@ -26,21 +26,24 @@ export const BackendService = {
   async createSession(candidate: { name: string; email: string; role: string }): Promise<string> {
     const sessionId = `session_${Date.now()}`;
     
-    // Fallback to localStorage
+    // Always initialize in localStorage as a primary cache/backup
+    const initialSession: any = {
+      id: sessionId,
+      candidate_name: candidate.name,
+      candidate_email: candidate.email,
+      position: candidate.role,
+      total_questions: 5,
+      questions_attempted: 0,
+      questions_skipped: 0,
+      results: [],
+      timestamp: new Date().toISOString(),
+      status: 'IN_PROGRESS'
+    };
+    localStorage.setItem(sessionId, JSON.stringify(initialSession));
+    localStorage.setItem('current_session_id', sessionId);
+
     if (!supabase) {
-      const session: any = {
-        candidate_name: candidate.name,
-        candidate_email: candidate.email,
-        position: candidate.role,
-        total_questions: 0,
-        questions_attempted: 0,
-        questions_skipped: 0,
-        results: [],
-        timestamp: new Date().toISOString(),
-        status: 'IN_PROGRESS'
-      };
-      localStorage.setItem(sessionId, JSON.stringify(session));
-      localStorage.setItem('current_session_id', sessionId);
+      console.warn('[BackendService] Supabase not initialized, using local storage only.');
       return sessionId;
     }
 
@@ -54,7 +57,7 @@ export const BackendService = {
           candidate_email: candidate.email,
           position: candidate.role,
           status: 'IN_PROGRESS',
-          total_questions: 5, // Default or dynamically fetched
+          total_questions: 5,
           questions_attempted: 0,
           questions_skipped: 0,
           results: [],
@@ -62,13 +65,11 @@ export const BackendService = {
         }]);
 
       if (error) throw error;
-
-      localStorage.setItem('current_session_id', sessionId);
       console.log('[BackendService] Supabase Session Created:', sessionId);
       return sessionId;
     } catch (err: any) {
       console.error('[BackendService] Supabase Error (createSession):', err.message);
-      localStorage.setItem('current_session_id', sessionId);
+      // We already saved to localStorage, so we can continue
       return sessionId;
     }
   },
@@ -80,20 +81,23 @@ export const BackendService = {
     const sessionId = localStorage.getItem('current_session_id');
     if (!sessionId) return;
 
-    if (!supabase) {
-      const data = localStorage.getItem(sessionId);
-      if (data) {
-        const session = JSON.parse(data);
-        session.results.push(response);
-        if (response.skipped) session.questions_skipped++;
-        else session.questions_attempted++;
-        localStorage.setItem(sessionId, JSON.stringify(session));
-      }
-      return;
+    // 1. Always update localStorage first
+    const localData = localStorage.getItem(sessionId);
+    let session: any = null;
+    if (localData) {
+      session = JSON.parse(localData);
+      session.results.push(response);
+      if (response.skipped) session.questions_skipped++;
+      else session.questions_attempted++;
+      localStorage.setItem(sessionId, JSON.stringify(session));
+      console.log('[BackendService] Response cached locally');
     }
 
+    // 2. Try to update Supabase
+    if (!supabase) return;
+
     try {
-      // Get current state
+      // Get current state from Supabase to be safe (or use local if we want to be faster)
       const { data, error: fetchError } = await supabase
         .from('interviews')
         .select('results, questions_attempted, questions_skipped')
@@ -124,6 +128,7 @@ export const BackendService = {
       console.log('[BackendService] Detailed response saved to Supabase');
     } catch (err: any) {
       console.error('[BackendService] Supabase Error (saveResponse):', err.message);
+      // Data is already in localStorage, so it's not lost!
     }
   },
 
@@ -134,15 +139,16 @@ export const BackendService = {
     const sessionId = localStorage.getItem('current_session_id');
     if (!sessionId) return;
 
-    if (!supabase) {
-      const data = localStorage.getItem(sessionId);
-      if (data) {
-        const session = JSON.parse(data);
-        session.status = 'COMPLETED';
-        localStorage.setItem(sessionId, JSON.stringify(session));
-      }
-      return;
+    // 1. Update localStorage
+    const data = localStorage.getItem(sessionId);
+    if (data) {
+      const session = JSON.parse(data);
+      session.status = 'COMPLETED';
+      localStorage.setItem(sessionId, JSON.stringify(session));
     }
+
+    // 2. Update Supabase
+    if (!supabase) return;
 
     try {
       const { error } = await supabase
@@ -151,6 +157,7 @@ export const BackendService = {
         .eq('id', sessionId);
 
       if (error) throw error;
+      console.log('[BackendService] Session completed in Supabase');
     } catch (err: any) {
       console.error('[BackendService] Supabase Error (completeSession):', err.message);
     }
@@ -160,23 +167,48 @@ export const BackendService = {
    * Retrieves all sessions for the dashboard.
    */
   async getSessions(): Promise<InterviewSession[]> {
-    if (!supabase) {
-      // (localStorage logic...)
-      return [];
+    let allSessions: InterviewSession[] = [];
+
+    // 1. Get from localStorage
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('session_')) {
+        try {
+          const session = JSON.parse(localStorage.getItem(key) || '{}');
+          allSessions.push(session);
+        } catch (e) { /* ignore */ }
+      }
     }
 
-    try {
-      const { data, error } = await supabase
-        .from('interviews')
-        .select('*')
-        .order('created_at', { ascending: false });
+    // 2. Merge with Supabase
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('interviews')
+          .select('*')
+          .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      return (data || []) as any[];
-    } catch (err: any) {
-      console.error('[BackendService] Supabase Error (getSessions):', err.message);
-      return [];
+        if (!error && data) {
+          // Merge logic: use Supabase data as the source of truth for matching IDs
+          const supabaseIds = new Set(data.map((s: any) => s.id));
+          
+          // Filter out local sessions that are already in Supabase
+          allSessions = allSessions.filter(ls => !supabaseIds.has(ls.id));
+          
+          // Add Supabase sessions
+          allSessions = [...(data as any[]), ...allSessions];
+        }
+      } catch (err: any) {
+        console.error('[BackendService] Supabase Error (getSessions):', err.message);
+      }
     }
+
+    // Sort by timestamp/date
+    return allSessions.sort((a, b) => {
+      const dateA = new Date(a.timestamp || 0).getTime();
+      const dateB = new Date(b.timestamp || 0).getTime();
+      return dateB - dateA;
+    });
   }
 };
 

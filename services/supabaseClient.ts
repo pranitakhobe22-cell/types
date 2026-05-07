@@ -4,8 +4,12 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-// We don't throw error here to avoid white screen on start
-// If keys are missing, the client will just fail its requests which the service handles
+if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn('[SupabaseClient] Warning: Supabase environment variables are missing. Falling back to local storage.');
+} else {
+    console.log('[SupabaseClient] Initialized successfully with URL:', supabaseUrl);
+}
+
 export const supabase = (supabaseUrl && supabaseAnonKey)
     ? createClient(supabaseUrl, supabaseAnonKey)
     : null as any;
