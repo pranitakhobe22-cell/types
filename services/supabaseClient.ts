@@ -10,7 +10,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
     console.log('[SupabaseClient] Initialized successfully with URL:', supabaseUrl);
 }
 
-export const supabase = (supabaseUrl && supabaseAnonKey)
-    ? createClient(supabaseUrl, supabaseAnonKey)
-    : null as any;
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('❌ Supabase configuration missing! Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment variables.');
+}
 
+export const supabase = (supabaseUrl && supabaseAnonKey) 
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : null as any;
+
+if (supabase) {
+  console.log('✅ Supabase initialized successfully.');
+}

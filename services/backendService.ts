@@ -61,7 +61,7 @@ export const BackendService = {
           questions_attempted: 0,
           questions_skipped: 0,
           results: [],
-          date: new Date().toLocaleDateString()
+          date: new Date().toISOString()
         }]);
 
       if (error) throw error;

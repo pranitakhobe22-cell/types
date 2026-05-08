@@ -194,9 +194,11 @@ export const StorageService = {
           ...d,
           results: typeof d.results === 'string' ? JSON.parse(d.results) : d.results,
           warnings: typeof d.warnings === 'string' ? JSON.parse(d.warnings) : d.warnings,
+          date: new Date(d.date).toISOString(),
           candidate: { 
             accessId: d.candidate_id, 
             name: d.candidate_name || 'Candidate', 
+            email: d.candidate_email,
             position: d.position || 'N/A' 
           },
           durationSeconds: d.duration_seconds || 0
