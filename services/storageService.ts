@@ -190,19 +190,34 @@ export const StorageService = {
       if (error) throw error;
       
       if (data && data.length > 0) {
-        return data.map(d => ({
-          ...d,
-          results: typeof d.results === 'string' ? JSON.parse(d.results) : d.results,
-          warnings: typeof d.warnings === 'string' ? JSON.parse(d.warnings) : d.warnings,
-          date: new Date(d.date).toISOString(),
-          candidate: { 
-            accessId: d.candidate_id, 
-            name: d.candidate_name || 'Candidate', 
-            email: d.candidate_email,
-            position: d.position || 'N/A' 
-          },
-          durationSeconds: d.duration_seconds || 0
-        })) as unknown as InterviewSession[];
+        return data.map(d => {
+          let safeDate = new Date().toISOString();
+          try {
+            const parsed = new Date(d.date);
+            if (!isNaN(parsed.getTime())) {
+              safeDate = parsed.toISOString();
+            } else if (d.created_at) {
+              const createdParsed = new Date(d.created_at);
+              if (!isNaN(createdParsed.getTime())) {
+                safeDate = createdParsed.toISOString();
+              }
+            }
+          } catch(e) {}
+          
+          return {
+            ...d,
+            results: typeof d.results === 'string' ? JSON.parse(d.results) : d.results,
+            warnings: typeof d.warnings === 'string' ? JSON.parse(d.warnings) : d.warnings,
+            date: safeDate,
+            candidate: { 
+              accessId: d.candidate_id, 
+              name: d.candidate_name || 'Candidate', 
+              email: d.candidate_email,
+              position: d.position || 'N/A' 
+            },
+            durationSeconds: d.duration_seconds || 0
+          };
+        }) as unknown as InterviewSession[];
       }
       
       const stored = localStorage.getItem(SESSIONS_KEY);
