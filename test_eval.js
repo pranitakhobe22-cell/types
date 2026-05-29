@@ -1,7 +1,15 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import fs from 'fs';
 
-const genAI = new GoogleGenerativeAI("AIzaSyDYMkRvYFRONoE5GvbsJVUjyZ-YjQuTEEw");
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+let key = "";
+try {
+  const envContent = fs.readFileSync("server/.env", "utf8");
+  const match = envContent.match(/GEMINI_API_KEY=(.*)/);
+  if (match) key = match[1].trim();
+} catch (e) {}
+
+const genAI = new GoogleGenerativeAI(key || process.env.GEMINI_API_KEY || "");
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 const prompt = `
 Evaluate this interview based on 4 metrics (0-10 each): Relevance, Accuracy, Clarity, Depth.

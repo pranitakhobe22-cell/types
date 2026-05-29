@@ -1,129 +1,306 @@
-const { Interview, Question, Answer } = require('../models');
-const evaluationQueue = require('../queues/evaluationQueue');
-const { Op } = require('sequelize');
+const { v4: uuidv4 } = require('uuid');
+const sessionManager = require('../services/sessionManager');
+const answerProcessor = require('../services/answerProcessor');
+const aiOrchestrator = require('../services/aiOrchestrator');
+const timerEngine = require('../services/timerEngine');
+const evaluationEngine = require('../services/evaluationEngine');
+const logger = require('../services/logger');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/interview/start
+// Body: { candidateId, jobId, config? }
+// ─────────────────────────────────────────────────────────────────────────────
 exports.startInterview = async (req, res) => {
-  const { role, level, user_id } = req.body;
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
   try {
-    const interview = await Interview.create({ 
-      role, 
-      level, 
-      user_id: user_id || 'anonymous',
-      status: 'active',
-      current_question_index: 0
-    });
+    const { candidateId, jobId, config = {} } = req.body;
 
-    // Fetch first question for the role and difficulty level
-    const question = await Question.findOne({
-      where: { 
-        role, 
-        difficulty: level.toLowerCase() === 'beginner' ? 'easy' : 
-                    level.toLowerCase() === 'advanced' ? 'hard' : 'medium'
-      },
-      order: [['id', 'ASC']]
-    });
-
-    if (!question) {
-      return res.status(404).json({ message: 'No questions found for this role/level.' });
+    if (!candidateId || !jobId) {
+      return res.status(400).json({
+        error: 'candidateId and jobId are required',
+        correlationId
+      });
     }
 
-    res.status(201).json({
-      interviewId: interview.id,
-      firstQuestion: question
+    // 1. Create session via SessionManager (state: CREATED)
+    const session = await sessionManager.createSession(candidateId, jobId, config);
+
+    // 2. Transition to WAITING_FOR_CANDIDATE
+    await sessionManager.transitionState(session.id, 'WAITING_FOR_CANDIDATE', 'session_start', correlationId);
+
+    // 3. Transition to INSTRUCTIONS
+    await sessionManager.transitionState(session.id, 'INSTRUCTIONS', 'instructions_phase', correlationId);
+
+    // 4. Transition to ROUND_STARTED and kick off interview-level timer
+    await sessionManager.transitionState(session.id, 'ROUND_STARTED', 'round_1_start', correlationId);
+    const interviewDuration = config.interviewDuration || 3600;
+    const roundDuration = config.roundDuration || 1200;
+    await timerEngine.startTimer(session.id, { interviewDuration, roundDuration });
+
+    // 5. Generate first question via AI Orchestrator
+    const firstQuestion = await aiOrchestrator.generateNextQuestion(session.id);
+
+    // 6. Start question timer and transition to QUESTION_ACTIVE
+    const questionDuration = config.questionDuration || 90;
+    await timerEngine.startTimer(session.id, { questionDuration });
+    await sessionManager.transitionState(session.id, 'QUESTION_ACTIVE', 'first_question_ready', correlationId);
+
+    logger.info(`Interview started for candidate ${candidateId}`, { sessionId: session.id, correlationId });
+
+    return res.status(201).json({
+      success: true,
+      sessionId: session.id,
+      status: 'QUESTION_ACTIVE',
+      currentQuestion: {
+        id: firstQuestion.id,
+        questionText: firstQuestion.question_text,
+        difficulty: firstQuestion.difficulty,
+        topic: firstQuestion.topic
+      },
+      timers: {
+        interviewDurationSeconds: interviewDuration,
+        roundDurationSeconds: roundDuration,
+        questionDurationSeconds: questionDuration
+      },
+      correlationId
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logger.error('startInterview error:', { error, correlationId });
+    return res.status(500).json({ error: error.message, correlationId });
   }
 };
 
-exports.nextQuestion = async (req, res) => {
-  const { interviewId } = req.query;
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/interview/session/:id
+// Returns full session snapshot (for reconnect/recovery)
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getSession = async (req, res) => {
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
   try {
-    const interview = await Interview.findByPk(interviewId);
-    if (!interview) return res.status(404).json({ message: 'Interview not found' });
+    const { id } = req.params;
+    const snapshot = await sessionManager.recoverSession(id);
 
-    // Get last answer score to decide next difficulty
-    const lastAnswer = await Answer.findOne({
-      where: { interview_id: interviewId },
-      order: [['created_at', 'DESC']]
-    });
-
-    let nextDifficulty = 'medium';
-    if (lastAnswer && lastAnswer.score >= 8) nextDifficulty = 'hard';
-    else if (lastAnswer && lastAnswer.score < 5) nextDifficulty = 'easy';
-
-    interview.current_question_index += 1;
-    await interview.save();
-
-    // Fetch next question from DB (random or sequential)
-    const nextQuestion = await Question.findOne({
-      where: { 
-        role: interview.role, 
-        difficulty: nextDifficulty 
-      },
-      order: sequelize.literal('random()') // Randomized next question
-    });
-
-    if (!nextQuestion) {
-      return res.status(200).json({ message: 'No more questions', isCompleted: true });
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Session not found', correlationId });
     }
 
-    res.json(nextQuestion);
+    return res.status(200).json({ success: true, snapshot, correlationId });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logger.error('getSession error:', { error, correlationId });
+    return res.status(500).json({ error: error.message, correlationId });
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/interview/submit-answer
+// Body: { sessionId, questionId, answerText, rawTranscript?, confidenceScore? }
+// Headers: Idempotency-Key (optional)
+// ─────────────────────────────────────────────────────────────────────────────
 exports.submitAnswer = async (req, res) => {
-  const { interviewId, questionId, answer } = req.body;
-  try {
-    const interview = await Interview.findByPk(interviewId);
-    if (!interview) return res.status(404).json({ message: 'Interview not found' });
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
+  const idempotencyKey = req.headers['idempotency-key'] || null;
 
-    const newAnswer = await Answer.create({
-      interview_id: interviewId,
-      question_id: questionId,
-      answer_text: answer
+  try {
+    const {
+      sessionId,
+      questionId,
+      answerText,
+      rawTranscript,
+      confidenceScore,
+      transcriptConfidence,
+      lowConfidenceSegments,
+      detectedPauses
+    } = req.body;
+
+    if (!sessionId || !questionId || !answerText) {
+      return res.status(400).json({
+        error: 'sessionId, questionId, and answerText are required',
+        correlationId
+      });
+    }
+
+    // Process answer (idempotency, state guards, sanitization, FSM, DB write, event emit)
+    const result = await answerProcessor.processAnswer({
+      sessionId,
+      questionId,
+      answerText,
+      rawTranscript,
+      confidenceScore,
+      transcriptConfidence,
+      lowConfidenceSegments,
+      detectedPauses,
+      idempotencyKey,
+      correlationId
     });
 
-    // Add to evaluation queue
-    await evaluationQueue.add('evaluateAnswer', { answerId: newAnswer.id });
+    // Async: kick off AI evaluation → transition → next question
+    setImmediate(() => _handlePostSubmission(sessionId, result.answerId, correlationId));
 
-    res.json({ status: 'processing', message: 'Answer submitted and queued for evaluation' });
+    return res.status(200).json({
+      success: true,
+      ...result,
+      correlationId
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    // Duplicate submission: 409 Conflict
+    if (error.message.includes('Duplicate submission')) {
+      return res.status(409).json({ error: error.message, correlationId });
+    }
+    // Timer expired or wrong state: 422
+    if (error.message.includes('Time has expired') || error.message.includes('Cannot submit answer')) {
+      return res.status(422).json({ error: error.message, correlationId });
+    }
+    logger.error('submitAnswer error:', { error, correlationId });
+    return res.status(500).json({ error: error.message, correlationId });
   }
 };
 
-exports.getReport = async (req, res) => {
-  const { interviewId } = req.query;
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/interview/pause
+// Body: { sessionId }
+// ─────────────────────────────────────────────────────────────────────────────
+exports.pauseInterview = async (req, res) => {
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
   try {
-    const answers = await Answer.findAll({
-      where: { interview_id: interviewId },
-      include: [Question]
-    });
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId is required', correlationId });
 
-    if (answers.length === 0) return res.status(404).json({ message: 'No answers found' });
+    const session = await sessionManager.loadSession(sessionId);
+    if (!session) return res.status(404).json({ error: 'Session not found', correlationId });
 
-    const totalScore = answers.reduce((sum, a) => sum + (a.score || 0), 0);
-    const avgScore = totalScore / answers.length;
+    // Guard: check pauses remaining
+    const pausesLeft = session.session_snapshot?.pauses_left ?? 0;
+    if (pausesLeft <= 0) {
+      return res.status(422).json({ error: 'No pause allowances remaining', correlationId });
+    }
 
-    let recommendation = 'Reject';
-    if (avgScore > 8) recommendation = 'Strong Hire';
-    else if (avgScore > 6) recommendation = 'Consider';
+    await sessionManager.transitionState(sessionId, 'PAUSED', 'candidate_pause_request', correlationId);
 
-    const report = {
-      overallScore: avgScore.toFixed(2),
-      recommendation,
-      details: answers.map(a => ({
-        question: a.Question.question_text,
-        score: a.score,
-        feedback: a.feedback
-      }))
+    // Decrement pauses_left in snapshot
+    const updatedSnapshot = {
+      ...session.session_snapshot,
+      pauses_left: pausesLeft - 1,
+      paused_at: Date.now()
     };
+    await sessionManager.updateSession(sessionId, { session_snapshot: updatedSnapshot });
 
-    res.json(report);
+    return res.status(200).json({
+      success: true,
+      message: 'Interview paused',
+      pausesRemaining: pausesLeft - 1,
+      correlationId
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    logger.error('pauseInterview error:', { error, correlationId });
+    return res.status(500).json({ error: error.message, correlationId });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/interview/resume
+// Body: { sessionId }
+// ─────────────────────────────────────────────────────────────────────────────
+exports.resumeInterview = async (req, res) => {
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId is required', correlationId });
+
+    await sessionManager.transitionState(sessionId, 'QUESTION_ACTIVE', 'candidate_resume_request', correlationId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Interview resumed',
+      correlationId
+    });
+  } catch (error) {
+    logger.error('resumeInterview error:', { error, correlationId });
+    return res.status(500).json({ error: error.message, correlationId });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/interview/end
+// Body: { sessionId }
+// ─────────────────────────────────────────────────────────────────────────────
+exports.endInterview = async (req, res) => {
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId is required', correlationId });
+
+    await sessionManager.transitionState(sessionId, 'TERMINATED', 'admin_terminate', correlationId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Interview terminated',
+      correlationId
+    });
+  } catch (error) {
+    logger.error('endInterview error:', { error, correlationId });
+    return res.status(500).json({ error: error.message, correlationId });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/interview/time
+// Server clock sync endpoint
+// ─────────────────────────────────────────────────────────────────────────────
+exports.getServerTime = (req, res) => {
+  return res.status(200).json({
+    serverTime: Date.now(),
+    iso: new Date().toISOString()
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERNAL: Async post-submission pipeline
+// Runs in background after answer submitted:
+//   AI_EVALUATING → NEXT_QUESTION or ROUND_COMPLETED
+// ─────────────────────────────────────────────────────────────────────────────
+async function _handlePostSubmission(sessionId, answerId, correlationId) {
+  try {
+    // 1. Transition to AI_EVALUATING
+    await sessionManager.transitionState(sessionId, 'AI_EVALUATING', 'ai_evaluation_start', correlationId);
+
+    // 2. Run evaluation via EvaluationEngine
+    await evaluationEngine.evaluateAnswer(answerId, correlationId);
+
+    // 3. Load session to check question limits
+    const session = await sessionManager.loadSession(sessionId);
+    const config = session.session_snapshot?.config || {};
+    const maxQuestions = config.max_questions || 5;
+
+    if (session.current_question_index >= maxQuestions) {
+      // 4a. Final round — transition to ROUND_COMPLETED then FINAL_EVALUATION
+      await sessionManager.transitionState(sessionId, 'ROUND_COMPLETED', 'round_limit_reached', correlationId);
+      await sessionManager.transitionState(sessionId, 'FINAL_EVALUATION', 'final_evaluation_start', correlationId);
+      await sessionManager.transitionState(sessionId, 'INTERVIEW_COMPLETED', 'evaluation_done', correlationId);
+    } else {
+      // 4b. Generate next question and continue
+      await sessionManager.transitionState(sessionId, 'NEXT_QUESTION', 'next_question_generation', correlationId);
+      const nextQuestion = await aiOrchestrator.generateNextQuestion(sessionId);
+
+      // Restart question timer
+      const questionDuration = config.questionDuration || 90;
+      await timerEngine.startTimer(sessionId, { questionDuration });
+      await sessionManager.transitionState(sessionId, 'QUESTION_ACTIVE', 'next_question_ready', correlationId);
+
+      logger.info(`Next question ready for session ${sessionId}`, {
+        questionId: nextQuestion.id,
+        correlationId
+      });
+    }
+  } catch (err) {
+    logger.error(`Post-submission pipeline failed for session ${sessionId}:`, {
+      error: err,
+      correlationId
+    });
+    // Attempt graceful degraded state
+    try {
+      await sessionManager.transitionState(sessionId, 'FAILED', 'pipeline_error', correlationId);
+    } catch (_) {
+      // Already in terminal state — ignore
+    }
+  }
+}

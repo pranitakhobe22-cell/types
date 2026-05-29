@@ -81,7 +81,10 @@ export const VoiceInterviewScreen: React.FC<VoiceInterviewScreenProps> = ({ cand
         setUserInput(fullTranscript);
       };
 
-      recognition.onerror = (err: any) => console.error("Speech Error:", err);
+      recognition.onerror = (err: any) => {
+        console.error("Speech Error:", err);
+        setIsListening(false);
+      };
       recognition.onend = () => setIsListening(false);
       recognitionRef.current = recognition;
     }
@@ -95,8 +98,28 @@ export const VoiceInterviewScreen: React.FC<VoiceInterviewScreenProps> = ({ cand
   const speakQuestion = (text: string) => {
     synthRef.current.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onstart = () => setIsAiSpeaking(true);
-    utterance.onend = () => setIsAiSpeaking(false);
+
+    // Safety watchdog: Chrome sometimes never fires onend (known bug).
+    // Force-clear isAiSpeaking after estimated speech duration + 4s buffer.
+    const watchdogMs = text.length * 80 + 4000;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+    const clearSpeaking = () => {
+      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+      setIsAiSpeaking(false);
+    };
+
+    utterance.onstart = () => {
+      setIsAiSpeaking(true);
+      watchdog = setTimeout(() => {
+        // Force-end if TTS onend never fires
+        synthRef.current.cancel();
+        setIsAiSpeaking(false);
+        watchdog = null;
+      }, watchdogMs);
+    };
+    utterance.onend = clearSpeaking;
+    utterance.onerror = clearSpeaking;
     
     // Pick an Indian accent voice (en-IN)
     const voices = synthRef.current.getVoices();
@@ -116,11 +139,19 @@ export const VoiceInterviewScreen: React.FC<VoiceInterviewScreenProps> = ({ cand
   const toggleMic = () => {
     if (!recognitionRef.current) return;
     if (isListening) {
-      recognitionRef.current.stop();
+      setIsListening(false);
+      try {
+        recognitionRef.current.stop();
+      } catch(e) {}
     } else {
       setUserInput('');
-      recognitionRef.current.start();
       setIsListening(true);
+      try {
+        recognitionRef.current.start();
+      } catch(e) {
+        console.error("Failed to start mic:", e);
+        setIsListening(false);
+      }
     }
   };
 
@@ -143,6 +174,9 @@ export const VoiceInterviewScreen: React.FC<VoiceInterviewScreenProps> = ({ cand
       setCurrentIndex(nextIdx);
       setUserInput('');
       setIsEditing(false);
+      setIsListening(false); // Force close mic state just in case
+      try { recognitionRef.current?.stop(); } catch(e){}
+      
       // Wait a moment then speak
       setTimeout(() => speakQuestion(questions[nextIdx].question), 1200);
     } else {
@@ -265,7 +299,7 @@ export const VoiceInterviewScreen: React.FC<VoiceInterviewScreenProps> = ({ cand
 
           <button
             onClick={handleNext}
-            disabled={!userInput.trim() || isAiSpeaking || isListening}
+            disabled={!userInput.trim() || isAiSpeaking || (isListening && userInput.length === 0)}
             className="flex-1 bg-slate-900 hover:bg-indigo-600 disabled:bg-slate-100 disabled:text-slate-300 text-white h-20 rounded-[28px] font-bold text-xl shadow-xl shadow-slate-200/50 transition-all flex items-center justify-center gap-3 active:scale-[0.98]"
           >
             {currentIndex < 4 ? 'Next Question' : 'Complete Interview'}

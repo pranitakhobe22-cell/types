@@ -9,6 +9,79 @@ const getApiKey = () => {
 
 const getGenAI = () => new GoogleGenerativeAI(getApiKey());
 
+// Model priority chain: try best model first, fall back on 503/429
+const MODEL_CHAIN = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+
+async function resilientGenerate(prompt: string, maxRetries = 2): Promise<string> {
+  for (const modelName of MODEL_CHAIN) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const model = getGenAI().getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+      } catch (err: any) {
+        const status = err?.status || 0;
+        // 503 = overloaded, 429 = rate limit — retry or try next model
+        if (status === 503 || status === 429) {
+          if (attempt < maxRetries) {
+            // Wait briefly before retry (exponential backoff)
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            continue;
+          }
+          // Exhausted retries for this model, try next
+          console.warn(`Model ${modelName} failed after ${maxRetries + 1} attempts (${status}), trying next...`);
+          break;
+        }
+        // 404 = model not found — skip immediately to next model
+        if (status === 404) {
+          console.warn(`Model ${modelName} not found (404), trying next...`);
+          break;
+        }
+        // Any other error — throw immediately
+        throw err;
+      }
+    }
+  }
+  
+  console.warn("All Gemini models failed, falling back to NVIDIA NIM...");
+  try {
+    return await fallbackToNvidia(prompt);
+  } catch (nvidiaErr: any) {
+    console.error("NVIDIA fallback failed:", nvidiaErr);
+    throw new Error("All AI models (Gemini & NVIDIA) are currently unavailable. Please try again later.");
+  }
+}
+
+const getNvidiaApiKey = () => {
+  return (import.meta.env?.VITE_NVIDIA_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_NVIDIA_API_KEY : "") || "";
+};
+
+async function fallbackToNvidia(prompt: string): Promise<string> {
+  const apiKey = getNvidiaApiKey();
+  if (!apiKey) throw new Error("NVIDIA API key not configured.");
+  
+  const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: "meta/llama-3.1-70b-instruct",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 2000
+    })
+  });
+  
+  if (!response.ok) {
+    throw new Error(`NVIDIA API Error: ${response.status} ${response.statusText}`);
+  }
+  
+  const data = await response.json();
+  return data.choices[0].message.content;
+}
+
 export interface GeneratedQuestion {
   question: string;
   ideal_answer: string;
@@ -53,7 +126,6 @@ export const AIService = {
     count: number,
     skills: string = ""
   ): Promise<GeneratedQuestion[]> {
-    const model = getGenAI().getGenerativeModel({ model: "gemini-2.0-flash" });
     const bank = role === "CSE" ? CSE_QUESTION_BANK : ECE_QUESTION_BANK;
 
     let selected: any[] = [];
@@ -85,8 +157,8 @@ export const AIService = {
     ["answer 1 text", "answer 2 text", ...]`;
 
     try {
-      const result = await model.generateContent(prompt);
-      const idealAnswers = JSON.parse(result.response.text().match(/\[[\s\S]*\]/)![0]);
+      const text = await resilientGenerate(prompt);
+      const idealAnswers = JSON.parse(text.match(/\[[\s\S]*\]/)![0]);
       
       return selected.map((q, i) => ({
         question: q.question,
@@ -108,8 +180,6 @@ export const AIService = {
   async evaluateInterview(
     candidateAnswers: { question: string; answer: string; ideal_answer: string }[]
   ): Promise<EvaluationReport> {
-    const model = getGenAI().getGenerativeModel({ model: "gemini-2.0-flash" });
-
     // Build a structured comparison for the AI to evaluate against
     const formattedData = candidateAnswers.map((item, i) => ({
       questionNumber: i + 1,
@@ -178,9 +248,7 @@ OUTPUT REQUIREMENTS (STRICT JSON — no extra text, no markdown):
 }`;
 
     try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      let text = response.text();
+      let text = await resilientGenerate(prompt);
       
       // Strip markdown code fences if present
       text = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
@@ -249,8 +317,6 @@ OUTPUT REQUIREMENTS (STRICT JSON — no extra text, no markdown):
     role: string,
     history: { question: string; answer: string; ideal_answer: string }[]
   ): Promise<GeneratedQuestion> {
-    const model = getGenAI().getGenerativeModel({ model: "gemini-2.0-flash" });
-
     const prompt = `
     You are an expert interviewer. Generate the next logical question for a candidate.
     
@@ -273,9 +339,7 @@ OUTPUT REQUIREMENTS (STRICT JSON — no extra text, no markdown):
     }`;
 
     try {
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      const text = await resilientGenerate(prompt);
 
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error("Invalid response format from AI");

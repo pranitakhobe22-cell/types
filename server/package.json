@@ -7,7 +7,9 @@
     "start": "node index.js",
     "worker": "node worker.js",
     "seed": "node seed.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "stress-test": "node src/concurrency_test.js",
+    "dev": "node index.js"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +28,10 @@
     "openai": "^6.33.0",
     "pg": "^8.20.0",
     "sequelize": "^6.37.8",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "socket.io": "^4.7.5",
+    "zod": "^3.23.8",
+    "express-rate-limit": "^7.2.0",
+    "uuid": "^9.0.1"
   }
 }

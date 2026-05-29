@@ -145,8 +145,35 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
       };
 
     } catch (err) {
-      console.error("Failed to generate demo questions:", err);
-      // Fallback if AI fails
+      console.warn("Gemini generation failed, attempting NVIDIA fallback...");
+      try {
+        const topic = candidate.customTopic;
+        const prompt = `
+          Generate 5 distinct interview questions for a candidate interested in "${topic}".
+          Questions should range from easy to medium difficulty.
+          Return strictly a JSON array of objects:
+          [{ "id": 1, "question": "Question text", "difficulty": "Easy", "maxScore": 10, "keyPoints": ["key1", "key2"] }]
+        `;
+        const text = await fallbackToNvidia(prompt);
+        let cleanText = text || "[]";
+        if (cleanText.startsWith('\`\`\`json')) cleanText = cleanText.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '');
+        else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '');
+        
+        const genQuestions = JSON.parse(cleanText);
+        questions = genQuestions.map((q: any, i: number) => ({
+          ...q,
+          id: i + 1,
+          maxScore: 10
+        }));
+        settings = {
+          ...DEFAULT_SETTINGS,
+          difficulty: 'Medium',
+          preset: 'Normal',
+          proctoring: { ...DEFAULT_SETTINGS.proctoring, includeInScore: false }
+        };
+      } catch (nvidiaErr) {
+        console.error("NVIDIA fallback also failed:", nvidiaErr);
+        // Fallback if AI fails completely
       questions = [{
         id: 1,
         question: `Tell me about your interest in ${candidate.customTopic} and what you hope to achieve.`,
@@ -155,6 +182,7 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
         maxScore: 10,
         keyPoints: ["Interest", "Goals"]
       }];
+      }
     }
   } else if (candidate.jobPostId) {
     const job = await StorageService.getJobById(candidate.jobPostId);
@@ -356,8 +384,41 @@ export const submitAnswer = async (
     return { evaluation, nextQuestion: null };
 
   } catch (error) {
-    console.error("AI Evaluation Failed:", error);
-    // Return a graceful fallback result so the app doesn't crash
+    console.warn("Gemini Evaluation Failed, attempting NVIDIA fallback...");
+    
+    try {
+      const text = await fallbackToNvidia(evalPrompt);
+      let cleanText = text || "{}";
+      cleanText = cleanText.trim();
+      if (cleanText.startsWith('\`\`\`json')) {
+        cleanText = cleanText.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '');
+      } else if (cleanText.startsWith('\`\`\`')) {
+        cleanText = cleanText.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '');
+      }
+      
+      const evalJson = JSON.parse(cleanText);
+
+      const evaluation: EvaluationResult = {
+        questionId: Number(currentQuestion.id),
+        questionText: currentQuestion.question,
+        userAnswer: answer,
+        contentScore: evalJson.contentScore ?? 0,
+        grammarScore: evalJson.grammarScore ?? 0,
+        fluencyScore: evalJson.fluencyScore ?? 0,
+        communicationScore: ((evalJson.grammarScore ?? 0) + (evalJson.fluencyScore ?? 0)) / 2,
+        matchedKeyPoints: evalJson.matchedKeyPoints || [],
+        missingKeyPoints: evalJson.missingKeyPoints || [],
+        verdict: evalJson.verdict || "Borderline",
+        feedback: evalJson.feedback || "No feedback provided.",
+        analysis: evalJson.analysis,
+        confidenceScore: visualMetrics?.confidenceLevel ?? 0,
+        expressionAnalysis: evalJson.expressionAnalysis || "Visual analysis unavailable.",
+        timestamp: new Date().toISOString(),
+      };
+      return { evaluation, nextQuestion: null };
+    } catch (nvidiaErr) {
+      console.error("NVIDIA Evaluation Fallback also failed:", nvidiaErr);
+      // Return a graceful fallback result so the app doesn't crash
     const fallbackEval: EvaluationResult = {
       questionId: Number(currentQuestion.id),
       questionText: currentQuestion.question,
@@ -375,5 +436,36 @@ export const submitAnswer = async (
       timestamp: new Date().toISOString()
     };
     return { evaluation: fallbackEval, nextQuestion: null };
+    }
   }
 };
+
+const getNvidiaApiKey = () => {
+  return (import.meta.env?.VITE_NVIDIA_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_NVIDIA_API_KEY : "") || "";
+};
+
+async function fallbackToNvidia(prompt: string): Promise<string> {
+  const apiKey = getNvidiaApiKey();
+  if (!apiKey) throw new Error("NVIDIA API key not configured.");
+  
+  const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: "meta/llama-3.1-70b-instruct",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 2000
+    })
+  });
+  
+  if (!response.ok) {
+    throw new Error(`NVIDIA API Error: ${response.status} ${response.statusText}`);
+  }
+  
+  const data = await response.json();
+  return data.choices[0].message.content;
+}
