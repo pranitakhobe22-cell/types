@@ -15,7 +15,11 @@ export const DEFAULT_SETTINGS: RoleSettings = {
 };
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-const MODEL_FAST = "gemini-2.5-flash";
+const getEvalAi = () => {
+  const evalKey = import.meta.env.VITE_GEMINI_EVAL_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+  return new GoogleGenAI({ apiKey: evalKey });
+};
+const MODEL_FAST = "gemini-2.0-flash";
 
 const DIRECT_INTERVIEW_FALLBACK = [
   {
@@ -310,7 +314,8 @@ export const submitAnswer = async (
   `;
 
   try {
-    const evalResponse = await ai.models.generateContent({
+    const evalAi = getEvalAi();
+    const evalResponse = await evalAi.models.generateContent({
       model: MODEL_FAST,
       contents: evalPrompt,
       config: {

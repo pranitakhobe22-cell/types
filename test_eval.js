@@ -9,7 +9,7 @@ try {
 } catch (e) {}
 
 const genAI = new GoogleGenerativeAI(key || process.env.GEMINI_API_KEY || "");
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 const prompt = `
 Evaluate this interview based on 4 metrics (0-10 each): Relevance, Accuracy, Clarity, Depth.

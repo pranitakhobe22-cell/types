@@ -71,7 +71,7 @@ export const VoiceInterviewScreen: React.FC<VoiceInterviewScreenProps> = ({ cand
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = 'en-US'; // Restored to en-US as requested
+      recognition.lang = 'en-IN'; // Restored to en-IN as requested
 
       recognition.onresult = (event: SpeechRecognitionEvent) => {
         let fullTranscript = '';

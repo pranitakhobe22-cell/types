@@ -1,22 +1,26 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { CSE_QUESTION_BANK, ECE_QUESTION_BANK } from "./questionBank";
 
-const getApiKey = () => {
+const getApiKey = (purpose: 'general' | 'eval' = 'general') => {
+  if (purpose === 'eval') {
+    const evalKey = (import.meta.env?.VITE_GEMINI_EVAL_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_EVAL_API_KEY : "");
+    if (evalKey) return evalKey;
+  }
   const key = (import.meta.env?.VITE_GEMINI_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_API_KEY : "") || "";
   if (!key) console.warn("Gemini API Key not found in environment variables.");
   return key;
 };
 
-const getGenAI = () => new GoogleGenerativeAI(getApiKey());
+const getGenAI = (purpose: 'general' | 'eval' = 'general') => new GoogleGenerativeAI(getApiKey(purpose));
 
 // Model priority chain: try best model first, fall back on 503/429
-const MODEL_CHAIN = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+const MODEL_CHAIN = ["gemini-2.0-flash", "gemini-1.5-flash"];
 
-async function resilientGenerate(prompt: string, maxRetries = 2): Promise<string> {
+async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'general' | 'eval' = 'general'): Promise<string> {
   for (const modelName of MODEL_CHAIN) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const model = getGenAI().getGenerativeModel({ model: modelName });
+        const model = getGenAI(purpose).getGenerativeModel({ model: modelName });
         const result = await model.generateContent(prompt);
         return result.response.text();
       } catch (err: any) {
@@ -248,7 +252,7 @@ OUTPUT REQUIREMENTS (STRICT JSON — no extra text, no markdown):
 }`;
 
     try {
-      let text = await resilientGenerate(prompt);
+      let text = await resilientGenerate(prompt, 2, 'eval');
       
       // Strip markdown code fences if present
       text = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
