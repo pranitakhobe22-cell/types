@@ -14,7 +14,7 @@ const getApiKey = (purpose: 'general' | 'eval' = 'general') => {
 const getGenAI = (purpose: 'general' | 'eval' = 'general') => new GoogleGenerativeAI(getApiKey(purpose));
 
 // Model priority chain: try best model first, fall back on 503/429
-const MODEL_CHAIN = ["gemini-2.0-flash", "gemini-1.5-flash"];
+const MODEL_CHAIN = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
 
 async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'general' | 'eval' = 'general'): Promise<string> {
   for (const modelName of MODEL_CHAIN) {
