@@ -35,6 +35,10 @@ app.use((req, res, next) => {
 // New interview workflow routes
 app.use('/api/interview', interviewRoutes);
 
+// Anti-Cheat tracking routes
+const antiCheatRoutes = require('./src/routes/antiCheatRoutes');
+app.use('/api/anti-cheat', antiCheatRoutes);
+
 // Health check endpoints
 app.use('/health', healthRoutes);
 

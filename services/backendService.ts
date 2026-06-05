@@ -133,9 +133,9 @@ export const BackendService = {
   },
 
   /**
-   * Marks the session as completed.
+   * Marks the session as completed or terminated.
    */
-  async completeSession() {
+  async completeSession(status: 'COMPLETED' | 'TERMINATED' = 'COMPLETED') {
     const sessionId = localStorage.getItem('current_session_id');
     if (!sessionId) return;
 
@@ -143,7 +143,7 @@ export const BackendService = {
     const data = localStorage.getItem(sessionId);
     if (data) {
       const session = JSON.parse(data);
-      session.status = 'COMPLETED';
+      session.status = status;
       localStorage.setItem(sessionId, JSON.stringify(session));
     }
 
@@ -153,7 +153,7 @@ export const BackendService = {
     try {
       const { error } = await supabase
         .from('interviews')
-        .update({ status: 'COMPLETED' })
+        .update({ status: status })
         .eq('id', sessionId);
 
       if (error) throw error;
@@ -209,6 +209,32 @@ export const BackendService = {
       const dateB = new Date(b.timestamp || 0).getTime();
       return dateB - dateA;
     });
+  },
+
+  /**
+   * Logs an anti-cheating violation securely to the backend
+   */
+  async logViolation(warning: { type: string, message: string }) {
+    const sessionId = localStorage.getItem('current_session_id');
+    if (!sessionId) return;
+
+    try {
+      await fetch('/api/anti-cheat/log', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sessionId,
+          violationType: warning.type,
+          severity: 'HIGH', // Front-end warnings are generally high-severity strikes
+          metadata: { message: warning.message }
+        })
+      });
+      console.log(`[BackendService] Anti-Cheat Violation sent: ${warning.type}`);
+    } catch (err) {
+      console.error('[BackendService] Failed to send violation to server:', err);
+    }
   }
 };
 

@@ -37,7 +37,19 @@ function App() {
     setFlowState('interview');
   };
 
-  const handleInterviewComplete = async (history: { question: string; answer: string; ideal_answer: string }[]) => {
+  const handleInterviewComplete = async (
+    history: { question: string; answer: string; ideal_answer: string }[],
+    warnings: { type: string; message: string }[] = [],
+    status: 'COMPLETED' | 'TERMINATED' = 'COMPLETED'
+  ) => {
+    // Save warnings to backend
+    for (const warning of warnings) {
+      await BackendService.logViolation(warning);
+    }
+    
+    // Complete session with dynamic status
+    await BackendService.completeSession(status);
+
     setInterviewHistory(history);
     setFlowState('completed');
   };
