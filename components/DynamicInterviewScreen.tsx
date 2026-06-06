@@ -186,6 +186,8 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [userInput, setUserInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const isAiSpeakingRef = useRef(false);
+  const [interimSpeech, setInterimSpeech] = useState('');
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
@@ -354,9 +356,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = 'en-IN'; 
+    recognition.lang = navigator.language || 'en-US'; 
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      if (isAiSpeakingRef.current) {
+        // Software echo cancellation: ignore mic input while AI is talking
+        return;
+      }
+
       let finalTranscript = '';
       let interimTranscript = '';
       
@@ -368,13 +375,13 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         }
       }
       
-      // We append to the current input if it's final, otherwise just show interim
-      setUserInput(prev => {
-         const base = prev.replace(/\s*\[.*?\]\s*/g, ''); // clear old interims if we marked them
-         if (finalTranscript) return base + ' ' + finalTranscript;
-         if (interimTranscript) return base + ' [' + interimTranscript + ']';
-         return prev;
-      });
+      if (finalTranscript) {
+        setUserInput(prev => {
+          const space = (prev.length > 0 && !prev.endsWith(' ')) ? ' ' : '';
+          return prev + space + finalTranscript.trim();
+        });
+      }
+      setInterimSpeech(interimTranscript);
     };
 
     recognition.onerror = (err: any) => {
@@ -402,13 +409,16 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     const clearSpeaking = () => {
       if (watchdog) { clearTimeout(watchdog); watchdog = null; }
       setIsAiSpeaking(false);
+      isAiSpeakingRef.current = false;
     };
 
     utterance.onstart = () => {
       setIsAiSpeaking(true);
+      isAiSpeakingRef.current = true;
       watchdog = setTimeout(() => {
         synthRef.current.cancel();
         setIsAiSpeaking(false);
+        isAiSpeakingRef.current = false;
         watchdog = null;
       }, watchdogMs);
     };
@@ -726,20 +736,24 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             isEditing ? 'border-indigo-200 shadow-xl shadow-indigo-100/50' : 
             'border-slate-100 shadow-sm'
           }`}>
-            {isEditing ? (
+          <div className="relative">
               <textarea
-                className="w-full h-full bg-transparent border-none outline-none text-xl text-slate-800 placeholder:text-slate-300 resize-none font-medium"
-                value={userInput}
-                onChange={e => setUserInput(e.target.value)}
-                autoFocus
+                className={`w-full h-40 p-4 bg-slate-50 border-2 rounded-2xl resize-none outline-none transition-all text-slate-700 font-medium ${isListening ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10'}`}
+                value={isEditing ? userInput : (userInput || "")}
+                onChange={(e) => setUserInput(e.target.value)}
+                placeholder={isListening ? "Listening..." : "Type or speak your answer here..."}
+                disabled={!isEditing && !isListening}
               />
-            ) : (
-              <p className={`text-xl font-medium leading-relaxed ${userInput ? 'text-slate-800' : 'text-slate-300 italic'}`}>
-                {userInput || "Click the microphone and start speaking..."}
-              </p>
-            )}
+              {interimSpeech && (
+                <div className="absolute bottom-4 left-4 right-16 pointer-events-none">
+                  <span className="bg-slate-800/80 text-white text-sm px-3 py-1.5 rounded-lg shadow-lg backdrop-blur-sm animate-pulse">
+                    {interimSpeech}
+                  </span>
+                </div>
+              )}
           </div>
         </div>
+      </div>
           </>
         )}
       </main>
