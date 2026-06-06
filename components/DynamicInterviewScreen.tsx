@@ -682,7 +682,13 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             <h1 className="text-4xl font-extrabold text-slate-900">Ready to begin?</h1>
             <p className="text-lg text-slate-500 max-w-lg mx-auto">Please ensure you are in a quiet room with good lighting. Your camera and microphone will be monitored during the interview.</p>
             <button 
-              onClick={() => setHasStarted(true)}
+              onClick={() => {
+                // Silent audio unlock to bypass Autoplay policies
+                const unlock = new SpeechSynthesisUtterance('');
+                unlock.volume = 0;
+                window.speechSynthesis.speak(unlock);
+                setHasStarted(true);
+              }}
               disabled={!cameraReady || proctoring.engineState !== 'READY'}
               className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white rounded-2xl font-bold text-xl shadow-xl shadow-indigo-200 disabled:shadow-none transition-all active:scale-95"
             >

@@ -71,29 +71,36 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
       if (!videoRef.current) return;
 
       if (mediaStream) {
-        // Use provided stream
         videoRef.current.srcObject = mediaStream;
-        videoRef.current.onloadeddata = () => {
-          predictWebcam();
-        };
+        videoRef.current.onloadeddata = () => predictWebcam();
       } else {
-        // Fallback: request our own stream (Legacy mode)
         try {
+          // If we already requested it, use the active stream
+          if (videoRef.current.srcObject) {
+             videoRef.current.onloadeddata = () => predictWebcam();
+             return;
+          }
+          
           const stream = await navigator.mediaDevices.getUserMedia({
             video: { width: 640, height: 480, frameRate: { ideal: 30 } }
           });
           
           if (!isActive) {
-            // Component unmounted or re-rendered while we were waiting
-            stream.getTracks().forEach(track => track.stop());
+            // Wait! In React Strict Mode, we might unmount/remount instantly.
+            // Stopping the tracks here permanently breaks the camera!
+            // Let's NOT stop the tracks immediately if we're in dev mode or fast re-mount
+            setTimeout(() => {
+                // If it's still not active after 1000ms, then stop it
+                if (!videoRef.current?.srcObject) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+            }, 1000);
             return;
           }
 
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
-            videoRef.current.onloadeddata = () => {
-              predictWebcam();
-            };
+            videoRef.current.onloadeddata = () => predictWebcam();
           }
         } catch (err) {
           console.error("[CameraMonitor] Camera access error:", err);
@@ -107,11 +114,6 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
     return () => {
       isActive = false;
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      // Only stop tracks if we created the stream ourselves
-      if (!mediaStream && videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-      }
     };
   }, [mediaStream]);
 
