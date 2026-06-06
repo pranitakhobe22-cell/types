@@ -82,6 +82,13 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
           const stream = await navigator.mediaDevices.getUserMedia({
             video: { width: 640, height: 480, frameRate: { ideal: 30 } }
           });
+          
+          if (!isActive) {
+            // Component unmounted or re-rendered while we were waiting
+            stream.getTracks().forEach(track => track.stop());
+            return;
+          }
+
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
             videoRef.current.onloadeddata = () => {

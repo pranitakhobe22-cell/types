@@ -243,12 +243,20 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       return;
     }
 
+    let mounted = true;
+
     const initMedia = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480, frameRate: { ideal: 30 } },
           audio: true,
         });
+
+        if (!mounted) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
         mediaRef.current = {
           stream,
           videoTrack: stream.getVideoTracks()[0],
@@ -272,6 +280,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     initMedia();
 
     return () => {
+      mounted = false;
       if (mediaRef.current) mediaRef.current.stream.getTracks().forEach(t => t.stop());
     };
   }, []);
