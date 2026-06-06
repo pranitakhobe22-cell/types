@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Logo } from './Logo';
 import { User, Mail, Briefcase, ArrowRight, ChevronDown } from 'lucide-react';
 
@@ -10,9 +10,25 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onStart }) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    role: ''
+    role: 'Frontend Developer'
   });
   const [error, setError] = useState('');
+
+  // Preload MediaPipe ML models so camera starts instantly on the next screen
+  useEffect(() => {
+    import('../services/mediaPipeService').then(({ mediaPipeService }) => {
+      const preload = () => {
+        console.log("[LandingScreen] Preloading MediaPipe models...");
+        mediaPipeService.preload().catch(err => console.error("MediaPipe preload failed:", err));
+      };
+
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(preload);
+      } else {
+        setTimeout(preload, 2000);
+      }
+    });
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

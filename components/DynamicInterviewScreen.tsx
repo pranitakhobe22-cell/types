@@ -323,14 +323,17 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         setQuestions(data);
         setLoading(false);
         
+        // Background task to populate ideal answers without blocking the interview start
+        AIService.populateIdealAnswers(candidate.role, data).catch(console.error);
+        
         // Wait for voices to be ready before speaking
         const speakWhenReady = () => {
           const voices = synthRef.current.getVoices();
           if (voices.length > 0) {
-            setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 1500);
+            setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 800);
           } else {
             synthRef.current.onvoiceschanged = () => {
-              setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 1500);
+              setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 800);
               synthRef.current.onvoiceschanged = null;
             };
           }
@@ -476,7 +479,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       setIsListening(false);
       try { recognitionRef.current?.stop(); } catch(e){}
       
-      setTimeout(() => speakQuestion(questions[nextIdx].question), 1200);
+      setTimeout(() => {
+        speakQuestion(questions[nextIdx].question);
+      }, 300);
     } else {
       setLoading(true);
       const report = compileReport();

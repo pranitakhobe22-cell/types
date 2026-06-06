@@ -150,12 +150,22 @@ export const AIService = {
       ];
     }
 
+    // Return questions immediately so the interview can start without waiting for the LLM
+    return selected.map(q => ({
+      question: q.question,
+      ideal_answer: "" // Will be populated in the background
+    }));
+  },
+
+  async populateIdealAnswers(role: string, questions: GeneratedQuestion[]): Promise<void> {
+    if (questions.length === 0) return;
+    
     const prompt = `
     For these ${role} interview questions, provide a concise but comprehensive "ideal_answer" for each one.
     The ideal answer should cover all key technical points a strong candidate would mention.
     
     Questions:
-    ${selected.map((q, i) => `${i+1}. ${q.question}`).join('\n')}
+    ${questions.map((q, i) => `${i+1}. ${q.question}`).join('\n')}
 
     Output format (STRICT JSON ARRAY OF STRINGS ONLY):
     ["answer 1 text", "answer 2 text", ...]`;
@@ -164,16 +174,14 @@ export const AIService = {
       const text = await resilientGenerate(prompt);
       const idealAnswers = JSON.parse(text.match(/\[[\s\S]*\]/)![0]);
       
-      return selected.map((q, i) => ({
-        question: q.question,
-        ideal_answer: idealAnswers[i] || "High quality technical response expected."
-      }));
+      questions.forEach((q, i) => {
+        q.ideal_answer = idealAnswers[i] || "High quality technical response expected.";
+      });
     } catch (error) {
       console.error("Ideal answer generation failed, using fallback:", error);
-      return selected.map(q => ({
-        question: q.question,
-        ideal_answer: "Detailed technical response required."
-      }));
+      questions.forEach(q => {
+        if (!q.ideal_answer) q.ideal_answer = "Detailed technical response required.";
+      });
     }
   },
 
