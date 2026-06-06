@@ -177,8 +177,8 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
           maxBlend = result.faceBlendshapes[i].categories.reduce((m: number, c: any) => Math.max(m, c.score), 0);
         }
 
-        // A real face takes up > 5% of screen AND has some natural muscle tension (> 0.15)
-        if (faceWidth > 0.05 && faceHeight > 0.05 && maxBlend > 0.15) {
+        // A real face takes up > 5% of screen. We rely on MediaPipe's confidence score rather than manual blendshape heuristics.
+        if (faceWidth > 0.05 && faceHeight > 0.05) {
           validIndices.push(i);
         }
       });
