@@ -45,7 +45,10 @@ class MediaPipeService {
                         },
                         outputFaceBlendshapes: true,
                         runningMode: "VIDEO",
-                        numFaces: 5
+                        numFaces: 5,
+                        minFaceDetectionConfidence: 0.5,
+                        minFacePresenceConfidence: 0.5,
+                        minTrackingConfidence: 0.5
                     });
                     
                     clearTimeout(timeoutId);

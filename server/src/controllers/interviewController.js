@@ -242,6 +242,58 @@ exports.endInterview = async (req, res) => {
   }
 };
 
+const proctoringValidator = require('../services/proctoringValidator');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/interview/proctoring-report
+// Body: { sessionId, report }
+// ─────────────────────────────────────────────────────────────────────────────
+exports.submitProctoringReport = async (req, res) => {
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
+  try {
+    const { sessionId, report } = req.body;
+    if (!sessionId || !report) {
+       return res.status(400).json({ error: 'sessionId and report are required', correlationId });
+    }
+
+    const session = await sessionManager.loadSession(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found', correlationId });
+    }
+
+    const validationResult = proctoringValidator.validateProctoringReport(report, session.session_snapshot?.config);
+    
+    if (!validationResult.isValid) {
+       logger.warn('Proctoring report validation failed', { sessionId, reason: validationResult.reason, correlationId });
+       // We can choose to reject it, or accept it but flag the session. 
+       // For now, let's flag the session.
+       await sessionManager.updateSession(sessionId, {
+         proctoring_flagged: true,
+         proctoring_flag_reason: validationResult.reason
+       });
+    }
+
+    // Save report to session snapshot or a dedicated proctoring table
+    const updatedSnapshot = {
+      ...session.session_snapshot,
+      proctoring_report: report
+    };
+    await sessionManager.updateSession(sessionId, { session_snapshot: updatedSnapshot });
+
+    logger.info(`Proctoring report saved for session ${sessionId}`, { correlationId, isValid: validationResult.isValid });
+
+    return res.status(200).json({
+      success: true,
+      isValid: validationResult.isValid,
+      message: 'Proctoring report processed',
+      correlationId
+    });
+  } catch (error) {
+    logger.error('submitProctoringReport error:', { error, correlationId });
+    return res.status(500).json({ error: error.message, correlationId });
+  }
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/interview/time
 // Server clock sync endpoint

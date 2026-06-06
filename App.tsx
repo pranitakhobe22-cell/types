@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LandingScreen } from './components/LandingScreen';
-import { VoiceInterviewScreen } from './components/VoiceInterviewScreen';
+import { DynamicInterviewScreen } from './components/DynamicInterviewScreen';
 import { EndScreen } from './components/EndScreen';
 import { AdminDashboard } from './components/AdminDashboard';
 import { BackendService } from './services/backendService';
@@ -90,9 +90,12 @@ function App() {
       )}
 
       {flowState === 'interview' && candidate && (
-        <VoiceInterviewScreen 
+        <DynamicInterviewScreen 
           candidate={candidate} 
-          onComplete={handleInterviewComplete} 
+          onComplete={(history, report) => {
+            console.log("Proctoring Report:", report);
+            handleInterviewComplete(history);
+          }} 
         />
       )}
 

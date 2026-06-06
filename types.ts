@@ -121,6 +121,149 @@ export interface WarningEvent {
   message: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW PROCTORING TYPES (v7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type InterviewMediaResources = {
+  stream: MediaStream;
+  videoTrack: MediaStreamTrack;
+  audioTrack: MediaStreamTrack;
+};
+
+export type RawDetectionFrame = {
+  faceCount: number;
+  faceDetected: boolean;
+  landmarkCount: number;
+  confidence: number;          // 0.0–1.0 graduated, binary fallback
+  gazeDirection: 'center' | 'left' | 'right' | 'up' | 'down' | 'away';
+  isHeadTurned: boolean;
+  isMouthMoving: boolean;
+  expression: string;
+  timestamp: number;
+  headPitch: number;
+  headYaw: number;
+  headRoll: number;
+  facePosition: 'CENTERED' | 'PARTIAL_OUT';
+};
+
+export type ProctorViolation = {
+  id: string;
+  sessionId: string;           // Correlation ID
+  type: 'TAB_HIDDEN' | 'NO_FACE' | 'GAZE_AWAY' | 'MULTIPLE_FACES'
+       | 'CAMERA_LOST' | 'MICROPHONE_LOST' | 'REFRESH_ATTEMPT';
+  severity: number;
+  timestamp: number;
+  message: string;
+};
+
+export type TimelineEvent = {
+  sessionId: string;
+  timestamp: number;
+  event: string;
+  severity: number;
+  detail?: string;
+};
+
+export type ProctoringEngineState =
+  | 'INITIALIZING' | 'READY' | 'PERMISSION_DENIED' | 'UNSUPPORTED_BROWSER'
+  | 'ERROR' | 'RECOVERING' | 'CONNECTION_LOST' | 'TERMINATED';
+
+export type HeartbeatMetrics = {
+  fps: number;
+  lastDetectionAgoMs: number;
+  faceConfidence: number;
+  gazeDirection: string;
+  detectionHealth: 'GOOD' | 'LOW_LIGHT' | 'PARTIAL_FACE' | 'UNSTABLE';
+  engineState: ProctoringEngineState;
+};
+
+export type DashboardTelemetry = {
+  faceConfidence: number;
+  gazeDirection: string;
+  headPitch: number;
+  headYaw: number;
+  headRoll: number;
+  fps: number;
+  facePosition: string;
+  detectionHealth: string;
+  lastUpdated: number;
+};
+
+export type MonitoringHealthSummary = {
+  monitoringCoveragePercent: number;
+  averageFaceConfidence: number;
+  totalDetectionFrames: number;
+  stalledPeriods: number;
+  longestNoFaceDurationMs: number;
+  longestGazeAwayDurationMs: number;
+};
+
+export type ProctoringReport = {
+  sessionId: string;
+  currentRiskScore: number;
+  overallRiskScore: number;
+  noFaceEvents: number;
+  gazeAwayEvents: number;
+  multipleFaceEvents: number;
+  tabSwitchEvents: number;
+  microphoneLostEvents: number;
+  violations: ProctorViolation[];
+  timeline: TimelineEvent[];
+  sessionDurationMs: number;
+  monitoringDurationMs: number;
+  heartbeatCount: number;        // Total heartbeats emitted during session
+  heartbeatSamples: { timestamp: number; fps: number }[]; // For backend validation
+  cameraReconnectCount: number;
+  maxConcurrentFaces: number;
+  browserInfo: {
+    userAgent: string;
+    platform: string;
+    viewportWidth: number;
+    viewportHeight: number;
+  };
+  healthSummary: MonitoringHealthSummary;
+};
+
+export type ProctoringState = {
+  engineState: ProctoringEngineState;
+  currentRiskScore: number;
+  overallRiskScore: number;
+  heartbeat: HeartbeatMetrics;
+  violations: ProctorViolation[];
+  timeline: TimelineEvent[];
+  gazeState: 'LOOKING' | 'AWAY_START' | 'VIOLATION_CREATED' | 'COOLDOWN';
+  gazeAwayStartTime: number | null;
+  multiFaceState: 'SINGLE_FACE' | 'MULTI_FACE_START' | 'MULTI_FACE_CONFIRMED';
+  multiFaceStartTime: number | null;
+  noFaceState: 'FACE_PRESENT' | 'NO_FACE_START' | 'VIOLATION_CREATED';
+  noFaceStartTime: number | null;
+  sessionStartTime: number;
+  monitoringStartTime: number | null;
+  cameraReconnectCount: number;
+  maxConcurrentFaces: number;
+  microphoneHealthy: boolean;
+  networkHealthy: boolean;
+  heartbeatCount: number;
+};
+
+export type ProctoringAction = 
+  | { type: 'DETECTION_FRAME'; frame: RawDetectionFrame }
+  | { type: 'ENGINE_READY' }
+  | { type: 'HEARTBEAT'; metrics: HeartbeatMetrics }
+  | { type: 'TAB_HIDDEN' }
+  | { type: 'REFRESH_ATTEMPT' }
+  | { type: 'CAMERA_LOST' }
+  | { type: 'MICROPHONE_LOST' }
+  | { type: 'MICROPHONE_RECOVERED' }
+  | { type: 'NETWORK_LOST' }
+  | { type: 'NETWORK_RECOVERED' }
+  | { type: 'DECAY_RISK' }
+  | { type: 'SET_UNSUPPORTED_BROWSER' }
+  | { type: 'SET_PERMISSION_DENIED' };
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export interface InterviewSession {
   id: string;
   candidate: Candidate;

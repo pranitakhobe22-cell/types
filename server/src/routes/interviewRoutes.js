@@ -55,4 +55,7 @@ router.post('/resume', generalLimiter, interviewController.resumeInterview);
 // End / terminate interview
 router.post('/end', generalLimiter, interviewController.endInterview);
 
+// Submit proctoring report
+router.post('/proctoring-report', generalLimiter, interviewController.submitProctoringReport);
+
 module.exports = router;
