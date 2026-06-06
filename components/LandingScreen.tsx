@@ -10,7 +10,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onStart }) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    role: 'Frontend Developer'
+    role: 'CSE'
   });
   const [error, setError] = useState('');
 

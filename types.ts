@@ -141,10 +141,10 @@ export type RawDetectionFrame = {
   isMouthMoving: boolean;
   expression: string;
   timestamp: number;
-  headPitch: number;
-  headYaw: number;
-  headRoll: number;
-  facePosition: 'CENTERED' | 'PARTIAL_OUT';
+  headPitch: number | string;
+  headYaw: number | string;
+  headRoll: number | string;
+  facePosition: 'CENTERED' | 'PARTIAL_OUT' | 'N/A';
 };
 
 export type ProctorViolation = {
@@ -181,9 +181,9 @@ export type HeartbeatMetrics = {
 export type DashboardTelemetry = {
   faceConfidence: number;
   gazeDirection: string;
-  headPitch: number;
-  headYaw: number;
-  headRoll: number;
+  headPitch: number | string;
+  headYaw: number | string;
+  headRoll: number | string;
   fps: number;
   facePosition: string;
   detectionHealth: string;

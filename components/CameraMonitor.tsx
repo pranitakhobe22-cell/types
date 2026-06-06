@@ -195,10 +195,10 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
     let isMouthMoving = false;
     let expression = 'Neutral';
 
-    let headPitch = 0;
-    let headYaw = 0;
-    let headRoll = 0;
-    let facePosition: 'CENTERED' | 'PARTIAL_OUT' = 'CENTERED';
+    let headPitch: number | string = 'N/A';
+    let headYaw: number | string = 'N/A';
+    let headRoll: number | string = 'N/A';
+    let facePosition: 'CENTERED' | 'PARTIAL_OUT' | 'N/A' = 'N/A';
     let detectionHealth: 'GOOD' | 'LOW_LIGHT' | 'PARTIAL_FACE' | 'UNSTABLE' = 'GOOD';
 
     if (hasFace) {
@@ -280,6 +280,12 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
       } else {
         detectionHealth = 'GOOD';
       }
+    } else {
+        // Force center position if missing face
+        facePosition = 'N/A';
+        headPitch = 'N/A';
+        headYaw = 'N/A';
+        headRoll = 'N/A';
     }
 
     // Update refs for heartbeat
