@@ -8,6 +8,7 @@ interface MonitoringDashboardProps {
 }
 
 export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ telemetry, proctoring }) => {
+  const hasFace = telemetry.faceDetected;
   const isStalled = telemetry.fps === 0 || proctoring.heartbeat.lastDetectionAgoMs > 2000;
   
   // FPS Color Logic
@@ -17,7 +18,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ teleme
   else if (telemetry.fps < 10) { fpsColor = "text-orange-500"; fpsLabel = "Warning"; }
   else if (telemetry.fps <= 20) { fpsColor = "text-amber-400"; fpsLabel = "Degraded"; }
 
-  const hasFace = proctoring.noFaceState === 'FACE_PRESENT';
+  // Quality Color Logic
+  let qualityColor = "text-emerald-400";
+  if (telemetry.monitoringQualityScore < 40) qualityColor = "text-rose-500";
+  else if (telemetry.monitoringQualityScore < 70) qualityColor = "text-amber-400";
 
   return (
     <div className="flex flex-col gap-4 w-full">
@@ -52,12 +56,28 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ teleme
         </div>
         
         <div className="bg-slate-800/50 p-2 rounded border border-slate-700">
-          <div className="text-slate-400 font-semibold mb-1">Confidence</div>
-          <div className="font-bold">{hasFace ? `${telemetry.faceConfidence}%` : 'N/A'}</div>
+          <div className="text-slate-400 font-semibold mb-1 flex justify-between">
+             <span>Tracking Confidence</span>
+          </div>
+          <div className="font-bold">{hasFace ? `${telemetry.trackingConfidence}%` : 'N/A'}</div>
         </div>
         <div className="bg-slate-800/50 p-2 rounded border border-slate-700">
           <div className="text-slate-400 font-semibold mb-1">Gaze</div>
-          <div className="font-bold">{hasFace ? telemetry.gazeDirection.toUpperCase() : 'N/A'}</div>
+          <div className="font-bold whitespace-nowrap overflow-hidden text-ellipsis">
+            {hasFace ? (() => {
+              let dirText = '';
+              if (telemetry.gazeDirection === 'center') dirText = 'Looking at screen';
+              else if (telemetry.gazeDirection === 'left') dirText = 'Looking left';
+              else if (telemetry.gazeDirection === 'right') dirText = 'Looking right';
+              else if (telemetry.gazeDirection === 'up') dirText = 'Looking up';
+              else if (telemetry.gazeDirection === 'down') dirText = 'Looking down';
+              else if (telemetry.gazeDirection === 'away') dirText = 'Looking away';
+              else dirText = telemetry.gazeDirection.toUpperCase();
+
+              const durationText = telemetry.gazeDurationMs > 0 ? ` (${(telemetry.gazeDurationMs / 1000).toFixed(1)}s)` : '';
+              return `${dirText}${durationText}`;
+            })() : 'N/A'}
+          </div>
         </div>
 
         <div className="col-span-2 bg-slate-800/50 p-2 rounded border border-slate-700">
@@ -70,17 +90,23 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ teleme
         <div className="col-span-2 bg-slate-800/50 p-2 rounded border border-slate-700">
           <div className="text-slate-400 font-semibold mb-1 flex justify-between">
             <span>Head Pitch / Yaw / Roll</span>
-            <span className="font-bold text-[10px]">{hasFace ? `${telemetry.headPitch}° / ${telemetry.headYaw}° / ${telemetry.headRoll}°` : 'N/A'}</span>
+            <span className="font-bold text-[10px]">
+              {hasFace ? 
+                `${Math.max(-45, Math.min(45, telemetry.headPitch))}° / ` + 
+                `${Math.max(-45, Math.min(45, telemetry.headYaw))}° / ` + 
+                `${Math.max(-45, Math.min(45, telemetry.headRoll))}°` 
+              : 'N/A'}
+            </span>
           </div>
         </div>
 
         <div className="col-span-2 bg-slate-800/50 p-2 rounded border border-slate-700">
           <div className="text-slate-400 font-semibold mb-1 flex justify-between">
-            <span>Detection Quality</span>
-            <span>{hasFace ? telemetry.detectionHealth : 'N/A'}</span>
+            <span>Monitoring Quality</span>
+            <span className={`font-bold ${qualityColor}`}>{telemetry.monitoringQualityScore}%</span>
           </div>
           <div className="w-full bg-slate-700 h-1.5 rounded overflow-hidden mt-1">
-             <div className={`h-full ${telemetry.detectionHealth === 'GOOD' ? 'bg-emerald-500' : 'bg-amber-500'} transition-all`} style={{ width: hasFace ? '100%' : '0%' }} />
+             <div className={`h-full ${qualityColor.replace('text-', 'bg-')} transition-all`} style={{ width: `${telemetry.monitoringQualityScore}%` }} />
           </div>
         </div>
       </div>

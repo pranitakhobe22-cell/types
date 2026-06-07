@@ -135,16 +135,16 @@ export type RawDetectionFrame = {
   faceCount: number;
   faceDetected: boolean;
   landmarkCount: number;
-  confidence: number;          // 0.0–1.0 graduated, binary fallback
+  trackingConfidence: number;  // 0.0–100 based on scale/centering/tracking
   gazeDirection: 'center' | 'left' | 'right' | 'up' | 'down' | 'away';
   isHeadTurned: boolean;
   isMouthMoving: boolean;
   expression: string;
   timestamp: number;
-  headPitch: number | string;
-  headYaw: number | string;
-  headRoll: number | string;
-  facePosition: 'CENTERED' | 'PARTIAL_OUT' | 'N/A';
+  headPitch: number;
+  headYaw: number;
+  headRoll: number;
+  facePosition: 'CENTERED' | 'PARTIAL_OUT';
 };
 
 export type ProctorViolation = {
@@ -172,18 +172,21 @@ export type ProctoringEngineState =
 export type HeartbeatMetrics = {
   fps: number;
   lastDetectionAgoMs: number;
-  faceConfidence: number;
+  trackingConfidence: number;
   gazeDirection: string;
   detectionHealth: 'GOOD' | 'LOW_LIGHT' | 'PARTIAL_FACE' | 'UNSTABLE';
   engineState: ProctoringEngineState;
 };
 
 export type DashboardTelemetry = {
-  faceConfidence: number;
+  faceDetected: boolean;
+  trackingConfidence: number;
+  monitoringQualityScore: number;
   gazeDirection: string;
-  headPitch: number | string;
-  headYaw: number | string;
-  headRoll: number | string;
+  gazeDurationMs: number;
+  headPitch: number;
+  headYaw: number;
+  headRoll: number;
   fps: number;
   facePosition: string;
   detectionHealth: string;
@@ -192,7 +195,7 @@ export type DashboardTelemetry = {
 
 export type MonitoringHealthSummary = {
   monitoringCoveragePercent: number;
-  averageFaceConfidence: number;
+  averageTrackingConfidence: number;
   totalDetectionFrames: number;
   stalledPeriods: number;
   longestNoFaceDurationMs: number;

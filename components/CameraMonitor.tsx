@@ -36,17 +36,34 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
   const lastFrameTimeRef = useRef<number>(-1);
   const lastHeartbeatTimeRef = useRef<number>(0);
   const frameCountRef = useRef<number>(0);
+  const smoothedFpsRef = useRef<number>(30);
 
-  const lastConfidenceRef = useRef<number>(1.0);
+  const lastConfidenceRef = useRef<number>(100);
   const lastGazeDirectionRef = useRef<string>('center');
   const lastDetectionHealthRef = useRef<'GOOD' | 'LOW_LIGHT' | 'PARTIAL_FACE' | 'UNSTABLE'>('GOOD');
 
+  const lastPitchRef = useRef<number>(0);
+  const lastYawRef = useRef<number>(0);
+  const lastRollRef = useRef<number>(0);
+
+  const baselinePitchRef = useRef<number | null>(null);
+  const baselineYawRef = useRef<number | null>(null);
+  const baselineRollRef = useRef<number | null>(null);
+  const faceTrackingStartTimeRef = useRef<number | null>(null);
+  const faceLostTimeRef = useRef<number | null>(null);
+
+  const SMOOTHING = 0.8;
+  const MIN_FACE_AREA = 0.03;
+
   const FRAME_PROCESS_INTERVAL = 32; // ~30fps
   const HEARTBEAT_INTERVAL = 500;
+  const animationFrameIdRef = useRef<number | null>(null);
+  const isComponentMountedRef = useRef<boolean>(true);
+  const lastVideoTimeRef = useRef<number>(-1);
 
   useEffect(() => {
     let isActive = true;
-    let animationFrameId: number;
+    isComponentMountedRef.current = true;
 
     const initMediaPipe = async () => {
       try {
@@ -72,12 +89,22 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
 
       if (mediaStream) {
         videoRef.current.srcObject = mediaStream;
-        videoRef.current.onloadeddata = () => predictWebcam();
+        videoRef.current.play().catch(e => console.warn("Auto-play prevented", e));
+        if (videoRef.current.readyState >= 2) {
+          predictWebcam();
+        } else {
+          videoRef.current.onloadeddata = () => predictWebcam();
+        }
       } else {
         try {
           // If we already requested it, use the active stream
           if (videoRef.current.srcObject) {
-             videoRef.current.onloadeddata = () => predictWebcam();
+             videoRef.current.play().catch(e => console.warn("Auto-play prevented", e));
+             if (videoRef.current.readyState >= 2) {
+               predictWebcam();
+             } else {
+               videoRef.current.onloadeddata = () => predictWebcam();
+             }
              return;
           }
           
@@ -113,45 +140,57 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
 
     return () => {
       isActive = false;
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      isComponentMountedRef.current = false;
+      if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
     };
   }, [mediaStream]);
 
   const predictWebcam = () => {
+    if (!isComponentMountedRef.current) return;
     const video = videoRef.current;
     const landmarker = faceLandmarkerRef.current;
     if (!video || !landmarker || isLocked) return;
 
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      animationFrameIdRef.current = requestAnimationFrame(predictWebcam);
+      return;
+    }
+
     try {
       const now = performance.now();
-      if (now - lastProcessTimeRef.current >= FRAME_PROCESS_INTERVAL) {
-        lastProcessTimeRef.current = now;
-        frameCountRef.current++;
+      if (video.currentTime !== lastVideoTimeRef.current) {
+        lastVideoTimeRef.current = video.currentTime;
+        if (now - lastProcessTimeRef.current >= FRAME_PROCESS_INTERVAL) {
+          lastProcessTimeRef.current = now;
+          frameCountRef.current++;
         
-        let startTimeMs = performance.now();
-        // Ensure strictly increasing timestamp for MediaPipe
-        if (startTimeMs <= (landmarker as any).lastStartTimeMs) {
-          startTimeMs = (landmarker as any).lastStartTimeMs + 1;
-        }
-        (landmarker as any).lastStartTimeMs = startTimeMs;
+          let startTimeMs = performance.now();
+          // Ensure strictly increasing timestamp for MediaPipe
+          if (startTimeMs <= (landmarker as any).lastStartTimeMs) {
+            startTimeMs = (landmarker as any).lastStartTimeMs + 1;
+          }
+          (landmarker as any).lastStartTimeMs = startTimeMs;
 
-        const result = landmarker.detectForVideo(video, startTimeMs);
-        processResult(result);
-        
-        if (devOverlay) {
-          drawDevOverlay(result, video);
+          const result = landmarker.detectForVideo(video, startTimeMs);
+          processResult(result);
+          
+          if (devOverlay) {
+            drawDevOverlay(result, video);
+          }
         }
       }
 
       // Heartbeat logic
       if (now - lastHeartbeatTimeRef.current >= HEARTBEAT_INTERVAL) {
-        const fps = Math.round((frameCountRef.current * 1000) / (now - lastHeartbeatTimeRef.current));
+        const instantaneousFps = (frameCountRef.current * 1000) / (now - lastHeartbeatTimeRef.current);
+        smoothedFpsRef.current = (smoothedFpsRef.current * 0.7) + (instantaneousFps * 0.3);
+        const fps = Math.round(smoothedFpsRef.current);
         frameCountRef.current = 0;
         
         onHeartbeat?.({
           fps,
           lastDetectionAgoMs: now - lastProcessTimeRef.current,
-          faceConfidence: lastConfidenceRef.current,
+          trackingConfidence: lastConfidenceRef.current,
           gazeDirection: lastGazeDirectionRef.current,
           detectionHealth: lastDetectionHealthRef.current,
           engineState: 'READY'
@@ -162,47 +201,35 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
       console.error("[CameraMonitor] Error in predictWebcam loop:", err);
     } finally {
       // ALWAYS queue the next frame, even if this one errored, to prevent freezing!
-      requestAnimationFrame(predictWebcam);
+      animationFrameIdRef.current = requestAnimationFrame(predictWebcam);
     }
   };
 
   const processResult = (result: any) => {
-    // Filter out microscopic "hallucinated" faces and faces with zero expression activity
-    const validIndices: number[] = [];
-    if (result.faceLandmarks) {
-      result.faceLandmarks.forEach((landmarks: any, i: number) => {
-        const faceWidth = Math.abs(landmarks[454].x - landmarks[234].x);
-        const faceHeight = Math.abs(landmarks[152].y - landmarks[10].y);
-        
-        let maxBlend = 0;
-        if (result.faceBlendshapes && result.faceBlendshapes[i] && result.faceBlendshapes[i].categories) {
-          maxBlend = result.faceBlendshapes[i].categories.reduce((m: number, c: any) => Math.max(m, c.score), 0);
-        }
-
-        // A real face takes up > 5% of screen. We rely on MediaPipe's confidence score rather than manual blendshape heuristics.
-        if (faceWidth > 0.05 && faceHeight > 0.05) {
-          validIndices.push(i);
-        }
-      });
+    let validFaceIndex = -1;
+    if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+      validFaceIndex = 0;
     }
 
-    const faceCount = validIndices.length;
+    const faceCount = result.faceLandmarks ? result.faceLandmarks.length : 0;
     const hasFace = faceCount > 0;
     
-    let confidence = 0;
+    // As requested: Console log to verify sensor output
+    console.log("SENSOR FRAME", { faceCount, faceDetected: hasFace });
+    
+    let trackingConfidence = 0;
     let gazeDirection: RawDetectionFrame['gazeDirection'] = 'center';
     let isHeadTurned = false;
     let isMouthMoving = false;
     let expression = 'Neutral';
 
-    let headPitch: number | string = 'N/A';
-    let headYaw: number | string = 'N/A';
-    let headRoll: number | string = 'N/A';
-    let facePosition: 'CENTERED' | 'PARTIAL_OUT' | 'N/A' = 'N/A';
-    let detectionHealth: 'GOOD' | 'LOW_LIGHT' | 'PARTIAL_FACE' | 'UNSTABLE' = 'GOOD';
+    let headPitch = 0;
+    let headYaw = 0;
+    let headRoll = 0;
+    let facePosition: 'CENTERED' | 'PARTIAL_OUT' = 'CENTERED';
 
-    if (hasFace) {
-      const bestIdx = validIndices[0];
+    if (hasFace && validFaceIndex >= 0) {
+      const bestIdx = validFaceIndex;
       const blendshapes = result.faceBlendshapes ? result.faceBlendshapes[bestIdx] : null;
       const landmarks = result.faceLandmarks[bestIdx];
 
@@ -215,89 +242,188 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
         maxY = Math.max(maxY, pt.y);
       });
 
-      if (minX < 0.02 || minY < 0.02 || maxX > 0.98 || maxY > 0.98) {
+      const faceWidth = maxX - minX;
+      const faceHeight = maxY - minY;
+      const faceCenterX = (minX + maxX) / 2;
+      const faceCenterY = (minY + maxY) / 2;
+      const faceArea = faceWidth * faceHeight;
+
+      if (faceCenterX < 0.20 || faceCenterX > 0.80 || faceCenterY < 0.20 || faceCenterY > 0.80) {
         facePosition = 'PARTIAL_OUT';
       }
 
-      // Calculate Head Angles
-      headPitch = Math.round((landmarks[1].y - landmarks[10].y) * 100);
-      headYaw = Math.round((landmarks[1].x - landmarks[234].x) * 100);
-      
+      // 1. Raw Head Pose Estimation
+      const leftCheek = landmarks[234];
+      const rightCheek = landmarks[454];
+      const nose = landmarks[1];
+      const forehead = landmarks[10];
+      const chin = landmarks[152];
+
+      const internalFaceWidth = Math.abs(rightCheek.x - leftCheek.x);
+      const internalFaceHeight = Math.abs(chin.y - forehead.y);
+
+      let rawYaw = 0;
+      let rawPitch = 0;
+      if (internalFaceWidth > 0.01) {
+        const noseRelX = (nose.x - leftCheek.x) / internalFaceWidth;
+        rawYaw = (0.5 - noseRelX) * 90;
+      }
+      if (internalFaceHeight > 0.01) {
+        const noseRelY = (nose.y - forehead.y) / internalFaceHeight;
+        rawPitch = (0.5 - noseRelY) * 80;
+      }
+
       const dx = landmarks[263].x - landmarks[33].x;
       const dy = landmarks[263].y - landmarks[33].y;
-      headRoll = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
-      
-      if (blendshapes && blendshapes.categories && blendshapes.categories.length > 0) {
-        // Graduated confidence calculation
-        confidence = Math.min(1.0, blendshapes.categories[0].score + 0.5);
-        
-        // Expression heuristic
-        const smileScore = blendshapes.categories.find((c: any) => c.categoryName === 'mouthSmileLeft')?.score || 0;
-        if (smileScore > 0.4) expression = 'Smiling';
+      let rawRoll = (Math.atan2(dy, dx) * 180) / Math.PI;
+      if (rawRoll > 90) rawRoll -= 180;
+      if (rawRoll < -90) rawRoll += 180;
 
-        const maxBlendScore = blendshapes.categories.reduce((max: number, b: any) => Math.max(max, b.score), 0);
+      if (!isFinite(rawYaw)) rawYaw = 0;
+      if (!isFinite(rawPitch)) rawPitch = 0;
+      if (!isFinite(rawRoll)) rawRoll = 0;
 
-        // Head pose analysis (simple heuristic using nose ratio)
-        const landmarks = result.faceLandmarks[bestIdx];
-        const faceWidth = Math.abs(landmarks[454].x - landmarks[234].x);
-        
-        // Prevent division by zero or extreme angles if face is too small
-        if (faceWidth > 0.05) {
-          const noseRelX = (landmarks[1].x - landmarks[234].x) / faceWidth;
-          // Loosened the threshold to prevent false positives when nose is just slightly off center
-          isHeadTurned = noseRelX < 0.25 || noseRelX > 0.75; 
-        }
+      // 2. Exponential Smoothing
+      headPitch = lastPitchRef.current * SMOOTHING + rawPitch * (1 - SMOOTHING);
+      headYaw = lastYawRef.current * SMOOTHING + rawYaw * (1 - SMOOTHING);
+      headRoll = lastRollRef.current * SMOOTHING + rawRoll * (1 - SMOOTHING);
 
-        // Loosened gaze score threshold to prevent constant "away" status
-        const gazeScore = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookOutLeft')?.score || 0;
-        if (gazeScore > 0.6 || isHeadTurned) {
-           gazeDirection = 'away';
+      lastPitchRef.current = headPitch;
+      lastYawRef.current = headYaw;
+      lastRollRef.current = headRoll;
+
+      // 3. Baseline Calibration
+      const now = Date.now();
+      if (!faceTrackingStartTimeRef.current) {
+        if (faceLostTimeRef.current && (now - faceLostTimeRef.current < 5000)) {
+           // Preserved baseline
         } else {
-           gazeDirection = 'center'; 
+           baselinePitchRef.current = null;
+           baselineYawRef.current = null;
+           baselineRollRef.current = null;
         }
+        faceTrackingStartTimeRef.current = now;
+      }
+      faceLostTimeRef.current = null;
+      
+      if (faceTrackingStartTimeRef.current && now - faceTrackingStartTimeRef.current > 2000 && now - faceTrackingStartTimeRef.current < 3000) {
+         if (baselinePitchRef.current === null && Math.abs(rawYaw) < 15 && Math.abs(rawPitch) < 15) {
+             baselinePitchRef.current = headPitch;
+             baselineYawRef.current = headYaw;
+             baselineRollRef.current = headRoll;
+         }
+      }
 
-        // Mouth activity
-        const mouthActivity = blendshapes.filter((b: any) => 
+      let calibPitch = headPitch;
+      let calibYaw = headYaw;
+      let calibRoll = headRoll;
+
+      if (baselinePitchRef.current !== null) {
+          calibPitch -= baselinePitchRef.current;
+          calibYaw -= baselineYawRef.current;
+          calibRoll -= baselineRollRef.current;
+      }
+      
+      headPitch = Math.round(calibPitch);
+      headYaw = Math.round(calibYaw);
+      headRoll = Math.round(calibRoll);
+
+      // Jitter calculation
+      const jitterMagnitude = (Math.abs(rawYaw - lastYawRef.current) / 90 + Math.abs(rawPitch - lastPitchRef.current) / 80) / 2;
+      const trackingStabilityScore = Math.max(0, 1.0 - jitterMagnitude * 2);
+
+      // Face Size Score
+      const faceSizeScore = Math.min(1.0, faceArea / 0.15);
+      
+      // Centering Score
+      const distFromCenter = Math.sqrt(Math.pow(faceCenterX - 0.5, 2) + Math.pow(faceCenterY - 0.5, 2));
+      const centeringScore = Math.max(0, 1.0 - distFromCenter * 2);
+      
+      // Landmark Coverage
+      const landmarkCoverageScore = landmarks.length === 478 ? 1.0 : 0.0;
+
+      trackingConfidence = (faceSizeScore * 0.40 + centeringScore * 0.30 + trackingStabilityScore * 0.30) * 100;
+      
+      if (faceArea < MIN_FACE_AREA) {
+         trackingConfidence *= 0.5; // Penalty
+      }
+      trackingConfidence = Math.max(0, Math.min(100, trackingConfidence));
+
+      // 4. Gaze tracking with Hysteresis
+      if (blendshapes && blendshapes.categories && blendshapes.categories.length > 0) {
+        const eyeLookInLeft = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookInLeft')?.score || 0;
+        const eyeLookOutLeft = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookOutLeft')?.score || 0;
+        const eyeLookUpLeft = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookUpLeft')?.score || 0;
+        const eyeLookDownLeft = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookDownLeft')?.score || 0;
+        
+        const eyeLookInRight = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookInRight')?.score || 0;
+        const eyeLookOutRight = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookOutRight')?.score || 0;
+        const eyeLookUpRight = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookUpRight')?.score || 0;
+        const eyeLookDownRight = blendshapes.categories.find((c: any) => c.categoryName === 'eyeLookDownRight')?.score || 0;
+
+        const userLookingLeft = (eyeLookOutLeft + eyeLookInRight) / 2;
+        const userLookingRight = (eyeLookInLeft + eyeLookOutRight) / 2;
+        const userLookingUp = (eyeLookUpLeft + eyeLookUpRight) / 2;
+        const userLookingDown = (eyeLookDownLeft + eyeLookDownRight) / 2;
+
+        const horizontal = userLookingRight - userLookingLeft;
+        const vertical = userLookingUp - userLookingDown;
+
+        const ENTER = 0.30;
+        const EXIT = 0.20;
+
+        const currentGaze = lastGazeDirectionRef.current;
+        let newGaze: RawDetectionFrame['gazeDirection'] = currentGaze as any;
+
+        if (horizontal > ENTER) newGaze = 'right';
+        else if (horizontal < -ENTER) newGaze = 'left';
+        else if (vertical > ENTER) newGaze = 'up';
+        else if (vertical < -ENTER) newGaze = 'down';
+        else if (Math.abs(horizontal) < EXIT && Math.abs(vertical) < EXIT) newGaze = 'center';
+
+        gazeDirection = newGaze;
+        
+        const mouthActivity = blendshapes.categories.filter((b: any) => 
           ['mouthPucker', 'mouthFunnel', 'mouthLowerDownLeft', 'mouthLowerDownRight', 
            'mouthUpperUpLeft', 'mouthUpperUpRight', 'jawOpen'].includes(b.categoryName)
         ).reduce((sum: number, b: any) => sum + b.score, 0);
 
         isMouthMoving = mouthActivity > 0.45;
-        
-        // Basic expression
-        const smile = blendshapes.find((b: any) => b.categoryName === 'mouthSmileLeft')?.score || 0;
+        const smile = blendshapes.categories.find((b: any) => b.categoryName === 'mouthSmileLeft')?.score || 0;
         expression = isMouthMoving ? 'Speaking' : (smile > 0.4 ? 'Smiling' : 'Neutral');
-        
-      } else {
-        // Binary fallback if blendshapes are missing
-        confidence = 1.0;
       }
 
-      if (facePosition === 'PARTIAL_OUT') {
-        detectionHealth = 'PARTIAL_FACE';
-      } else if (confidence < 0.6) {
-        detectionHealth = 'UNSTABLE';
-      } else {
-        detectionHealth = 'GOOD';
-      }
     } else {
-        // Force center position if missing face
-        facePosition = 'N/A';
-        headPitch = 'N/A';
-        headYaw = 'N/A';
-        headRoll = 'N/A';
+        faceTrackingStartTimeRef.current = null;
+        if (!faceLostTimeRef.current) {
+           faceLostTimeRef.current = Date.now();
+        }
+        
+        facePosition = 'CENTERED';
+        headPitch = 0;
+        headYaw = 0;
+        headRoll = 0;
     }
 
-    // Update refs for heartbeat
-    lastConfidenceRef.current = confidence;
+    if (!isFinite(headPitch)) headPitch = 0;
+    if (!isFinite(headYaw)) headYaw = 0;
+    if (!isFinite(headRoll)) headRoll = 0;
+    if (!isFinite(trackingConfidence)) trackingConfidence = 0;
+
+    lastConfidenceRef.current = trackingConfidence;
     lastGazeDirectionRef.current = gazeDirection;
+
+    let detectionHealth: 'GOOD' | 'LOW_LIGHT' | 'PARTIAL_FACE' | 'UNSTABLE' = 'GOOD';
+    if (!hasFace) detectionHealth = 'UNSTABLE';
+    else if (facePosition === 'PARTIAL_OUT') detectionHealth = 'PARTIAL_FACE';
+    else if (trackingConfidence < 60) detectionHealth = 'UNSTABLE';
     lastDetectionHealthRef.current = detectionHealth;
 
     const frameData: RawDetectionFrame = {
       faceCount,
       faceDetected: hasFace,
-      landmarkCount: hasFace ? result.faceLandmarks[validIndices[0]].length : 0,
-      confidence,
+      landmarkCount: hasFace && result.faceLandmarks[0] ? result.faceLandmarks[0].length : 0,
+      trackingConfidence: Math.round(trackingConfidence),
       gazeDirection,
       isHeadTurned,
       isMouthMoving,
@@ -309,6 +435,7 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
       facePosition
     };
 
+    console.log("FRAME EMITTED", { hasFace, headPitch, headYaw, gazeDirection });
     onDetectionFrame?.(frameData);
   };
 
@@ -338,7 +465,7 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
           maxBlend = result.faceBlendshapes[i].categories.reduce((m: number, c: any) => Math.max(m, c.score), 0);
         }
         
-        if (fw > 0.05 && fh > 0.05 && maxBlend > 0.15) {
+        if (fw > 0.02 && fh > 0.02 && maxBlend >= 0) {
           validIndices.push(i);
         }
       });
@@ -421,7 +548,7 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
         
         const faceWidth = Math.abs(landmarks[454].x - landmarks[234].x);
         let gazeStateText = 'CENTER';
-        if (faceWidth > 0.05) {
+        if (faceWidth > 0.02) {
            const noseRelX = (landmarks[1].x - landmarks[234].x) / faceWidth;
            gazeStateText = (noseRelX < 0.25 || noseRelX > 0.75) ? 'AWAY' : 'CENTER';
         }

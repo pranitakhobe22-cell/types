@@ -31,7 +31,7 @@ const createInitialState = (): ProctoringState => ({
   currentRiskScore: 0,
   overallRiskScore: 0,
   heartbeat: {
-    fps: 0, lastDetectionAgoMs: 0, faceConfidence: 0, engineState: 'INITIALIZING',
+    fps: 0, lastDetectionAgoMs: 0, trackingConfidence: 0, engineState: 'INITIALIZING',
     gazeDirection: '',
     detectionHealth: 'GOOD'
   },
@@ -95,6 +95,7 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
     case 'NETWORK_RECOVERED': return { ...state, networkHealthy: true };
 
     case 'DETECTION_FRAME': {
+      console.log("REDUCER RECEIVED FRAME", action.frame);
       let newState = { ...state };
       if (action.frame.faceCount > state.maxConcurrentFaces) newState.maxConcurrentFaces = action.frame.faceCount;
 
@@ -113,6 +114,10 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
           newState.overallRiskScore += 3;
         }
       } else {
+        if (newState.noFaceState === 'VIOLATION_CREATED') {
+          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'FACE_RECOVERED', severity: 0, detail: 'Face detected' };
+          newState.timeline = [...newState.timeline, t];
+        }
         newState.noFaceState = 'FACE_PRESENT';
         newState.noFaceStartTime = null;
       }
@@ -132,31 +137,57 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
           newState.overallRiskScore += 5;
         }
       } else {
+        if (newState.multiFaceState === 'VIOLATION_CREATED' as any) {
+          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'MULTIPLE_FACES_RESOLVED', severity: 0, detail: 'Single face restored' };
+          newState.timeline = [...newState.timeline, t];
+        }
         newState.multiFaceState = 'SINGLE_FACE';
         newState.multiFaceStartTime = null;
       }
 
-      // Gaze State Machine
-      if (action.frame.gazeDirection === 'away') {
+      // Gaze State Machine (Holistic Away Detection)
+      const isAway = action.frame.gazeDirection !== 'center' || Math.abs(action.frame.headYaw) > 30 || action.frame.facePosition === 'PARTIAL_OUT';
+      if (isAway && action.frame.faceCount > 0) {
         if (newState.gazeState === 'LOOKING') {
           newState.gazeState = 'AWAY_START';
           newState.gazeAwayStartTime = now;
         } else if (newState.gazeState === 'AWAY_START' && newState.gazeAwayStartTime && now - newState.gazeAwayStartTime > 2000) {
           newState.gazeState = 'VIOLATION_CREATED';
-          const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'GAZE_AWAY', severity: 1, timestamp: now, message: 'Looking away from screen' };
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'GAZE_AWAY', severity: 1 };
+          const reason = action.frame.facePosition === 'PARTIAL_OUT' ? 'Face partially out' : 
+                         Math.abs(action.frame.headYaw) > 30 ? 'Head turned away' : 
+                         `Looking ${action.frame.gazeDirection}`;
+          const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'GAZE_AWAY', severity: 1, timestamp: now, message: `Candidate looking away: ${reason}` };
+          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'GAZE_AWAY', severity: 1, detail: reason };
           newState.violations = [...newState.violations, v];
           newState.timeline = [...newState.timeline, t];
           newState.currentRiskScore += 1;
           newState.overallRiskScore += 1;
         }
       } else {
-        if (newState.gazeState === 'VIOLATION_CREATED') newState.gazeState = 'COOLDOWN';
-        else newState.gazeState = 'LOOKING';
-        newState.gazeAwayStartTime = null;
+        if (newState.gazeState === 'VIOLATION_CREATED') {
+          newState.gazeState = 'COOLDOWN';
+          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'GAZE_RESOLVED', severity: 0, detail: 'Returned to screen' };
+          newState.timeline = [...newState.timeline, t];
+        } else {
+          newState.gazeState = 'LOOKING';
+        }
+        // Only clear gaze start time if they are looking back at screen AND face is present
+        // If face is absent, we don't clear it so we don't spam transitions.
+        if (action.frame.faceCount > 0) {
+           newState.gazeAwayStartTime = null;
+        }
       }
 
-      return newState;
+      const isChanged = 
+        newState.maxConcurrentFaces !== state.maxConcurrentFaces ||
+        newState.noFaceState !== state.noFaceState ||
+        newState.multiFaceState !== state.multiFaceState ||
+        newState.gazeState !== state.gazeState ||
+        newState.violations.length !== state.violations.length ||
+        newState.timeline.length !== state.timeline.length ||
+        newState.currentRiskScore !== state.currentRiskScore;
+
+      return isChanged ? newState : state;
     }
     default: return state;
   }
@@ -206,8 +237,22 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const latestHeartbeatRef = useRef<{fps: number, health: string}>({ fps: 0, health: 'GOOD' });
 
   // Dashboard Telemetry
-  const telemetryRef = useRef<DashboardTelemetry | null>(null);
-  const [telemetry, setTelemetry] = useState<DashboardTelemetry | null>(null);
+  const defaultTelemetry: DashboardTelemetry = {
+    faceDetected: false,
+    trackingConfidence: 0,
+    monitoringQualityScore: 0,
+    gazeDirection: 'center',
+    gazeDurationMs: 0,
+    headPitch: 0,
+    headYaw: 0,
+    headRoll: 0,
+    fps: 0,
+    facePosition: 'CENTERED',
+    detectionHealth: 'INITIALIZING',
+    lastUpdated: Date.now()
+  };
+  const telemetryRef = useRef<DashboardTelemetry>(defaultTelemetry);
+  const [telemetry, setTelemetry] = useState<DashboardTelemetry>(defaultTelemetry);
   
   const healthStatsRef = useRef({
     totalFrames: 0,
@@ -217,13 +262,16 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     longestNoFaceStart: null as number | null,
     longestNoFaceDurationMs: 0,
     longestGazeAwayStart: null as number | null,
-    longestGazeAwayDurationMs: 0
+    longestGazeAwayDurationMs: 0,
+    currentGazeDirection: 'center' as string,
+    currentGazeDirectionStart: Date.now() as number
   });
 
   useEffect(() => {
+    // 300ms Sampling for UI stability (no hidden state machine)
     const interval = setInterval(() => {
       setTelemetry(telemetryRef.current);
-    }, 500);
+    }, 300);
     return () => clearInterval(interval);
   }, []);
 
@@ -398,7 +446,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     recognitionRef.current = recognition;
 
     return () => {
-      recognition.stop();
+      try {
+        recognition.stop();
+        recognition.abort();
+      } catch (e) {}
     };
   }, []);
 
@@ -519,7 +570,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       },
       healthSummary: {
         monitoringCoveragePercent: healthStatsRef.current.totalFrames > 0 ? Math.round((healthStatsRef.current.framesWithFace / healthStatsRef.current.totalFrames) * 1000) / 10 : 100,
-        averageFaceConfidence: healthStatsRef.current.totalFrames > 0 ? Math.round(healthStatsRef.current.confidenceSum / healthStatsRef.current.totalFrames) : 100,
+        averageTrackingConfidence: healthStatsRef.current.totalFrames > 0 ? Math.round(healthStatsRef.current.confidenceSum / healthStatsRef.current.totalFrames) : 100,
         totalDetectionFrames: healthStatsRef.current.totalFrames,
         stalledPeriods: healthStatsRef.current.stalledPeriods,
         longestNoFaceDurationMs: healthStatsRef.current.longestNoFaceDurationMs,
@@ -629,17 +680,40 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
                     stats.longestNoFaceStart = Date.now();
                   }
 
-                  if (frame.gazeDirection === 'away') {
+                  const isAway = frame.gazeDirection !== 'center' || Math.abs(frame.headYaw) > 30 || frame.facePosition === 'PARTIAL_OUT';
+
+                  if (isAway && frame.faceCount > 0) {
                     if (stats.longestGazeAwayStart === null) stats.longestGazeAwayStart = Date.now();
-                  } else if (stats.longestGazeAwayStart !== null) {
-                    const duration = Date.now() - stats.longestGazeAwayStart;
-                    if (duration > stats.longestGazeAwayDurationMs) stats.longestGazeAwayDurationMs = duration;
-                    stats.longestGazeAwayStart = null;
+                  } else {
+                    if (stats.longestGazeAwayStart !== null) {
+                      const duration = Date.now() - stats.longestGazeAwayStart;
+                      if (duration > stats.longestGazeAwayDurationMs) stats.longestGazeAwayDurationMs = duration;
+                      stats.longestGazeAwayStart = null;
+                    }
                   }
 
+                  if (frame.gazeDirection !== stats.currentGazeDirection) {
+                    stats.currentGazeDirection = frame.gazeDirection;
+                    stats.currentGazeDirectionStart = Date.now();
+                  }
+                  const gazeDurationMs = Date.now() - stats.currentGazeDirectionStart;
+                  
+                  // Calculate monitoring quality score
+                  const fps = latestHeartbeatRef.current.fps;
+                  const fpsScore = Math.min(100, Math.max(0, (fps / 24) * 100));
+                  const facePresenceScore = frame.faceDetected ? 100 : 0;
+                  const monitoringQualityScore = Math.round(
+                      (frame.trackingConfidence * 0.6) + 
+                      (fpsScore * 0.2) + 
+                      (facePresenceScore * 0.2)
+                  );
+
                   telemetryRef.current = {
-                    faceConfidence: Math.round(frame.confidence * 100),
+                    faceDetected: frame.faceDetected,
+                    trackingConfidence: frame.trackingConfidence,
+                    monitoringQualityScore,
                     gazeDirection: frame.gazeDirection,
+                    gazeDurationMs,
                     headPitch: frame.headPitch,
                     headYaw: frame.headYaw,
                     headRoll: frame.headRoll,
