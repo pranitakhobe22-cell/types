@@ -1,7 +1,8 @@
 
 import React, { useState } from 'react';
 import { Candidate } from '../types';
-import { User, Mail, Phone, CreditCard, Camera, ShieldCheck, ArrowRight } from 'lucide-react';
+import { User, Mail, Phone, CreditCard, Camera, ShieldCheck, ArrowRight, CheckSquare } from 'lucide-react';
+import { SupabaseService } from '../services/supabaseService';
 
 interface ProfileSetupProps {
   initialData: Candidate;
@@ -19,6 +20,21 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ initialData, onCompl
   const [pfpPreview, setPfpPreview] = useState<string | null>(initialData.profilePhoto || null);
   const [idPreview, setIdPreview] = useState<string | null>(initialData.idCardImage || null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hasConsent, setHasConsent] = useState(false);
+
+  // Helper to convert base64 to Blob
+  const dataURLtoBlob = (dataurl: string) => {
+      const arr = dataurl.split(',');
+      const mimeMatch = arr[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while(n--){
+          u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], {type: mime});
+  };
 
   // Helper to compress images for localStorage
   const compressImage = (file: File): Promise<string> => {
@@ -66,22 +82,52 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ initialData, onCompl
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pfpPreview || !idPreview) {
         alert("Please upload both a Profile Photo and a Government ID to proceed.");
         return;
     }
+    if (!hasConsent) {
+        alert("You must consent to identity verification and data processing to proceed.");
+        return;
+    }
     setIsSubmitting(true);
     
-    // Simulate network delay
-    setTimeout(() => {
-        onComplete({ 
+    try {
+        let pfpUrl = formData.profilePhoto;
+        let idUrl = formData.idCardImage;
+
+        const candidateIdStr = formData.accessId || formData.email.replace(/[^a-zA-Z0-9]/g, '');
+
+        // Upload to Supabase if they are new base64 strings
+        if (pfpUrl && pfpUrl.startsWith('data:')) {
+            const pfpBlob = dataURLtoBlob(pfpUrl);
+            pfpUrl = await SupabaseService.uploadFile('identity-documents', `${candidateIdStr}_pfp_${Date.now()}.jpg`, pfpBlob, 'image/jpeg');
+        }
+        
+        if (idUrl && idUrl.startsWith('data:')) {
+            const idBlob = dataURLtoBlob(idUrl);
+            idUrl = await SupabaseService.uploadFile('identity-documents', `${candidateIdStr}_id_${Date.now()}.jpg`, idBlob, 'image/jpeg');
+        }
+
+        const finalData = { 
             ...formData, 
+            profilePhoto: pfpUrl,
+            idCardImage: idUrl,
             isVerified: true 
-        });
+        };
+
+        // Create or update candidate in DB
+        await SupabaseService.upsertCandidate(finalData);
+
+        onComplete(finalData);
+    } catch (err) {
+        console.error("Submission failed", err);
+        alert("Failed to save profile. Please check your network connection.");
+    } finally {
         setIsSubmitting(false);
-    }, 1500);
+    }
   };
 
   return (
@@ -254,8 +300,29 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({ initialData, onCompl
                            </div>
                         </div>
                      </div>
+
                   </div>
 
+                </div>
+
+                {/* Consent Checkbox */}
+                <div className="mt-8 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                    <label className="flex items-start gap-3 cursor-pointer group">
+                        <div className="relative flex items-center justify-center mt-0.5">
+                            <input 
+                                type="checkbox" 
+                                className="peer sr-only"
+                                checked={hasConsent}
+                                onChange={(e) => setHasConsent(e.target.checked)}
+                            />
+                            <div className="w-5 h-5 border-2 border-slate-300 rounded transition-colors peer-checked:bg-indigo-600 peer-checked:border-indigo-600 group-hover:border-indigo-500"></div>
+                            <CheckSquare className="absolute text-white opacity-0 peer-checked:opacity-100 transition-opacity" size={14} />
+                        </div>
+                        <div className="text-xs text-slate-600 leading-relaxed">
+                            <strong className="text-slate-900 block mb-1">Data Processing & Monitoring Consent</strong>
+                            I consent to the collection and secure storage of my identity documents (photo, ID) for the purpose of verifying my identity. I understand this interview will be monitored, and snapshots/video clips may be captured if proctoring violations occur.
+                        </div>
+                    </label>
                 </div>
              </form>
            </div>

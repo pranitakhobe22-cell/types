@@ -3,6 +3,8 @@ import { Mic, MicOff, Volume2, Send, Loader2, Edit3, CheckCircle, ArrowRight, Al
 import { AIService, GeneratedQuestion } from '../services/aiService';
 import { CameraMonitor } from './CameraMonitor';
 import { MonitoringDashboard } from './MonitoringDashboard';
+import { SupabaseService } from '../services/supabaseService';
+import { MediaCaptureService, RollingRecorder } from '../services/mediaCaptureService';
 import { 
   InterviewMediaResources, RawDetectionFrame, ProctorViolation, TimelineEvent, 
   HeartbeatMetrics, ProctoringEngineState, ProctoringReport, DashboardTelemetry 
@@ -230,6 +232,8 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
   const sessionIdRef = useRef<string>(crypto.randomUUID());
   const mediaRef = useRef<InterviewMediaResources | null>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const rollingRecorderRef = useRef<RollingRecorder | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
   const [cameraReady, setCameraReady] = useState(false);
   
@@ -295,8 +299,15 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
     let mounted = true;
 
-    const initMedia = async () => {
+    const initMediaAndDevice = async () => {
       try {
+        // Record Device Fingerprint
+        import('../services/deviceFingerprint').then(async ({ getDeviceFingerprint }) => {
+          const fp = await getDeviceFingerprint();
+          console.log("[Device Fingerprint]", fp);
+          // TODO: Save device fingerprint to session via SupabaseService once the session ID is properly mapped
+        });
+
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480, frameRate: { ideal: 30 } },
           audio: true,
@@ -312,6 +323,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           videoTrack: stream.getVideoTracks()[0],
           audioTrack: stream.getAudioTracks()[0],
         };
+        
+        // Initialize rolling recorder
+        rollingRecorderRef.current = new RollingRecorder(stream, 10, 5);
+        
         setCameraReady(true);
 
         const audioTrack = stream.getAudioTracks()[0];
@@ -327,13 +342,55 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         dispatch({ type: 'SET_PERMISSION_DENIED' });
       }
     };
-    initMedia();
+    initMediaAndDevice();
 
     return () => {
       mounted = false;
+      if (rollingRecorderRef.current) rollingRecorderRef.current.stop();
       if (mediaRef.current) mediaRef.current.stream.getTracks().forEach(t => t.stop());
     };
   }, []);
+
+  // Handle Violations: Upload snapshots and clips
+  const prevViolationsLengthRef = useRef(0);
+  useEffect(() => {
+    if (proctoring.violations.length > prevViolationsLengthRef.current) {
+      const newViolations = proctoring.violations.slice(prevViolationsLengthRef.current);
+      prevViolationsLengthRef.current = proctoring.violations.length;
+
+      const sessionStrId = candidate.email.replace(/[^a-zA-Z0-9]/g, '');
+
+      newViolations.forEach(async (violation) => {
+        try {
+          let snapshotUrl = null;
+          let clipUrl = null;
+
+          if (videoElRef.current) {
+            const snapshotBlob = await MediaCaptureService.captureSnapshot(videoElRef.current);
+            snapshotUrl = await SupabaseService.uploadFile('proctoring-snapshots', `${sessionStrId}_${violation.id}.jpg`, snapshotBlob, 'image/jpeg');
+          }
+
+          if (rollingRecorderRef.current) {
+            const clipBlob = rollingRecorderRef.current.captureClip();
+            if (clipBlob) {
+              clipUrl = await SupabaseService.uploadFile('proctoring-clips', `${sessionStrId}_${violation.id}.webm`, clipBlob, 'video/webm');
+            }
+          }
+
+          // At this point the session may not exist fully in DB yet if we are using localStorage fallback, 
+          // but we can log the violation directly to Supabase now that we have URLs.
+          // Note: Full integration of tracking this requires updating BackendService which is deprecated.
+          console.log(`[MediaCapture] Violation media uploaded for ${violation.type}: ${snapshotUrl}`);
+
+          // For v4 schema, we will need to update the violation record or emit it 
+          // We can append this to a global or just rely on BackendService/SupabaseService for now.
+
+        } catch (err) {
+          console.error("Failed to capture violation media:", err);
+        }
+      });
+    }
+  }, [proctoring.violations, candidate.email]);
 
   // 2. Setup System Event Listeners
   useEffect(() => {
@@ -663,6 +720,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             <div className="w-24 h-32 self-center md:w-full md:h-auto md:aspect-[4/3] bg-black rounded-xl overflow-hidden relative shadow-lg shrink-0">
               <CameraMonitor 
                 mediaStream={mediaRef.current?.stream || undefined}
+                onVideoReady={(v) => { videoElRef.current = v; }}
                 onDetectionFrame={frame => {
                   dispatch({ type: 'DETECTION_FRAME', frame });
                   

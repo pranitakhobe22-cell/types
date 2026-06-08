@@ -4,36 +4,60 @@ import { DynamicInterviewScreen } from './components/DynamicInterviewScreen';
 import { EndScreen } from './components/EndScreen';
 import { AdminDashboard } from './components/AdminDashboard';
 import { BackendService } from './services/backendService';
-import { supabase } from './services/supabaseClient';
-import { Cloud, CloudOff } from 'lucide-react';
+import { HealthService, SystemHealth } from './services/healthService';
+import { AlertTriangle, Server, Database, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 
 function App() {
   const [flowState, setFlowState] = useState<'landing' | 'interview' | 'completed'>('landing');
   const [candidate, setCandidate] = useState<{ name: string; email: string; role: string } | null>(null);
   const [interviewHistory, setInterviewHistory] = useState<{ question: string; answer: string; ideal_answer: string }[]>([]);
-  const [isCloudEnabled, setIsCloudEnabled] = useState(!!supabase);
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  
+  const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(true);
+  const [isAdminRoute, setIsAdminRoute] = useState(false);
+
+  // Check URL for Admin route on load
+  useEffect(() => {
+    if (window.location.pathname.startsWith('/admin')) {
+      setIsAdminRoute(true);
+    }
+
+    // Run health check
+    const checkSystem = async () => {
+      setIsCheckingHealth(true);
+      const h = await HealthService.checkSystemHealth();
+      setHealth(h);
+      setIsCheckingHealth(false);
+    };
+
+    checkSystem();
+
+    // Re-check every 60 seconds
+    const interval = setInterval(checkSystem, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Simple Theme Management (Light as default)
   useEffect(() => {
     document.documentElement.classList.remove('dark');
-    setIsCloudEnabled(!!supabase);
-  }, []);
-
-  // Secret shortcut to open Admin Dashboard
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.shiftKey && e.altKey && e.code === 'KeyA') {
-        setIsAdminOpen(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   const handleStart = async (data: { name: string; email: string; role: string }) => {
     setCandidate(data);
-    await BackendService.createSession(data);
+    try {
+        const { SupabaseService } = await import('./services/supabaseService');
+        const { getDeviceFingerprint } = await import('./services/deviceFingerprint');
+        
+        const candidateRecord = await SupabaseService.upsertCandidate({ name: data.name, email: data.email, role: data.role } as any);
+        const fp = await getDeviceFingerprint();
+        
+        // Using a generic/null job post for now to keep the flow working without forcing job creation first
+        // If your DB requires a valid UUID, you'll need a fallback job ID here, or make it nullable.
+        const session = await SupabaseService.createSession(candidateRecord.id, null as any, fp, {});
+        localStorage.setItem('current_session_id', session.id);
+    } catch (e) {
+        console.error("Failed to start session in Supabase:", e);
+    }
     setFlowState('interview');
   };
 
@@ -42,14 +66,15 @@ function App() {
     warnings: { type: string; message: string }[] = [],
     status: 'COMPLETED' | 'TERMINATED' = 'COMPLETED'
   ) => {
-    // Save warnings to backend
-    for (const warning of warnings) {
-      await BackendService.logViolation(warning);
+    try {
+        const { SupabaseService } = await import('./services/supabaseService');
+        const sessionId = localStorage.getItem('current_session_id');
+        if (sessionId) {
+            await SupabaseService.completeSession(sessionId, 0); // Assuming 0 duration for now
+        }
+    } catch (e) {
+        console.error("Failed to complete session:", e);
     }
-    
-    // Complete session with dynamic status
-    await BackendService.completeSession(status);
-
     setInterviewHistory(history);
     setFlowState('completed');
   };
@@ -60,31 +85,98 @@ function App() {
     setInterviewHistory([]);
   };
 
+  const isSystemHealthy = health?.database && health?.storage && health?.auth;
+  
+  // Is this the very first health check on load?
+  const isInitialLoad = isCheckingHealth && health === null;
+
+  // Blocking System Configuration Screen
+  if (isInitialLoad || (!isCheckingHealth && !isSystemHealthy && !isAdminRoute)) {
+    return (
+      <div className="min-h-screen w-screen bg-[#F8FAFC] flex items-center justify-center p-4 text-slate-900">
+        <div className="bg-white max-w-md w-full p-8 rounded-2xl shadow-xl border border-slate-200">
+          
+          <div className="flex flex-col items-center mb-8">
+            {isInitialLoad ? (
+              <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mb-4" />
+            ) : (
+              <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mb-4 border border-red-200">
+                <AlertTriangle className="w-8 h-8 text-red-600" />
+              </div>
+            )}
+            <h1 className="text-2xl font-bold text-slate-800">
+              {isCheckingHealth ? "Verifying System" : "System Configuration Error"}
+            </h1>
+            <p className="text-slate-500 text-center mt-2 text-sm">
+              {isCheckingHealth 
+                ? "Connecting to Supabase services..."
+                : "Unable to start platform. Critical services are unreachable."}
+            </p>
+          </div>
+
+          {!isCheckingHealth && health && (
+            <div className="space-y-4">
+              <div className={`p-4 rounded-xl border flex items-center justify-between ${health.database ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50 border-red-200'}`}>
+                <div className="flex items-center gap-3">
+                  <Database className={health.database ? 'text-emerald-500' : 'text-red-500'} size={20} />
+                  <span className="font-medium text-sm">Database Tables</span>
+                </div>
+                {health.database ? <CheckCircle2 className="text-emerald-500" size={20} /> : <span className="text-xs font-bold text-red-600 px-2 py-1 bg-red-100 rounded-md">OFFLINE</span>}
+              </div>
+
+              <div className={`p-4 rounded-xl border flex items-center justify-between ${health.storage ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50 border-red-200'}`}>
+                <div className="flex items-center gap-3">
+                  <Server className={health.storage ? 'text-emerald-500' : 'text-red-500'} size={20} />
+                  <span className="font-medium text-sm">Storage Buckets</span>
+                </div>
+                {health.storage ? <CheckCircle2 className="text-emerald-500" size={20} /> : <span className="text-xs font-bold text-red-600 px-2 py-1 bg-red-100 rounded-md">MISSING</span>}
+              </div>
+
+              <div className={`p-4 rounded-xl border flex items-center justify-between ${health.auth ? 'bg-emerald-50/50 border-emerald-100' : 'bg-red-50 border-red-200'}`}>
+                <div className="flex items-center gap-3">
+                  <Lock className={health.auth ? 'text-emerald-500' : 'text-red-500'} size={20} />
+                  <span className="font-medium text-sm">Authentication</span>
+                </div>
+                {health.auth ? <CheckCircle2 className="text-emerald-500" size={20} /> : <span className="text-xs font-bold text-red-600 px-2 py-1 bg-red-100 rounded-md">UNREACHABLE</span>}
+              </div>
+
+              {health.errors.length > 0 && (
+                <div className="mt-6 p-4 bg-slate-900 rounded-xl overflow-hidden">
+                  <h3 className="text-xs font-mono font-bold text-slate-400 uppercase tracking-wider mb-2">Error Logs</h3>
+                  <div className="space-y-1">
+                    {health.errors.map((err, i) => (
+                      <p key={i} className="text-xs font-mono text-red-400 break-words">{err}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button 
+                onClick={() => window.location.reload()}
+                className="w-full mt-6 py-3 bg-slate-900 text-white rounded-xl font-medium hover:bg-slate-800 transition-colors"
+              >
+                Retry Connection
+              </button>
+            </div>
+          )}
+
+        </div>
+      </div>
+    );
+  }
+
+  // Admin Route
+  if (isAdminRoute) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] text-slate-900 selection:bg-indigo-500/10 transition-colors duration-500">
+        <AdminDashboard health={health} onLogout={() => { window.location.pathname = '/'; }} />
+      </div>
+    );
+  }
+
+  // Main App Flow
   return (
     <div className={`${flowState === 'completed' ? 'min-h-screen overflow-y-auto' : 'h-screen overflow-hidden'} w-screen bg-[#F8FAFC] text-slate-900 selection:bg-indigo-500/10 transition-colors duration-500`}>
-      {/* Admin Dashboard Overlay */}
-      {isAdminOpen && (
-        <div className="fixed inset-0 z-[100] animate-in fade-in zoom-in duration-300">
-          <AdminDashboard onLogout={() => setIsAdminOpen(false)} />
-        </div>
-      )}
-
-      {/* Cloud Status Indicator */}
-      <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-3 py-1.5 bg-white/80 backdrop-blur-sm border border-slate-200 rounded-full shadow-sm text-[10px] font-bold uppercase tracking-wider">
-        {isCloudEnabled ? (
-          <>
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-slate-600">Cloud Sync Active</span>
-            <Cloud size={12} className="text-indigo-500" />
-          </>
-        ) : (
-          <>
-            <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            <span className="text-slate-600">Local Mode</span>
-            <CloudOff size={12} className="text-slate-400" />
-          </>
-        )}
-      </div>
       {flowState === 'landing' && (
         <LandingScreen onStart={handleStart} />
       )}
@@ -101,15 +193,13 @@ function App() {
 
       {flowState === 'completed' && candidate && (
         <EndScreen 
-          candidate={candidate} 
           history={interviewHistory} 
+          candidate={candidate} 
           onHome={handleReset} 
         />
       )}
     </div>
   );
 }
-
-
 
 export default App;

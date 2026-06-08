@@ -4,12 +4,15 @@ import { StorageService } from '../services/storageService';
 import { InterviewSession, JobPost, Question, RoleSettings } from '../types';
 import {
     Users, Settings, LogOut, Search, Shield, Briefcase, Lock, Edit, Plus, Save, X, Trash2,
-    Sliders, Activity, Power, ToggleLeft, ToggleRight, Eye, LayoutDashboard, Download, PieChart, TrendingUp, ChevronRight, Link, Copy, CheckCircle
+    Sliders, Activity, Power, ToggleLeft, ToggleRight, Eye, LayoutDashboard, Download, PieChart, TrendingUp, ChevronRight, Link, Copy, CheckCircle, Server, Database, AlertTriangle
 } from 'lucide-react';
+
+import { SystemHealth } from '../services/healthService';
 
 interface AdminDashboardProps {
     onLogout: () => void;
     onCreateJob?: () => void;
+    health?: SystemHealth | null;
 }
 
 const DEFAULT_SETTINGS: RoleSettings = {
@@ -19,8 +22,8 @@ const DEFAULT_SETTINGS: RoleSettings = {
     proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
 };
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCreateJob }) => {
-    const [activeTab, setActiveTab] = useState<'overview' | 'candidates' | 'jobs' | 'settings'>('overview');
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCreateJob, health }) => {
+    const [activeTab, setActiveTab] = useState<'overview' | 'candidates' | 'jobs' | 'settings' | 'system'>('overview');
     const [sessions, setSessions] = useState<InterviewSession[]>([]);
     const [jobs, setJobs] = useState<JobPost[]>([]);
     const [config, setConfig] = useState(DEFAULT_SETTINGS as any);
@@ -43,9 +46,83 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
 
     useEffect(() => {
         const load = async () => {
-            setSessions(await StorageService.getSessions());
-            setJobs(await StorageService.getJobs());
-            setConfig(await StorageService.getConfig());
+            try {
+                const { SupabaseService } = await import('../services/supabaseService');
+                
+                // Load config (StorageService is fine for local admin UI settings if they aren't synced yet)
+                setConfig(await StorageService.getConfig());
+                
+                // Load Jobs
+                const rawJobs = await SupabaseService.getAllJobs();
+                if (rawJobs) {
+                    setJobs(rawJobs.map(j => ({
+                        id: j.id,
+                        title: j.title,
+                        description: j.description || '',
+                        company: j.company || 'Unknown',
+                        accessKey: j.access_key,
+                        mode: j.mode,
+                        status: j.status,
+                        settings: j.role_settings?.[0] || DEFAULT_SETTINGS,
+                        questions: j.questions || []
+                    })));
+                }
+
+                // Load Sessions
+                const rawSessions = await SupabaseService.getAllSessions();
+                if (rawSessions) {
+                    const mappedSessions: InterviewSession[] = rawSessions.map(rs => {
+                        const candidate = rs.candidates || {};
+                        const job = rs.job_posts || {};
+                        
+                        // Grab the latest proctoring report if it exists
+                        const latestReport = rs.proctoring_reports && rs.proctoring_reports.length > 0 
+                            ? rs.proctoring_reports[0] 
+                            : null;
+
+                        return {
+                            id: rs.id,
+                            candidate: {
+                                name: candidate.name || 'Unknown',
+                                email: candidate.email || '',
+                                role: job.title || 'Unknown',
+                                profilePhoto: candidate.profile_photo_url,
+                                idCardImage: candidate.id_card_image_url
+                            },
+                            status: rs.status,
+                            date: rs.created_at,
+                            overallScore: rs.evaluation_reports?.[0]?.total_score || 0,
+                            // Map proctoring data if it exists
+                            proctoringReport: latestReport ? {
+                                currentRiskScore: latestReport.current_risk_score,
+                                overallRiskScore: latestReport.overall_risk_score,
+                                violations: latestReport.proctoring_violations?.map((v: any) => ({
+                                    type: v.violation_type,
+                                    severity: v.severity,
+                                    message: v.message,
+                                    timestamp: new Date(v.occurred_at).getTime(),
+                                    clip_url: v.clip_url,
+                                    snapshot_url: v.snapshot_url
+                                })) || []
+                            } : undefined,
+                            evaluationReport: rs.evaluation_reports?.[0],
+                            results: rs.evaluation_reports?.[0]?.detailed_analysis?.questionBreakdown?.map((qb: any) => ({
+                                questionText: qb.question,
+                                userAnswer: qb.candidateAnswer,
+                                contentScore: qb.score,
+                                grammarScore: qb.score, // Legacy filler
+                                fluencyScore: qb.score, // Legacy filler
+                                confidenceScore: 100, // Legacy filler
+                                verdict: qb.verdict === 'Excellent' || qb.verdict === 'Good' ? 'Pass' : 'Fail',
+                                feedback: qb.feedback
+                            })) || []
+                        } as unknown as InterviewSession; // Cast to legacy format for UI compatibility
+                    });
+                    setSessions(mappedSessions);
+                }
+            } catch (err) {
+                console.error("Failed to load dashboard data from Supabase:", err);
+            }
         };
         load();
     }, []);
@@ -223,22 +300,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
                 </div>
 
                 <nav className="flex-1 p-4 space-y-2">
-                    <button onClick={() => { setActiveTab('overview'); setSelectedSession(null); setSelectedJob(null); setEditingJob(null); }}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'overview' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
-                        <LayoutDashboard size={20} /> Overview
-                    </button>
-                    <button onClick={() => { setActiveTab('candidates'); setSelectedSession(null); }}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'candidates' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
-                        <Users size={20} /> Candidates
-                    </button>
-                    <button onClick={() => { setActiveTab('jobs'); setSelectedJob(null); setEditingJob(null); }}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'jobs' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
-                        <Briefcase size={20} /> Roles & Config
-                    </button>
-                    <button onClick={() => setActiveTab('settings')}
-                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === 'settings' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
-                        <Settings size={20} /> Global Settings
-                    </button>
+                    {[
+                        { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
+                        { id: 'jobs', icon: Briefcase, label: 'Job Roles' },
+                        { id: 'candidates', icon: Users, label: 'Candidates' },
+                        { id: 'system', icon: Activity, label: 'System Health' },
+                        { id: 'settings', icon: Settings, label: 'Settings' }
+                    ].map((item) => (
+                        <button
+                            key={item.id}
+                            onClick={() => { setActiveTab(item.id as any); setSelectedSession(null); setSelectedJob(null); setEditingJob(null); }}
+                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${activeTab === item.id ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}>
+                            <item.icon size={20} /> {item.label}
+                        </button>
+                    ))}
                 </nav>
 
                 <div className="p-4 border-t border-slate-800">
@@ -255,6 +330,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
                         {activeTab === 'overview' && 'Dashboard Overview'}
                         {activeTab === 'candidates' && (selectedSession ? `Candidate: ${selectedSession.candidate.name}` : 'Session History')}
                         {activeTab === 'jobs' && (editingJob ? `Editing: ${editingJob.title}` : 'Role Management')}
+                        {activeTab === 'system' && 'System Health'}
                         {activeTab === 'settings' && 'Global Configuration'}
                     </h2>
 
@@ -268,6 +344,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
                 </header>
 
                 <div className="flex-1 overflow-y-auto p-8">
+
+                    {/* TAB: SYSTEM HEALTH */}
+                    {activeTab === 'system' && (
+                        <div className="space-y-6">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-slate-800">System Health</h2>
+                                    <p className="text-slate-500">Live configuration and connectivity status</p>
+                                </div>
+                                {health && (
+                                    <div className="text-sm text-slate-500 flex items-center gap-2">
+                                        <Activity size={16} /> Last Synced: {new Date(health.lastChecked).toLocaleTimeString()}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Core Services */}
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                                    <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
+                                        <Server className="text-indigo-500" /> Infrastructure
+                                    </h3>
+                                    
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                                            <div className="flex items-center gap-3">
+                                                <Database size={18} className="text-slate-500" />
+                                                <span className="font-medium text-slate-700">Database (14 Tables)</span>
+                                            </div>
+                                            {health?.database ? <CheckCircle size={18} className="text-emerald-500" /> : <X size={18} className="text-red-500" />}
+                                        </div>
+                                        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                                            <div className="flex items-center gap-3">
+                                                <Server size={18} className="text-slate-500" />
+                                                <span className="font-medium text-slate-700">Storage (3 Buckets)</span>
+                                            </div>
+                                            {health?.storage ? <CheckCircle size={18} className="text-emerald-500" /> : <X size={18} className="text-red-500" />}
+                                        </div>
+                                        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                                            <div className="flex items-center gap-3">
+                                                <Lock size={18} className="text-slate-500" />
+                                                <span className="font-medium text-slate-700">Authentication</span>
+                                            </div>
+                                            {health?.auth ? <CheckCircle size={18} className="text-emerald-500" /> : <X size={18} className="text-red-500" />}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Data Counts */}
+                                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                                    <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
+                                        <Database className="text-indigo-500" /> Environment Data
+                                    </h3>
+                                    
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                                            <span className="font-medium text-slate-700">Job Posts</span>
+                                            <span className="text-slate-900 font-bold">{jobs.length}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                                            <span className="font-medium text-slate-700">Interview Sessions</span>
+                                            <span className="text-slate-900 font-bold">{sessions.length}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                                            <span className="font-medium text-slate-700">Candidates</span>
+                                            <span className="text-slate-900 font-bold">{new Set(sessions.map(s => s.candidate.email)).size}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {health?.errors && health.errors.length > 0 && (
+                                <div className="bg-red-50 border border-red-200 rounded-2xl p-6">
+                                    <h3 className="font-bold text-red-800 mb-4 flex items-center gap-2">
+                                        <AlertTriangle className="text-red-500" /> System Errors
+                                    </h3>
+                                    <ul className="list-disc list-inside space-y-2 text-sm text-red-700 font-mono">
+                                        {health.errors.map((e, i) => <li key={i}>{e}</li>)}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* --- TAB: OVERVIEW --- */}
                     {activeTab === 'overview' && (
@@ -441,19 +600,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
                                 </div>
 
                                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${selectedSession.warnings.length === 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${(selectedSession.proctoringReport?.violations?.length || 0) === 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
                                         }`}>
-                                        {selectedSession.warnings.length}
+                                        {selectedSession.proctoringReport?.violations?.length || 0}
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Integrity Issues</p>
-                                        <p className="text-sm font-bold text-slate-700">Total Warnings</p>
+                                        <p className="text-sm font-bold text-slate-700">Total Violations</p>
                                     </div>
                                 </div>
 
                                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
                                     <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg">
-                                        {Math.round(selectedSession.results.reduce((acc, r) => acc + (r.confidenceScore || 0), 0) / (selectedSession.results.length || 1))}%
+                                        {Math.round(selectedSession.results?.reduce((acc, r) => acc + (r.confidenceScore || 0), 0) / (selectedSession.results?.length || 1)) || 0}%
                                     </div>
                                     <div>
                                         <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Eye Contact</p>
@@ -468,13 +627,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
                                     Proctoring Log
                                 </div>
                                 <div className="p-4">
-                                    {selectedSession.warnings.length > 0 ? (
-                                        <div className="space-y-2">
-                                            {selectedSession.warnings.map((w, idx) => (
-                                                <div key={idx} className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg text-xs">
-                                                    <Shield size={14} className="text-amber-500" />
-                                                    <span className="font-mono text-slate-400">{new Date(w.timestamp).toLocaleTimeString()}</span>
-                                                    <span className="font-bold text-amber-800">{w.message}</span>
+                                    {(selectedSession.proctoringReport?.violations?.length || 0) > 0 ? (
+                                        <div className="space-y-4">
+                                            {selectedSession.proctoringReport?.violations?.map((w: any, idx: number) => (
+                                                <div key={idx} className="flex flex-col gap-3 p-4 bg-amber-50 border border-amber-100 rounded-lg">
+                                                    <div className="flex items-center gap-3 text-xs">
+                                                        <Shield size={16} className="text-amber-600" />
+                                                        <span className="font-mono text-slate-500">{new Date(w.timestamp).toLocaleTimeString()}</span>
+                                                        <span className="font-bold text-amber-800 uppercase tracking-wide">{w.type.replace(/_/g, ' ')}</span>
+                                                        <span className="text-amber-700 ml-2">- {w.message}</span>
+                                                    </div>
+                                                    
+                                                    {/* Media Display */}
+                                                    {(w.snapshot_url || w.clip_url) && (
+                                                        <div className="flex gap-4 mt-2">
+                                                            {w.snapshot_url && (
+                                                                <div className="flex-1 max-w-xs">
+                                                                    <p className="text-[10px] font-bold text-amber-600 mb-1 uppercase tracking-widest">Violation Snapshot</p>
+                                                                    <img src={w.snapshot_url} alt="Violation Snapshot" className="w-full h-auto rounded border border-amber-200 shadow-sm" />
+                                                                </div>
+                                                            )}
+                                                            {w.clip_url && (
+                                                                <div className="flex-1 max-w-xs">
+                                                                    <p className="text-[10px] font-bold text-amber-600 mb-1 uppercase tracking-widest">Surrounding 10s Clip</p>
+                                                                    <video src={w.clip_url} controls className="w-full h-auto rounded border border-amber-200 shadow-sm bg-black" />
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>

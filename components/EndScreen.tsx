@@ -183,6 +183,17 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
       try {
         const result = await AIService.evaluateInterview(history);
         setReport(result as EvaluationReport);
+        
+        // Save report to Supabase
+        import('../services/supabaseService').then(({ SupabaseService }) => {
+            const sessionId = localStorage.getItem('current_session_id');
+            if (sessionId) {
+                SupabaseService.saveEvaluationReport(sessionId, result).catch(err => {
+                    console.error("Failed to save evaluation report to Supabase:", err);
+                });
+            }
+        });
+
       } catch (err) {
         console.error("EndScreen: Evaluation failed", err);
       } finally {
@@ -259,7 +270,7 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
                   </div>
                 </div>
                 <div className={`px-6 py-2.5 rounded-2xl font-black text-sm border ${categoryColors[report.category] || categoryColors['Average']}`}>
-                  {report.category.toUpperCase()} PERFORMANCE
+                  {(report.category || 'Average').toUpperCase()} PERFORMANCE
                 </div>
                 {report.hiringRecommendation && (
                   <div className={`px-6 py-2.5 rounded-2xl font-black text-sm ${hiringColors[report.hiringRecommendation] || 'bg-slate-600 text-white'}`}>

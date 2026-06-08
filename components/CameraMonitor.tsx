@@ -14,6 +14,7 @@ interface CameraMonitorProps {
   // Legacy compat props for InterviewScreen.tsx
   onWarning?: (count: number, type?: any, msg?: string) => void;
   isLocked?: boolean;
+  onVideoReady?: (video: HTMLVideoElement) => void;
 }
 
 export const CameraMonitor: React.FC<CameraMonitorProps> = ({ 
@@ -24,7 +25,8 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
   devOverlay = import.meta.env.DEV, // Default to true in dev
   
   onWarning,
-  isLocked = false
+  isLocked = false,
+  onVideoReady
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -92,8 +94,12 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
         videoRef.current.play().catch(e => console.warn("Auto-play prevented", e));
         if (videoRef.current.readyState >= 2) {
           predictWebcam();
+          onVideoReady?.(videoRef.current);
         } else {
-          videoRef.current.onloadeddata = () => predictWebcam();
+          videoRef.current.onloadeddata = () => {
+            predictWebcam();
+            onVideoReady?.(videoRef.current!);
+          };
         }
       } else {
         try {
@@ -127,7 +133,10 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
 
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
-            videoRef.current.onloadeddata = () => predictWebcam();
+            videoRef.current.onloadeddata = () => {
+                predictWebcam();
+                onVideoReady?.(videoRef.current!);
+            };
           }
         } catch (err) {
           console.error("[CameraMonitor] Camera access error:", err);
