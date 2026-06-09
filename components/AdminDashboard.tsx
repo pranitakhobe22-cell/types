@@ -72,50 +72,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
                 const rawSessions = await SupabaseService.getAllSessions();
                 if (rawSessions) {
                     const mappedSessions: InterviewSession[] = rawSessions.map(rs => {
-                        const candidate = rs.candidates || {};
-                        const job = rs.job_posts || {};
-                        
-                        // Grab the latest proctoring report if it exists
-                        const latestReport = rs.proctoring_reports && rs.proctoring_reports.length > 0 
-                            ? rs.proctoring_reports[0] 
-                            : null;
-
                         return {
-                            id: rs.id,
+                            id: rs.session_id,
                             candidate: {
-                                name: candidate.name || 'Unknown',
-                                email: candidate.email || '',
-                                role: job.title || 'Unknown',
-                                profilePhoto: candidate.profile_photo_url,
-                                idCardImage: candidate.id_card_image_url
+                                name: rs.candidate_name || 'Unknown',
+                                email: rs.candidate_email || '',
+                                role: rs.job_title || 'Unknown',
+                                profilePhoto: rs.profile_photo_url,
+                                idCardImage: rs.id_card_image_url
                             },
-                            status: rs.status,
-                            date: rs.created_at,
-                            overallScore: rs.evaluation_reports?.[0]?.total_score || 0,
+                            status: rs.session_status,
+                            date: rs.session_date,
+                            overallScore: rs.total_score || 0,
                             // Map proctoring data if it exists
-                            proctoringReport: latestReport ? {
-                                currentRiskScore: latestReport.current_risk_score,
-                                overallRiskScore: latestReport.overall_risk_score,
-                                violations: latestReport.proctoring_violations?.map((v: any) => ({
-                                    type: v.violation_type,
-                                    severity: v.severity,
+                            proctoringReport: {
+                                violations: rs.all_proctoring_events ? rs.all_proctoring_events.map((v: any) => ({
+                                    type: v.event_type,
+                                    severity: v.severity === 'High' ? 10 : (v.severity === 'Medium' ? 5 : 1),
                                     message: v.message,
                                     timestamp: new Date(v.occurred_at).getTime(),
-                                    clip_url: v.clip_url,
                                     snapshot_url: v.snapshot_url
-                                })) || []
-                            } : undefined,
-                            evaluationReport: rs.evaluation_reports?.[0],
-                            results: rs.evaluation_reports?.[0]?.detailed_analysis?.questionBreakdown?.map((qb: any) => ({
-                                questionText: qb.question,
-                                userAnswer: qb.candidateAnswer,
-                                contentScore: qb.score,
-                                grammarScore: qb.score, // Legacy filler
-                                fluencyScore: qb.score, // Legacy filler
-                                confidenceScore: 100, // Legacy filler
-                                verdict: qb.verdict === 'Excellent' || qb.verdict === 'Good' ? 'Pass' : 'Fail',
+                                })) : []
+                            },
+                            evaluationReport: {
+                                total_score: rs.total_score,
+                                final_verdict: rs.final_verdict,
+                                scoring_basis: rs.scoring_basis,
+                                evaluation_logic: rs.evaluation_logic
+                            },
+                            results: rs.all_questions_and_answers ? rs.all_questions_and_answers.map((qb: any) => ({
+                                questionText: qb.question_text,
+                                userAnswer: qb.candidate_answer,
+                                contentScore: qb.content_score,
+                                grammarScore: qb.grammar_score,
+                                fluencyScore: qb.fluency_score,
+                                confidenceScore: qb.confidence_score,
+                                verdict: qb.verdict,
                                 feedback: qb.feedback
-                            })) || []
+                            })) : []
                         } as unknown as InterviewSession; // Cast to legacy format for UI compatibility
                     });
                     setSessions(mappedSessions);

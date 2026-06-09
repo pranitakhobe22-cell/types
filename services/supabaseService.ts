@@ -138,18 +138,9 @@ export class SupabaseService {
 
     static async getAllSessions() {
         const { data, error } = await supabase
-            .from('interview_sessions')
-            .select(`
-                *,
-                candidates (*),
-                job_posts (*),
-                proctoring_reports (
-                    *,
-                    proctoring_violations (*)
-                ),
-                evaluation_reports (*)
-            `)
-            .order('created_at', { ascending: false });
+            .from('view_master_session_record')
+            .select('*')
+            .order('session_date', { ascending: false });
 
         if (error) throw error;
         return data;
@@ -223,60 +214,44 @@ export class SupabaseService {
     // PROCTORING
     // ==========================================
     static async saveProctoringReport(sessionId: string, report: any, telemetry: DashboardTelemetry) {
-        const { data, error } = await supabase
-            .from('proctoring_reports')
-            .insert({
-                session_id: sessionId,
-                current_risk_score: report.currentRiskScore,
-                overall_risk_score: report.overallRiskScore,
-                no_face_events: report.noFaceEvents,
-                gaze_away_events: report.gazeAwayEvents,
-                multiple_face_events: report.multipleFaceEvents,
-                tab_switch_events: report.tabSwitchEvents,
-                microphone_lost_events: report.microphoneLostEvents,
-                session_duration_ms: report.sessionDurationMs,
-                monitoring_coverage_percent: report.healthSummary?.monitoringCoveragePercent || 100,
-                browser_name: report.browserInfo?.userAgent, // Needs actual parsing in real implementation
-                viewport_width: report.browserInfo?.viewportWidth,
-                viewport_height: report.browserInfo?.viewportHeight
-            })
-            .select('id')
-            .single();
-
-        if (error) throw error;
+        const events: any[] = [];
         
-        // Save Violations
+        // Convert Violations to Events
         if (report.violations && report.violations.length > 0) {
-            const violations = report.violations.map((v: ProctorViolation) => ({
-                report_id: data.id,
-                violation_type: v.type,
-                severity: v.severity,
-                message: v.message,
-                occurred_at: new Date(v.timestamp).toISOString(),
-                capture_timestamp_ms: v.timestamp
-            }));
-            await supabase.from('proctoring_violations').insert(violations);
+            report.violations.forEach((v: ProctorViolation) => {
+                events.push({
+                    session_id: sessionId,
+                    event_type: v.type,
+                    severity: v.severity > 5 ? 'High' : (v.severity > 2 ? 'Medium' : 'Low'),
+                    message: v.message,
+                    snapshot_url: (v as any).snapshot_url || (v as any).clip_url,
+                    occurred_at: new Date(v.timestamp).toISOString()
+                });
+            });
         }
 
-        // Save Timeline Events
+        // Convert Timeline to Events
         if (report.timeline && report.timeline.length > 0) {
-            // Batch insert timeline to avoid hitting payload limits if huge
-            const timelineEvents = report.timeline.map((t: TimelineEvent) => ({
-                report_id: data.id,
-                event_type: t.event,
-                severity: t.severity,
-                detail: t.detail,
-                occurred_at: new Date(t.timestamp).toISOString()
-            }));
-            
+            report.timeline.forEach((t: TimelineEvent) => {
+                events.push({
+                    session_id: sessionId,
+                    event_type: t.event,
+                    severity: t.severity > 5 ? 'High' : (t.severity > 2 ? 'Medium' : 'Low'),
+                    message: t.detail || t.event,
+                    occurred_at: new Date(t.timestamp).toISOString()
+                });
+            });
+        }
+        
+        if (events.length > 0) {
             // Insert in chunks of 100
-            for (let i = 0; i < timelineEvents.length; i += 100) {
-                const chunk = timelineEvents.slice(i, i + 100);
-                await supabase.from('proctoring_timeline').insert(chunk);
+            for (let i = 0; i < events.length; i += 100) {
+                const chunk = events.slice(i, i + 100);
+                await supabase.from('proctoring_events').insert(chunk);
             }
         }
         
-        return data.id;
+        return sessionId;
     }
 
     // ==========================================
@@ -288,13 +263,17 @@ export class SupabaseService {
             .upsert({
                 session_id: sessionId,
                 total_score: report.totalScore,
-                category: report.category || 'Average',
-                hiring_recommendation: report.hiringRecommendation || 'Consider',
-                strengths: report.detailedAnalysis?.strengths || [],
-                failures: report.detailedAnalysis?.failures || [],
                 final_verdict: report.finalVerdict,
-                verdict_justification: report.verdictJustification,
-                question_breakdown: JSON.stringify(report.questionBreakdown || [])
+                scoring_basis: {
+                    category: report.category || 'Average',
+                    strengths: report.detailedAnalysis?.strengths || [],
+                    failures: report.detailedAnalysis?.failures || []
+                },
+                evaluation_logic: {
+                    hiring_recommendation: report.hiringRecommendation || 'Consider',
+                    verdict_justification: report.verdictJustification,
+                    question_breakdown: report.questionBreakdown || []
+                }
             }, { onConflict: 'session_id' });
 
         if (error) {
