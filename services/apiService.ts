@@ -14,12 +14,40 @@ export const DEFAULT_SETTINGS: RoleSettings = {
   }
 };
 
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
-const getEvalAi = () => {
-  const evalKey = import.meta.env.VITE_GEMINI_EVAL_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
-  return new GoogleGenAI({ apiKey: evalKey });
+let currentKeyIndex = 0;
+const getGeminiKeys = () => {
+  const keysStr = import.meta.env.VITE_GEMINI_API_KEYS || import.meta.env.VITE_GEMINI_EVAL_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || "";
+  return keysStr.split(',').map((k: string) => k.trim()).filter(Boolean);
 };
-const MODEL_FAST = "gemini-2.0-flash";
+
+const getDedicatedKey = () => {
+  const keys = getGeminiKeys();
+  return keys[0] || ""; // Dedicated Key A for latency-sensitive tasks
+};
+
+const getNextPoolKey = () => {
+  const keys = getGeminiKeys();
+  if (keys.length === 0) return "";
+  const key = keys[currentKeyIndex];
+  currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+  return key;
+};
+
+const ai = {
+  models: {
+    generateContent: async (args: any) => {
+      // Used by startInterview for dynamic question generation (Live Interview)
+      const instance = new GoogleGenAI({ apiKey: getDedicatedKey() });
+      return instance.models.generateContent(args);
+    }
+  }
+};
+
+const getEvalAi = () => {
+  // Used by submitAnswer for question-level evaluation
+  return new GoogleGenAI({ apiKey: getNextPoolKey() });
+};
+const MODEL_FAST = "gemini-2.5-flash";
 
 const DIRECT_INTERVIEW_FALLBACK = [
   {

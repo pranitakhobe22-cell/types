@@ -1,22 +1,35 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { CSE_QUESTION_BANK, ECE_QUESTION_BANK } from "./questionBank";
 
-const getApiKey = (purpose: 'general' | 'eval' = 'general') => {
-  if (purpose === 'eval') {
-    const evalKey = (import.meta.env?.VITE_GEMINI_EVAL_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_EVAL_API_KEY : "");
-    if (evalKey) return evalKey;
+let currentKeyIndex = 0;
+const getGeminiKeys = () => {
+  const keysStr = (import.meta.env?.VITE_GEMINI_API_KEYS) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_API_KEYS : "") || (import.meta.env?.VITE_GEMINI_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_API_KEY : "") || "";
+  const keys = keysStr.split(',').map((k: string) => k.trim()).filter(Boolean);
+  if (keys.length === 0) {
+    console.warn("Gemini API Key not found in environment variables.");
   }
-  const key = (import.meta.env?.VITE_GEMINI_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_API_KEY : "") || "";
-  if (!key) console.warn("Gemini API Key not found in environment variables.");
+  return keys;
+};
+
+const getDedicatedKey = () => getGeminiKeys()[0] || "";
+
+const getNextPoolKey = () => {
+  const keys = getGeminiKeys();
+  if (keys.length === 0) return "";
+  const key = keys[currentKeyIndex];
+  currentKeyIndex = (currentKeyIndex + 1) % keys.length;
   return key;
 };
 
-const getGenAI = (purpose: 'general' | 'eval' = 'general') => new GoogleGenerativeAI(getApiKey(purpose));
+const getGenAI = (purpose: 'live' | 'eval' | 'report' = 'eval') => {
+  const key = purpose === 'live' ? getDedicatedKey() : getNextPoolKey();
+  return new GoogleGenerativeAI(key);
+};
 
 // Model priority chain: try best model first, fall back on 503/429
-const MODEL_CHAIN = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
+const MODEL_CHAIN = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
 
-async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'general' | 'eval' = 'general'): Promise<string> {
+async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live' | 'eval' | 'report' = 'eval'): Promise<string> {
   for (const modelName of MODEL_CHAIN) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -365,7 +378,7 @@ OUTPUT REQUIREMENTS (STRICT JSON — no extra text, no markdown):
 
   async listModels(): Promise<string[]> {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${getApiKey()}`);
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${getDedicatedKey()}`);
       const data = await response.json();
       return data.models?.map((m: any) => m.name) || [];
     } catch (error) {

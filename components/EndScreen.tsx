@@ -189,7 +189,7 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
             const sessionId = localStorage.getItem('current_session_id');
             if (sessionId) {
                 SupabaseService.saveEvaluationReport(sessionId, result).catch(err => {
-                    console.error("Failed to save evaluation report to Supabase:", err);
+                    console.error("Failed to save evaluation report to Supabase:", err?.message || JSON.stringify(err, null, 2), err?.details, err?.hint);
                 });
             }
         });
@@ -265,7 +265,10 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
                 <div className="relative">
                   <ScoreRing score={report.totalScore} size={200} />
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-6xl font-black text-slate-900">{report.totalScore}</span>
+                    <span className="text-6xl font-black text-slate-900 flex items-baseline">
+                      {report.totalScore}
+                      <span className="text-2xl text-slate-400 font-bold ml-1">/100</span>
+                    </span>
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Score</span>
                   </div>
                 </div>

@@ -1,6 +1,6 @@
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
-import path from 'path';
+const { createClient } = require('@supabase/supabase-js');
+const dotenv = require('dotenv');
+const path = require('path');
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
@@ -29,7 +29,6 @@ async function run() {
             .from('interview_sessions')
             .insert({
                 candidate_id: cand.id,
-                job_post_id: null,
                 status: 'CREATED',
                 device_type: 'Desktop',
                 os_name: 'Windows',

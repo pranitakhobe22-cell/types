@@ -43,7 +43,10 @@ function App() {
   }, []);
 
   const handleStart = async (data: { name: string; email: string; role: string }) => {
+    // Clear old invalid session IDs
+    localStorage.removeItem('current_session_id');
     setCandidate(data);
+    
     try {
         const { SupabaseService } = await import('./services/supabaseService');
         const { getDeviceFingerprint } = await import('./services/deviceFingerprint');
@@ -51,14 +54,15 @@ function App() {
         const candidateRecord = await SupabaseService.upsertCandidate({ name: data.name, email: data.email, role: data.role } as any);
         const fp = await getDeviceFingerprint();
         
-        // Using a generic/null job post for now to keep the flow working without forcing job creation first
-        // If your DB requires a valid UUID, you'll need a fallback job ID here, or make it nullable.
-        const session = await SupabaseService.createSession(candidateRecord.id, null as any, fp, {});
+        const session = await SupabaseService.createSession(candidateRecord.id, undefined as any, fp, {});
         localStorage.setItem('current_session_id', session.id);
-    } catch (e) {
+        
+        setFlowState('interview');
+    } catch (e: any) {
         console.error("Failed to start session in Supabase:", e);
+        alert(`Failed to start session. Database Error: ${e.message || JSON.stringify(e)}`);
+        setCandidate(null);
     }
-    setFlowState('interview');
   };
 
   const handleInterviewComplete = async (

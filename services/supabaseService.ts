@@ -118,19 +118,15 @@ export class SupabaseService {
     // INTERVIEW SESSIONS
     // ==========================================
     static async createSession(candidateId: string, jobPostId: string, deviceInfo: any, metadata: any) {
+        const payload: any = {
+            candidate_id: candidateId,
+            status: 'CREATED'
+        };
+        if (jobPostId) payload.job_post_id = jobPostId;
+
         const { data, error } = await supabase
             .from('interview_sessions')
-            .insert({
-                candidate_id: candidateId,
-                job_post_id: jobPostId,
-                status: 'CREATED',
-                device_type: deviceInfo.deviceType,
-                os_name: deviceInfo.osName,
-                browser_name: deviceInfo.browserName,
-                ip_hash: deviceInfo.ipHash,
-                network_type: deviceInfo.networkType,
-                interview_metadata: metadata
-            })
+            .insert(payload)
             .select('*')
             .single();
 
@@ -289,19 +285,22 @@ export class SupabaseService {
     static async saveEvaluationReport(sessionId: string, report: any) {
         const { error } = await supabase
             .from('evaluation_reports')
-            .insert({
+            .upsert({
                 session_id: sessionId,
                 total_score: report.totalScore,
-                category: report.categories?.technicalAccuracy?.raw > 8 ? 'Excellent' : 'Good', // Simplification
-                hiring_recommendation: report.finalVerdict,
-                strengths: report.detailedAnalysis?.strengths,
-                failures: report.detailedAnalysis?.failures,
+                category: report.category || 'Average',
+                hiring_recommendation: report.hiringRecommendation || 'Consider',
+                strengths: report.detailedAnalysis?.strengths || [],
+                failures: report.detailedAnalysis?.failures || [],
                 final_verdict: report.finalVerdict,
                 verdict_justification: report.verdictJustification,
-                question_breakdown: JSON.stringify(report.categories || {})
-            });
+                question_breakdown: JSON.stringify(report.questionBreakdown || [])
+            }, { onConflict: 'session_id' });
 
-        if (error) throw error;
+        if (error) {
+            console.error("Supabase Evaluation Report Error Details:", error.message, error.details, error.hint);
+            throw error;
+        }
     }
 
     // ==========================================

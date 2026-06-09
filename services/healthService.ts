@@ -39,7 +39,7 @@ export class HealthService {
         try {
             // listBuckets often returns [] for anonymous users depending on RLS.
             // As long as it doesn't throw a network error, storage is reachable.
-            const { data, error } = await supabase.storage.getBucket('identity-documents');
+            const { error } = await supabase.storage.listBuckets();
             if (error && error.message.includes("FetchError")) {
                 health.errors.push(`Storage reachability failed: ${error.message}`);
             } else {
