@@ -283,11 +283,16 @@ OUTPUT REQUIREMENTS (STRICT JSON — no extra text, no markdown):
       
       const parsed = JSON.parse(jsonMatch[0]);
       
-      // Validate and clamp scores
-      if (parsed.totalScore === undefined || isNaN(parsed.totalScore)) {
-        parsed.totalScore = this._computeFallbackScore(parsed);
+      // Enforce strict total score calculation from question scores to prevent LLM math hallucinations
+      if (parsed.questionBreakdown && parsed.questionBreakdown.length > 0) {
+        const sum = parsed.questionBreakdown.reduce((acc: number, q: any) => acc + (q.score || 0), 0);
+        const avg = sum / parsed.questionBreakdown.length;
+        parsed.totalScore = Math.round(avg * 10); // Scale 0-10 to 0-100
+      } else {
+        parsed.totalScore = 0;
       }
-      parsed.totalScore = Math.max(0, Math.min(100, Math.round(parsed.totalScore)));
+      
+      parsed.totalScore = Math.max(0, Math.min(100, parsed.totalScore));
       
       return parsed as EvaluationReport;
     } catch (error) {
