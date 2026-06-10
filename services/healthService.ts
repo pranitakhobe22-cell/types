@@ -23,9 +23,9 @@ export class HealthService {
             return health;
         }
 
-        // 1. Check Database (Try to read companies table limit 1)
+        // 1. Check Database (Try to read job_posts table limit 1)
         try {
-            const { error } = await supabase.from('companies').select('id').limit(1);
+            const { error } = await supabase.from('job_posts').select('id').limit(1);
             if (error) {
                 health.errors.push(`Database error: ${error.message}`);
             } else {
