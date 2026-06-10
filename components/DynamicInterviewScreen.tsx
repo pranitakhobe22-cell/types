@@ -234,6 +234,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const MAX_QUESTIONS = 5;
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const isRecognitionRunningRef = useRef(false);
   const synthRef = useRef<SpeechSynthesis>(window.speechSynthesis);
 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
@@ -469,6 +470,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     recognition.interimResults = true;
     recognition.lang = navigator.language || 'en-US'; 
 
+    recognition.onstart = () => {
+      isRecognitionRunningRef.current = true;
+    };
+
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       if (isAiSpeakingRef.current) {
         // Software echo cancellation: ignore mic input while AI is talking
@@ -498,9 +503,11 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     recognition.onerror = (err: any) => {
       console.error("Speech Error:", err);
       setIsListening(false);
+      isRecognitionRunningRef.current = false;
     };
     recognition.onend = () => {
       setIsListening(false);
+      isRecognitionRunningRef.current = false;
     };
     
     recognitionRef.current = recognition;
@@ -555,7 +562,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
   const toggleMic = () => {
     if (!recognitionRef.current) return;
-    if (isListening) {
+    if (isRecognitionRunningRef.current) {
       setIsListening(false);
       try { recognitionRef.current.stop(); } catch(e) {}
     } else {

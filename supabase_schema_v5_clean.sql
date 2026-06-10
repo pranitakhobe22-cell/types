@@ -48,6 +48,7 @@ CREATE TABLE interview_sessions (
   candidate_id UUID REFERENCES candidates(id) ON DELETE SET NULL,
   job_post_id UUID REFERENCES job_posts(id) ON DELETE SET NULL,
   status TEXT CHECK (status IN ('CREATED','IN_PROGRESS','COMPLETED','TERMINATED','PAUSED')) DEFAULT 'CREATED',
+  termination_reason TEXT,
   overall_score NUMERIC(5,2) DEFAULT 0,
   total_questions INTEGER DEFAULT 5,
   duration_seconds INTEGER DEFAULT 0,

@@ -100,12 +100,14 @@ export class SupabaseService {
 
         const { error } = await supabase
             .from('interview_sessions')
-            .update({ status: newStatus, termination_reason: reason })
+            .update({ 
+                status: newStatus, 
+                termination_reason: reason,
+                completed_at: newStatus === 'TERMINATED' ? new Date().toISOString() : undefined 
+            })
             .eq('id', sessionId);
 
         if (error) throw error;
-        
-        await this.logStatusChange(sessionId, oldStatus, newStatus, 'system', reason);
     }
 
     static async completeSession(sessionId: string, durationSeconds: number) {
@@ -119,18 +121,9 @@ export class SupabaseService {
             .eq('id', sessionId);
 
         if (error) throw error;
-        await this.updateSessionStatus(sessionId, 'COMPLETED', 'Interview finished normally');
     }
 
-    static async logStatusChange(sessionId: string, oldStatus: string | null, newStatus: string, changedBy: string = 'system', reason?: string) {
-        await supabase.from('interview_status_history').insert({
-            session_id: sessionId,
-            old_status: oldStatus,
-            new_status: newStatus,
-            changed_by: changedBy,
-            reason: reason
-        });
-    }
+
 
     // ==========================================
     // SESSION RESPONSES
