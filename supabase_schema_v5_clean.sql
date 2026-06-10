@@ -8,6 +8,7 @@
 DROP SCHEMA public CASCADE;
 CREATE SCHEMA public;
 
+
 -- 2. Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
@@ -220,6 +221,12 @@ CREATE POLICY "allow_all" ON interview_sessions FOR ALL USING (true) WITH CHECK 
 CREATE POLICY "allow_all" ON session_responses FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON evaluation_reports FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON proctoring_events FOR ALL USING (true) WITH CHECK (true);
+
+-- Grant standard usage permissions for Supabase roles to all created tables
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 
 -- SEED DATA
 INSERT INTO companies (name, domain) VALUES ('REICREW AI', 'reicrew.ai');
