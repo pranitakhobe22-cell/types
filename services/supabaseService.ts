@@ -6,6 +6,7 @@ import {
 } from '../types';
 
 export class SupabaseService {
+    static logStatusChange: any;
 
 
     // ==========================================
@@ -80,7 +81,6 @@ export class SupabaseService {
 
         if (error) throw error;
         
-        await this.logStatusChange(data.id, null, 'CREATED', 'system', 'Session initialized');
         return data;
     }
 
