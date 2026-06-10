@@ -87,11 +87,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
                             // Map proctoring data if it exists
                             proctoringReport: {
                                 violations: rs.all_proctoring_events ? rs.all_proctoring_events.map((v: any) => ({
-                                    type: v.event_type,
+                                    type: v.type || v.event_type,
                                     severity: v.severity === 'High' ? 10 : (v.severity === 'Medium' ? 5 : 1),
                                     message: v.message,
-                                    timestamp: new Date(v.occurred_at).getTime(),
-                                    snapshot_url: v.snapshot_url
+                                    timestamp: new Date(v.time || v.occurred_at).getTime(),
+                                    snapshot_url: v.snapshot_url,
+                                    clip_url: v.clip_url
                                 })) : []
                             },
                             evaluationReport: {

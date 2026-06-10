@@ -3,7 +3,7 @@ import { LandingScreen } from './components/LandingScreen';
 import { DynamicInterviewScreen } from './components/DynamicInterviewScreen';
 import { EndScreen } from './components/EndScreen';
 import { AdminDashboard } from './components/AdminDashboard';
-import { BackendService } from './services/backendService';
+
 import { HealthService, SystemHealth } from './services/healthService';
 import { AlertTriangle, Server, Database, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 

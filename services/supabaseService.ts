@@ -7,30 +7,17 @@ import {
 
 export class SupabaseService {
 
-    // ==========================================
-    // COMPANIES
-    // ==========================================
-    static async getCompany() {
-        const { data, error } = await supabase.from('companies').select('*').limit(1).single();
-        if (error) throw error;
-        return data;
-    }
 
     // ==========================================
     // CANDIDATES
     // ==========================================
-    static async upsertCandidate(candidate: Partial<Candidate> & { email: string }) {
+    static async upsertCandidate(candidate: { name: string, email: string, role?: string }) {
         const { data, error } = await supabase
             .from('candidates')
             .upsert({
                 name: candidate.name,
                 email: candidate.email,
-                phone: candidate.phone,
-                id_number: candidate.idNumber,
-                profile_photo_url: candidate.profilePhoto,
-                id_card_image_url: candidate.idCardImage,
-                candidate_consent: true, // Assuming true if they submitted the form
-                consent_timestamp: new Date().toISOString()
+                applied_role: candidate.role
             }, { onConflict: 'email' })
             .select('*')
             .single();
@@ -51,18 +38,13 @@ export class SupabaseService {
     }
 
     // ==========================================
-    // JOB POSTS & QUESTIONS
+    // JOB POSTS
     // ==========================================
-    static async getJobByAccessKey(accessKey: string) {
+    static async getJobById(jobId: string) {
         const { data, error } = await supabase
             .from('job_posts')
-            .select(`
-                *,
-                questions (*),
-                role_settings (*)
-            `)
-            .eq('access_key', accessKey)
-            .is('deleted_at', null)
+            .select('*')
+            .eq('id', jobId)
             .single();
 
         if (error) throw error;
@@ -72,47 +54,13 @@ export class SupabaseService {
     static async getAllJobs() {
         const { data, error } = await supabase
             .from('job_posts')
-            .select(`
-                *,
-                questions (*),
-                role_settings (*)
-            `)
-            .is('deleted_at', null);
+            .select('*');
 
         if (error) throw error;
         return data;
     }
 
-    // ==========================================
-    // ACCESS RECORDS
-    // ==========================================
-    static async validateAndConsumeAccessKey(accessKeyHash: string, candidateId: string) {
-        // 1. Check if valid
-        const { data: record, error: fetchError } = await supabase
-            .from('access_records')
-            .select('*')
-            .eq('access_key_hash', accessKeyHash)
-            .single();
 
-        if (fetchError) throw fetchError;
-        if (!record) return { valid: false, reason: 'Invalid key' };
-        if (record.status !== 'ACTIVE') return { valid: false, reason: `Key is ${record.status}` };
-        if (record.attempts_used >= record.max_attempts) return { valid: false, reason: 'Max attempts reached' };
-
-        // 2. Consume it
-        const { error: updateError } = await supabase
-            .from('access_records')
-            .update({
-                attempts_used: record.attempts_used + 1,
-                status: (record.attempts_used + 1 >= record.max_attempts) ? 'CONSUMED' : 'ACTIVE',
-                used_by_candidate_id: candidateId,
-                used_at: new Date().toISOString()
-            })
-            .eq('id', record.id);
-
-        if (updateError) throw updateError;
-        return { valid: true, record };
-    }
 
     // ==========================================
     // INTERVIEW SESSIONS
@@ -201,6 +149,14 @@ export class SupabaseService {
                 confidence_score: result.confidenceScore,
                 verdict: result.verdict,
                 feedback: result.feedback,
+                question_snapshot: result.questionSnapshot,
+                ideal_answer_snapshot: result.idealAnswerSnapshot,
+                expected_key_points: result.expectedKeyPoints,
+                detected_key_points: result.detectedKeyPoints,
+                missing_key_points: result.missingKeyPoints,
+                deduction_reason: result.deductionReason,
+                bonus_reason: result.bonusReason,
+                response_duration_seconds: result.responseDurationSeconds,
                 expression_analysis: result.expressionAnalysis,
                 speech_rate_wpm: speechMetrics?.wpm,
                 pause_count: speechMetrics?.pauses,
@@ -223,8 +179,10 @@ export class SupabaseService {
                     session_id: sessionId,
                     event_type: v.type,
                     severity: v.severity > 5 ? 'High' : (v.severity > 2 ? 'Medium' : 'Low'),
+                    risk_points: v.severity > 5 ? 15 : (v.severity > 2 ? 5 : 1),
                     message: v.message,
-                    snapshot_url: (v as any).snapshot_url || (v as any).clip_url,
+                    snapshot_url: v.snapshot_url,
+                    clip_url: v.clip_url,
                     occurred_at: new Date(v.timestamp).toISOString()
                 });
             });
@@ -237,6 +195,7 @@ export class SupabaseService {
                     session_id: sessionId,
                     event_type: t.event,
                     severity: t.severity > 5 ? 'High' : (t.severity > 2 ? 'Medium' : 'Low'),
+                    risk_points: t.severity > 5 ? 10 : (t.severity > 2 ? 5 : 1),
                     message: t.detail || t.event,
                     occurred_at: new Date(t.timestamp).toISOString()
                 });
@@ -263,17 +222,26 @@ export class SupabaseService {
             .upsert({
                 session_id: sessionId,
                 total_score: report.totalScore,
+                technical_score: report.technicalScore,
+                communication_score: report.communicationScore,
+                confidence_score: report.confidenceScore,
+                proctoring_score: report.proctoringScore,
                 final_verdict: report.finalVerdict,
-                scoring_basis: {
-                    category: report.category || 'Average',
-                    strengths: report.detailedAnalysis?.strengths || [],
-                    failures: report.detailedAnalysis?.failures || []
-                },
-                evaluation_logic: {
-                    hiring_recommendation: report.hiringRecommendation || 'Consider',
-                    verdict_justification: report.verdictJustification,
-                    question_breakdown: report.questionBreakdown || []
-                }
+                hiring_recommendation: report.hiringRecommendation || 'Consider',
+                strengths: report.detailedAnalysis?.strengths || [],
+                failures: report.detailedAnalysis?.failures || [],
+                verdict_justification: report.verdictJustification,
+                evaluation_logic: report.evaluationLogic || {},
+                risk_score: report.riskScore,
+                risk_level: report.riskLevel,
+                risk_reason: report.riskReason || [],
+                proctoring_summary: report.proctoringSummary || {},
+                evaluation_weights_snapshot: report.evaluationWeightsSnapshot || {},
+                evaluation_version: report.evaluationVersion,
+                evaluation_model: report.evaluationModel,
+                evaluation_prompt_version: report.evaluationPromptVersion,
+                evaluated_at: report.evaluatedAt || new Date().toISOString(),
+                candidate_outcome: report.candidateOutcome
             }, { onConflict: 'session_id' });
 
         if (error) {

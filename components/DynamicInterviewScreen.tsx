@@ -61,6 +61,13 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
     case 'ENGINE_READY': return { ...state, engineState: 'READY', monitoringStartTime: state.monitoringStartTime || now };
     case 'HEARTBEAT': return { ...state, heartbeat: action.metrics, heartbeatCount: state.heartbeatCount + 1 };
     
+    case 'UPDATE_VIOLATION_MEDIA': {
+      const violations = state.violations.map(v => 
+        v.id === action.id ? { ...v, snapshot_url: action.snapshotUrl || undefined, clip_url: action.clipUrl || undefined } : v
+      );
+      return { ...state, violations };
+    }
+
     case 'DECAY_RISK': {
       if (state.currentRiskScore === 0) return state;
       const floor = Math.floor(state.overallRiskScore * 0.25);
@@ -377,13 +384,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             }
           }
 
-          // At this point the session may not exist fully in DB yet if we are using localStorage fallback, 
-          // but we can log the violation directly to Supabase now that we have URLs.
-          // Note: Full integration of tracking this requires updating BackendService which is deprecated.
-          console.log(`[MediaCapture] Violation media uploaded for ${violation.type}: ${snapshotUrl}`);
+          dispatch({ type: 'UPDATE_VIOLATION_MEDIA', id: violation.id, snapshotUrl, clipUrl });
 
-          // For v4 schema, we will need to update the violation record or emit it 
-          // We can append this to a global or just rely on BackendService/SupabaseService for now.
+          console.log(`[MediaCapture] Violation media uploaded for ${violation.type}: snapshot=${snapshotUrl}, clip=${clipUrl}`);
 
         } catch (err) {
           console.error("Failed to capture violation media:", err);

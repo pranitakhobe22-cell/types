@@ -155,6 +155,8 @@ export type ProctorViolation = {
   severity: number;
   timestamp: number;
   message: string;
+  snapshot_url?: string;
+  clip_url?: string;
 };
 
 export type TimelineEvent = {
@@ -263,7 +265,8 @@ export type ProctoringAction =
   | { type: 'NETWORK_RECOVERED' }
   | { type: 'DECAY_RISK' }
   | { type: 'SET_UNSUPPORTED_BROWSER' }
-  | { type: 'SET_PERMISSION_DENIED' };
+  | { type: 'SET_PERMISSION_DENIED' }
+  | { type: 'UPDATE_VIOLATION_MEDIA'; id: string; snapshotUrl: string | null; clipUrl: string | null };
 
 // ─────────────────────────────────────────────────────────────────────────────
 
