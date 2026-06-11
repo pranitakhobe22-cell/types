@@ -561,7 +561,11 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   };
 
   const toggleMic = () => {
-    if (!recognitionRef.current) return;
+    if (!recognitionRef.current) {
+        alert("Speech recognition is not supported on this device/browser. Please type your answer directly.");
+        setIsEditing(true);
+        return;
+    }
     if (isRecognitionRunningRef.current) {
       setIsListening(false);
       try { recognitionRef.current.stop(); } catch(e) {}
@@ -804,7 +808,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             </div>
 
             {/* V8 Dashboard UI Components */}
-            <div className="flex-1">
+            <div className="flex-1 hidden md:block">
               {telemetry && (
                 <MonitoringDashboard 
                     telemetry={telemetry} 
@@ -886,16 +890,18 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
           <div className={`min-h-[160px] bg-white border-2 rounded-[32px] p-8 transition-all ${
             isListening ? 'border-rose-200 shadow-xl shadow-rose-100/50' : 
-            isEditing ? 'border-indigo-200 shadow-xl shadow-indigo-100/50' : 
+            isEditing || userInput ? 'border-indigo-200 shadow-xl shadow-indigo-100/50' : 
             'border-slate-100 shadow-sm'
           }`}>
           <div className="relative">
               <textarea
                 className={`w-full h-40 p-4 bg-slate-50 border-2 rounded-2xl resize-none outline-none transition-all text-slate-700 font-medium ${isListening ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10'}`}
-                value={isEditing ? userInput : (userInput || "")}
-                onChange={(e) => setUserInput(e.target.value)}
+                value={userInput || ""}
+                onChange={(e) => {
+                  setUserInput(e.target.value);
+                  setIsEditing(true);
+                }}
                 placeholder={isListening ? "Listening..." : "Type or speak your answer here..."}
-                disabled={!isEditing && !isListening}
               />
               {interimSpeech && (
                 <div className="absolute bottom-4 left-4 right-16 pointer-events-none">
