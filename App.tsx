@@ -180,7 +180,7 @@ function App() {
 
   // Main App Flow
   return (
-    <div className={`${flowState === 'completed' ? 'min-h-screen overflow-y-auto' : 'h-screen overflow-hidden'} w-screen bg-[#F8FAFC] text-slate-900 selection:bg-indigo-500/10 transition-colors duration-500`}>
+    <div className="min-h-[100dvh] overflow-x-hidden w-screen bg-[#F8FAFC] text-slate-900 selection:bg-indigo-500/10 transition-colors duration-500 flex flex-col">
       {flowState === 'landing' && (
         <LandingScreen onStart={handleStart} />
       )}

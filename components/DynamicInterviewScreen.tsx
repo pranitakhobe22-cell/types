@@ -697,7 +697,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const currentQ = questions[currentIndex];
 
   return (
-    <div className="h-screen bg-[#F8FAFC] flex flex-col overflow-hidden font-sans relative">
+    <div className="flex-1 bg-[#F8FAFC] flex flex-col md:h-[100dvh] md:overflow-hidden font-sans relative">
       
       {/* Progress Bar */}
       <div className="w-full h-1.5 bg-slate-100 z-50">
@@ -707,7 +707,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         />
       </div>
 
-      <header className="px-8 py-6 flex justify-between items-center border-b border-slate-200 bg-white">
+      <header className="px-4 py-4 md:px-8 md:py-6 flex justify-between items-center border-b border-slate-200 bg-white sticky top-0 z-[60]">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-white font-bold shadow-lg">
             {candidate.role === 'CSE' ? 'CS' : 'EE'}
@@ -724,14 +724,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       </header>
 
       {/* Two-Column Main Layout */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row md:overflow-hidden relative">
         
         {/* Right Column: V8 Monitoring Sidebar */}
-        <aside className="md:order-last w-full md:w-[320px] lg:w-[380px] md:max-w-[35vw] shrink-0 bg-slate-900 text-white md:border-l border-slate-700 overflow-y-auto flex flex-col shadow-xl z-40 transition-all">
-          <div className="p-4 flex flex-col gap-4">
+        <aside className="fixed md:relative top-24 right-4 md:top-auto md:right-auto md:order-last w-auto md:w-[320px] lg:w-[380px] md:max-w-[35vw] shrink-0 bg-transparent md:bg-slate-900 text-white md:border-l border-slate-700 overflow-visible md:overflow-y-auto flex flex-col shadow-none md:shadow-xl z-[70] pointer-events-none md:pointer-events-auto">
+          <div className="p-0 md:p-4 flex flex-col gap-4 pointer-events-auto">
             
             {/* Camera Preview */}
-            <div className="w-24 h-32 self-center md:w-full md:h-auto md:aspect-[4/3] bg-black rounded-xl overflow-hidden relative shadow-lg shrink-0">
+            <div className="w-24 h-32 md:w-full md:h-auto md:aspect-[4/3] bg-black rounded-xl overflow-hidden relative shadow-2xl md:shadow-lg shrink-0 border-2 border-white/10 md:border-none">
               <CameraMonitor 
                 mediaStream={mediaRef.current?.stream || undefined}
                 onVideoReady={(v) => { videoElRef.current = v; }}
@@ -821,11 +821,11 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         </aside>
 
         {/* Left Column: Interview UI */}
-        <div className="flex-1 flex flex-col h-full relative overflow-hidden bg-[#F8FAFC]">
-          <main className="flex-1 overflow-y-auto w-full p-4 md:p-8 flex flex-col justify-center space-y-12 pb-24 md:pb-8">
+        <div className="flex-1 flex flex-col md:h-full relative md:overflow-hidden bg-[#F8FAFC]">
+          <main className="flex-1 w-full p-4 md:p-8 flex flex-col justify-start md:justify-center space-y-6 md:space-y-12 pb-8 md:pb-8 md:overflow-y-auto">
         {!hasStarted ? (
-          <div className="text-center space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-            <h1 className="text-4xl font-extrabold text-slate-900">Ready to begin?</h1>
+          <div className="text-center space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 mt-12 md:mt-0">
+            <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900">Ready to begin?</h1>
             <p className="text-lg text-slate-500 max-w-lg mx-auto">Please ensure you are in a quiet room with good lighting. Your camera and microphone will be monitored during the interview.</p>
             <button 
               onClick={() => {
@@ -849,18 +849,18 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         ) : (
           <>
             {/* AI Question Section */}
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 pr-12 md:pr-48">
+            <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 pr-28 md:pr-48 mt-8 md:mt-0">
               <div className="flex items-center gap-3">
                 <div className={`w-3 h-3 rounded-full ${isAiSpeaking ? 'bg-indigo-500 animate-ping' : 'bg-slate-300'}`} />
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">AI Interviewer</span>
               </div>
               <div className="relative">
-                <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 leading-tight">
+                <h1 className="text-2xl md:text-4xl font-extrabold text-slate-900 leading-tight">
                   {currentQ?.question}
                 </h1>
                 <button 
                   onClick={() => speakQuestion(currentQ?.question || '')}
-                  className="absolute -right-12 top-0 p-3 text-slate-400 hover:text-indigo-600 transition-colors"
+                  className="absolute -right-10 md:-right-12 top-0 p-2 md:p-3 text-slate-400 hover:text-indigo-600 transition-colors"
                   title="Repeat Question"
                 >
                   <Volume2 size={24} />
@@ -888,14 +888,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             )}
           </div>
 
-          <div className={`min-h-[160px] bg-white border-2 rounded-[32px] p-8 transition-all ${
+          <div className={`min-h-[120px] md:min-h-[160px] bg-white border-2 rounded-[24px] md:rounded-[32px] p-4 md:p-8 transition-all ${
             isListening ? 'border-rose-200 shadow-xl shadow-rose-100/50' : 
             isEditing || userInput ? 'border-indigo-200 shadow-xl shadow-indigo-100/50' : 
             'border-slate-100 shadow-sm'
           }`}>
           <div className="relative">
               <textarea
-                className={`w-full h-40 p-4 bg-slate-50 border-2 rounded-2xl resize-none outline-none transition-all text-slate-700 font-medium ${isListening ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10'}`}
+                className={`w-full h-28 md:h-40 p-3 md:p-4 bg-slate-50 border-2 rounded-2xl resize-none outline-none transition-all text-sm md:text-base text-slate-700 font-medium ${isListening ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10'}`}
                 value={userInput || ""}
                 onChange={(e) => {
                   setUserInput(e.target.value);
@@ -905,7 +905,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
               />
               {interimSpeech && (
                 <div className="absolute bottom-4 left-4 right-16 pointer-events-none">
-                  <span className="bg-slate-800/80 text-white text-sm px-3 py-1.5 rounded-lg shadow-lg backdrop-blur-sm animate-pulse">
+                  <span className="bg-slate-800/80 text-white text-xs md:text-sm px-3 py-1.5 rounded-lg shadow-lg backdrop-blur-sm animate-pulse">
                     {interimSpeech}
                   </span>
                 </div>
@@ -917,25 +917,25 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         )}
       </main>
 
-      <footer className="p-4 md:p-8 bg-white border-t border-slate-200 shrink-0">
-        <div className="max-w-4xl mx-auto flex items-center gap-6">
+      <footer className="sticky bottom-0 p-4 md:p-8 bg-white border-t border-slate-200 shrink-0 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] md:shadow-none z-[60]">
+        <div className="max-w-4xl mx-auto flex items-center gap-3 md:gap-6">
           <button
             onClick={toggleMic}
             disabled={!hasStarted || isAiSpeaking}
-            className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${
+            className={`w-16 h-16 md:w-20 md:h-20 shrink-0 rounded-full flex items-center justify-center transition-all ${
               isListening ? 'bg-rose-500 text-white shadow-xl shadow-rose-200' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
             } disabled:opacity-50`}
           >
-            {isListening ? <MicOff size={32} /> : <Mic size={32} />}
+            {isListening ? <MicOff size={28} /> : <Mic size={28} />}
           </button>
 
           <button
             onClick={handleNext}
             disabled={!hasStarted || !userInput.trim() || isAiSpeaking || (isListening && userInput.length === 0)}
-            className="flex-1 bg-slate-900 hover:bg-indigo-600 disabled:bg-slate-100 disabled:text-slate-300 text-white h-20 rounded-[28px] font-bold text-xl shadow-xl shadow-slate-200/50 transition-all flex items-center justify-center gap-3 active:scale-[0.98]"
+            className="flex-1 bg-slate-900 hover:bg-indigo-600 disabled:bg-slate-100 disabled:text-slate-300 text-white h-16 md:h-20 rounded-2xl md:rounded-[28px] font-bold text-lg md:text-xl shadow-xl shadow-slate-200/50 transition-all flex items-center justify-center gap-2 md:gap-3 active:scale-[0.98]"
           >
-            {currentIndex < 4 ? 'Next Question' : 'Complete Interview'}
-            <ArrowRight size={24} />
+            <span className="truncate">{currentIndex < 4 ? 'Next Question' : 'Complete Interview'}</span>
+            <ArrowRight size={20} className="shrink-0" />
           </button>
         </div>
       </footer>
