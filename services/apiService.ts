@@ -266,8 +266,8 @@ export const submitAnswer = async (
   const keyPoints = currentQuestion.keyPoints || [];
 
   // Construct persona based on settings
-  const difficulty = settings?.difficulty || "Medium";
-  const preset = settings?.preset || "Normal";
+  const difficulty = settings?.difficulty ?? "Medium";
+  const preset = settings?.preset ?? "Normal";
 
   let personaInstruction = "You are an expert HR Interviewer.";
   if (preset === 'Strict') {

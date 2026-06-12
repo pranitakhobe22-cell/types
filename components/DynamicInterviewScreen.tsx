@@ -221,13 +221,22 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [isEditing, setIsEditing] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const [isMobileMonitorOpen, setIsMobileMonitorOpen] = useState(false);
   const MAX_QUESTIONS = 5;
 
   const synthRef = useRef<SpeechSynthesis>(window.speechSynthesis);
 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
-  const sessionIdRef = useRef<string>(localStorage.getItem('current_session_id') || crypto.randomUUID());
+  const sessionIdRef = useRef<string>(localStorage.getItem('current_session_id') || "");
+
+  useEffect(() => {
+    if (!sessionIdRef.current) {
+      alert("Fatal Error: Interview session not found. Please restart the interview.");
+      window.location.href = '/';
+    }
+  }, []);
+
   const mediaRef = useRef<InterviewMediaResources | null>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const rollingRecorderRef = useRef<RollingRecorder | null>(null);
@@ -305,9 +314,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           // TODO: Save device fingerprint to session via SupabaseService once the session ID is properly mapped
         });
 
+        const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 640, height: 480, frameRate: { ideal: 30 } },
-          audio: true,
+          audio: !isMobileDevice,
         });
 
         if (!mounted) {
@@ -327,9 +337,11 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         setCameraReady(true);
 
         const audioTrack = stream.getAudioTracks()[0];
-        audioTrack.addEventListener('ended', () => dispatch({ type: 'MICROPHONE_LOST' }));
-        audioTrack.addEventListener('mute', () => { setTimeout(() => { if (audioTrack.muted) dispatch({ type: 'MICROPHONE_LOST' }) }, 3000) });
-        audioTrack.addEventListener('unmute', () => dispatch({ type: 'MICROPHONE_RECOVERED' }));
+        if (audioTrack) {
+          audioTrack.addEventListener('ended', () => dispatch({ type: 'MICROPHONE_LOST' }));
+          audioTrack.addEventListener('mute', () => { setTimeout(() => { if (audioTrack.muted) dispatch({ type: 'MICROPHONE_LOST' }) }, 3000) });
+          audioTrack.addEventListener('unmute', () => dispatch({ type: 'MICROPHONE_RECOVERED' }));
+        }
 
         const videoTrack = stream.getVideoTracks()[0];
         videoTrack.addEventListener('ended', () => dispatch({ type: 'CAMERA_LOST' }));
@@ -416,6 +428,27 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     let mounted = true;
     const initInterview = async () => {
       try {
+        const savedStateStr = localStorage.getItem('reicrew_autosave_' + sessionIdRef.current);
+        if (savedStateStr) {
+          try {
+            const savedState = JSON.parse(savedStateStr);
+            if (savedState.questions && savedState.questions.length > 0) {
+              if (!mounted) return;
+              setQuestions(savedState.questions);
+              setCurrentIndex(savedState.currentIndex || 0);
+              setHistory(savedState.history || []);
+              if (savedState.transcript) {
+                  setTimeout(() => setTranscript(savedState.transcript), 100);
+              }
+              setLoading(false);
+              setTimeout(() => { if (mounted) speakQuestion(savedState.questions[savedState.currentIndex || 0].question); }, 800);
+              return;
+            }
+          } catch (e) {
+            console.warn("Failed to parse recovery state", e);
+          }
+        }
+
         const data = await AIService.generateQuestions(candidate.role, 'Intermediate', 'Technical', 5);
         if (!mounted) return;
         setQuestions(data);
@@ -447,10 +480,12 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       localStorage.setItem('reicrew_autosave_' + sessionIdRef.current, JSON.stringify({
         sessionId: sessionIdRef.current,
         currentIndex,
-        transcript
+        transcript,
+        questions,
+        history
       }));
     }
-  }, [transcript, currentIndex, hasStarted]);
+  }, [transcript, currentIndex, hasStarted, questions, history]);
 
   // Handle offline sync warning
   useEffect(() => {
@@ -480,13 +515,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   };
 
   const handleNext = async () => {
-    if (!transcript.trim() || isSpeaking || isProcessing) return;
+    if (!transcript.trim() || isSpeaking || isProcessingRef.current) return;
 
     if (!navigator.onLine) {
         alert("Connection lost. Please wait until your connection is restored to submit your answer.");
         return;
     }
 
+    isProcessingRef.current = true;
     setIsProcessing(true);
     setLoadingText("Evaluating your response...");
     setLoading(true);
@@ -529,6 +565,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         alert(`Failed to save your response: ${error?.message || "Unknown database error"}. Please check your connection and try again.`);
         setLoading(false);
         setIsProcessing(false);
+        isProcessingRef.current = false;
         return; // Halt if save fails
     }
 
@@ -549,6 +586,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       
       setLoading(false);
       setIsProcessing(false);
+      isProcessingRef.current = false;
       setTimeout(() => {
         speakQuestion(questions[nextIdx].question);
       }, 300);
