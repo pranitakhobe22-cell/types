@@ -36,7 +36,6 @@ export const useSpeech = () => {
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const transcriptBaseRef = useRef<string>(''); // Holds finalized text across mic restarts
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -50,13 +49,26 @@ export const useSpeech = () => {
       recognition.lang = 'en-US';
 
       recognition.onresult = (event: any) => {
-        let currentSessionTranscript = "";
-        for (let i = 0; i < event.results.length; i++) {
-           currentSessionTranscript += event.results[i][0].transcript;
+        let finalTranscript = '';
+        let interimTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
         }
-        
-        const combined = (transcriptBaseRef.current + " " + currentSessionTranscript).trim();
-        setTranscript(combined.toLowerCase());
+
+        if (finalTranscript || interimTranscript) {
+          // Append or replace based on how results are being reported
+          // Use event.results to get the full state if continuous
+          let fullTranscript = "";
+          for (let i = 0; i < event.results.length; i++) {
+             fullTranscript += event.results[i][0].transcript;
+          }
+          setTranscript(fullTranscript.toLowerCase());
+        }
       };
 
       recognition.onerror = (event: any) => {
@@ -105,10 +117,6 @@ export const useSpeech = () => {
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening) {
       try {
-        setTranscript((prev) => {
-            transcriptBaseRef.current = prev;
-            return prev;
-        });
         recognitionRef.current.start();
         setIsListening(true);
       } catch (e) {
@@ -125,7 +133,6 @@ export const useSpeech = () => {
   }, []);
 
   const resetTranscript = useCallback(() => {
-    transcriptBaseRef.current = '';
     setTranscript('');
   }, []);
 
