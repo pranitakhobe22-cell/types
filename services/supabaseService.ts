@@ -128,35 +128,40 @@ export class SupabaseService {
     // ==========================================
     // SESSION RESPONSES
     // ==========================================
-    static async saveResponse(sessionId: string, questionIndex: number, result: any, speechMetrics: any) {
+    static async saveResponse(sessionId: string, questionIndex: number, result: any, idealAnswer: string) {
+        const payload = {
+            session_id: sessionId,
+            question_index: questionIndex,
+            question_text: result.questionText,
+            candidate_answer: result.userAnswer,
+            ideal_answer: idealAnswer,
+            
+            // Mapping EvaluationResult
+            content_score: result.contentScore || null,
+            grammar_score: result.grammarScore || null,
+            fluency_score: result.fluencyScore || null,
+            verdict: result.verdict || null,
+            feedback: result.feedback || null,
+            
+            // Auditable Fields
+            expected_key_points: result.matchedKeyPoints ? [...result.matchedKeyPoints, ...(result.missingKeyPoints || [])] : null,
+            detected_key_points: result.matchedKeyPoints || null,
+            missing_key_points: result.missingKeyPoints || null,
+            
+            // We can store confidence score & expression in question_snapshot or ignore them 
+            // since they don't have dedicated columns in the v5 schema.
+            // Using deduction_reason as a placeholder for visual analysis feedback if needed
+            deduction_reason: result.expressionAnalysis || null
+        };
+
         const { error } = await supabase
             .from('session_responses')
-            .insert({
-                session_id: sessionId,
-                question_index: questionIndex,
-                question_text: result.questionText,
-                candidate_answer: result.userAnswer,
-                content_score: result.contentScore,
-                grammar_score: result.grammarScore,
-                fluency_score: result.fluencyScore,
-                confidence_score: result.confidenceScore,
-                verdict: result.verdict,
-                feedback: result.feedback,
-                question_snapshot: result.questionSnapshot,
-                ideal_answer_snapshot: result.idealAnswerSnapshot,
-                expected_key_points: result.expectedKeyPoints,
-                detected_key_points: result.detectedKeyPoints,
-                missing_key_points: result.missingKeyPoints,
-                deduction_reason: result.deductionReason,
-                bonus_reason: result.bonusReason,
-                response_duration_seconds: result.responseDurationSeconds,
-                expression_analysis: result.expressionAnalysis,
-                speech_rate_wpm: speechMetrics?.wpm,
-                pause_count: speechMetrics?.pauses,
-                filler_word_count: speechMetrics?.fillers
-            });
+            .insert(payload);
 
-        if (error) throw error;
+        if (error) {
+            console.error("Supabase Save Response Error:", error);
+            throw error;
+        }
     }
 
     // ==========================================

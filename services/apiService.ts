@@ -278,13 +278,13 @@ export const submitAnswer = async (
 
   // 1. Difficulty-based Rubric Construction
   let difficultyRubric = "Generic Evaluation";
-  if (settings.difficulty === 'Very Easy' || settings.difficulty === 'Easy') {
+  if (difficulty === 'Very Easy' || difficulty === 'Easy') {
     difficultyRubric = `Difficulty: EASY. 
       - Focus: CONCEPTUAL UNDERSTANDING.
       - Ignore minor grammar or stuttering.
       - Passing score: 5/10.
       - Look for: Basic grasp of the topic.`;
-  } else if (settings.difficulty === 'Hard' || settings.difficulty === 'Very Hard') {
+  } else if (difficulty === 'Hard' || difficulty === 'Very Hard') {
     difficultyRubric = `Difficulty: STRICT/HARD.
       - Focus: PROFESSIONALISM, PRECISION, and GRAMMAR.
       - Penalty for: Filler words (um, ah), repetitive phrasing, or vague answers.
@@ -308,7 +308,7 @@ export const submitAnswer = async (
 
     [ROLE CONTEXT]
     Position: ${candidate.position}
-    Interview Difficulty: ${settings.difficulty}
+    Interview Difficulty: ${difficulty}
     
     [EVALUATION RUBRIC]
     ${difficultyRubric}

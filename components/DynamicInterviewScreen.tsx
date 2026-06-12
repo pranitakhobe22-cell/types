@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useReducer } from 'react';
 import { Mic, MicOff, Volume2, Send, Loader2, Edit3, CheckCircle, ArrowRight, AlertTriangle } from 'lucide-react';
 import { AIService, GeneratedQuestion } from '../services/aiService';
+import { submitAnswer } from '../services/apiService';
+import { useSpeech } from '../hooks/useSpeech';
 import { CameraMonitor } from './CameraMonitor';
 import { MonitoringDashboard } from './MonitoringDashboard';
 import { SupabaseService } from '../services/supabaseService';
@@ -10,22 +12,7 @@ import {
   HeartbeatMetrics, ProctoringEngineState, ProctoringReport, DashboardTelemetry 
 } from '../types';
 
-// Speech Recognition Types
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-  resultIndex: number;
-}
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  onresult: (event: SpeechRecognitionEvent) => void;
-  onerror: (event: any) => void;
-  onend: () => void;
-}
-
+// Speech Recognition Types removed, using useSpeech hook
 import { ProctoringState, ProctoringAction } from '../types';
 
 const createInitialState = (): ProctoringState => ({
@@ -215,30 +202,32 @@ const proctoringReducer = (state: ProctoringState, action: ProctoringAction): Pr
 };
 
 interface DynamicInterviewScreenProps {
-  candidate: { name: string; email: string; role: string };
-  onComplete: (history: { question: string; answer: string; ideal_answer: string }[], report?: ProctoringReport) => void;
+  candidate: { name: string; email: string; role: string; customTopic?: string; isDemo?: boolean; jobPostId?: string };
+  onComplete: (history: { question: string; answer: string; ideal_answer: string }[], proctoringReport: ProctoringReport, evalReport: any) => void;
 }
 
 export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ candidate, onComplete }) => {
   const [questions, setQuestions] = useState<GeneratedQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string }[]>([]);
-  const [userInput, setUserInput] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
-  const isAiSpeakingRef = useRef(false);
+  const {
+    isListening, transcript, setTranscript, resetTranscript,
+    startListening, stopListening, isSupported, speak, stopSpeaking, isSpeaking, warmUp
+  } = useSpeech();
+  
   const [interimSpeech, setInterimSpeech] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadingText, setLoadingText] = useState('Evaluating your response...');
   const [isEditing, setIsEditing] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isMobileMonitorOpen, setIsMobileMonitorOpen] = useState(false);
   const MAX_QUESTIONS = 5;
 
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const isRecognitionRunningRef = useRef(false);
   const synthRef = useRef<SpeechSynthesis>(window.speechSynthesis);
 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
-  const sessionIdRef = useRef<string>(crypto.randomUUID());
+  const sessionIdRef = useRef<string>(localStorage.getItem('current_session_id') || crypto.randomUUID());
   const mediaRef = useRef<InterviewMediaResources | null>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const rollingRecorderRef = useRef<RollingRecorder | null>(null);
@@ -437,15 +426,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         
         // Wait for voices to be ready before speaking
         const speakWhenReady = () => {
-          const voices = synthRef.current.getVoices();
-          if (voices.length > 0) {
-            setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 800);
-          } else {
-            synthRef.current.onvoiceschanged = () => {
-              setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 800);
-              synthRef.current.onvoiceschanged = null;
-            };
-          }
+           setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 800);
         };
         speakWhenReady();
       } catch (err) {
@@ -460,154 +441,127 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     };
   }, [hasStarted, candidate.role, proctoring.engineState, questions.length]);
 
-  // 4. Setup Speech Recognition
+  // Auto-save effect
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (hasStarted && questions.length > 0) {
+      localStorage.setItem('reicrew_autosave_' + sessionIdRef.current, JSON.stringify({
+        sessionId: sessionIdRef.current,
+        currentIndex,
+        transcript
+      }));
+    }
+  }, [transcript, currentIndex, hasStarted]);
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = navigator.language || 'en-US'; 
-
-    recognition.onstart = () => {
-      isRecognitionRunningRef.current = true;
+  // Handle offline sync warning
+  useEffect(() => {
+    const handleOffline = () => {
+       // Alerting user of offline state
+       console.warn("Connection lost. Responses are being stored locally.");
     };
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      if (isAiSpeakingRef.current) {
-        // Software echo cancellation: ignore mic input while AI is talking
-        return;
-      }
-
-      let finalTranscript = '';
-      let interimTranscript = '';
-      
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        } else {
-          interimTranscript += event.results[i][0].transcript;
-        }
-      }
-      
-      if (finalTranscript) {
-        setUserInput(prev => {
-          const space = (prev.length > 0 && !prev.endsWith(' ')) ? ' ' : '';
-          return prev + space + finalTranscript.trim();
-        });
-      }
-      setInterimSpeech(interimTranscript);
-    };
-
-    recognition.onerror = (err: any) => {
-      console.error("Speech Error:", err);
-      setIsListening(false);
-      isRecognitionRunningRef.current = false;
-    };
-    recognition.onend = () => {
-      setIsListening(false);
-      isRecognitionRunningRef.current = false;
-    };
-    
-    recognitionRef.current = recognition;
-
-    return () => {
-      try {
-        recognition.stop();
-        recognition.abort();
-      } catch (e) {}
-    };
+    window.addEventListener('offline', handleOffline);
+    return () => window.removeEventListener('offline', handleOffline);
   }, []);
 
   const speakQuestion = (text: string) => {
-    synthRef.current.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-
-    const watchdogMs = text.length * 80 + 4000;
-    let watchdog: ReturnType<typeof setTimeout> | null = null;
-
-    const clearSpeaking = () => {
-      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
-      setIsAiSpeaking(false);
-      isAiSpeakingRef.current = false;
-    };
-
-    utterance.onstart = () => {
-      setIsAiSpeaking(true);
-      isAiSpeakingRef.current = true;
-      watchdog = setTimeout(() => {
-        synthRef.current.cancel();
-        setIsAiSpeaking(false);
-        isAiSpeakingRef.current = false;
-        watchdog = null;
-      }, watchdogMs);
-    };
-    utterance.onend = clearSpeaking;
-    utterance.onerror = clearSpeaking;
-    
-    const voices = synthRef.current.getVoices();
-    const indianVoice = voices.find(v => v.lang === 'en-IN' || v.name.includes('India') || v.name.includes('Rishi') || v.name.includes('Heera'));
-    const premiumVoice = voices.find(v => v.name.includes('Google') || v.name.includes('Natural'));
-    
-    if (indianVoice) {
-      utterance.voice = indianVoice;
-      utterance.rate = 0.9;
-    } else if (premiumVoice) {
-      utterance.voice = premiumVoice;
-    }
-    
-    synthRef.current.speak(utterance);
+    speak(text);
   };
 
   const toggleMic = () => {
-    if (!recognitionRef.current) {
+    if (!isSupported) {
         alert("Speech recognition is not supported on this device/browser. Please type your answer directly.");
         setIsEditing(true);
         return;
     }
-    if (isRecognitionRunningRef.current) {
-      setIsListening(false);
-      try { recognitionRef.current.stop(); } catch(e) {}
+    if (isListening) {
+      stopListening();
     } else {
-      setUserInput('');
-      setIsListening(true);
-      try { recognitionRef.current.start(); } catch(e) {
-        console.error("Failed to start mic:", e);
-        setIsListening(false);
-      }
+      startListening();
     }
   };
 
   const handleNext = async () => {
-    if (!userInput.trim() || isAiSpeaking) return;
+    if (!transcript.trim() || isSpeaking || isProcessing) return;
+
+    if (!navigator.onLine) {
+        alert("Connection lost. Please wait until your connection is restored to submit your answer.");
+        return;
+    }
+
+    setIsProcessing(true);
+    setLoadingText("Evaluating your response...");
+    setLoading(true);
+    stopListening();
 
     const currentQ = questions[currentIndex];
+    
+    let evaluationResult = null;
+    try {
+        const result = await submitAnswer(candidate as any, currentQ as any, transcript, undefined, undefined);
+        evaluationResult = result.evaluation;
+        
+        // Retry logic for Supabase save
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                console.log("Attempting to save response to Supabase...", {
+                    sessionId: sessionIdRef.current,
+                    currentIndex,
+                    questionText: evaluationResult?.questionText,
+                    userAnswer: evaluationResult?.userAnswer,
+                    idealAnswer: currentQ.ideal_answer
+                });
+                await SupabaseService.saveResponse(sessionIdRef.current, currentIndex, evaluationResult, currentQ.ideal_answer);
+                break; // success
+            } catch (err: any) {
+                console.error(`Supabase save attempt failed (${4 - retries}/3):`, err?.message || err, err?.details || "", err?.hint || "", err);
+                retries--;
+                if (retries === 0) throw err;
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+    } catch (error: any) {
+        console.error("Failed to save response after retries:", error?.message || error, {
+            error,
+            message: error?.message,
+            details: error?.details,
+            hint: error?.hint
+        });
+        alert(`Failed to save your response: ${error?.message || "Unknown database error"}. Please check your connection and try again.`);
+        setLoading(false);
+        setIsProcessing(false);
+        return; // Halt if save fails
+    }
+
     const newEntry = { 
       question: currentQ.question, 
-      answer: userInput, 
+      answer: transcript, 
       ideal_answer: currentQ.ideal_answer 
     };
 
     const newHistory = [...history, newEntry];
     setHistory(newHistory);
-    // await BackendService.saveResponse(newEntry); // handled by parent if needed
 
     if (currentIndex < MAX_QUESTIONS - 1) {
       const nextIdx = currentIndex + 1;
       setCurrentIndex(nextIdx);
-      setUserInput('');
+      resetTranscript();
       setIsEditing(false);
-      setIsListening(false);
-      try { recognitionRef.current?.stop(); } catch(e){}
       
+      setLoading(false);
+      setIsProcessing(false);
       setTimeout(() => {
         speakQuestion(questions[nextIdx].question);
       }, 300);
     } else {
-      setLoading(true);
-      const report = compileReport();
-      onComplete(newHistory, report);
+      setLoadingText("Compiling your results...");
+      const proctoringReport = compileReport();
+      let evalReport = null;
+      try {
+        evalReport = await AIService.evaluateInterview(newHistory);
+      } catch (e) {
+        console.error("Evaluation failed:", e);
+      }
+      onComplete(newHistory, proctoringReport, evalReport);
     }
   };
 
@@ -717,9 +671,17 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{candidate.role} Candidate</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 rounded-xl border border-slate-200 ml-4 md:ml-0 md:mr-60">
-          <span className="text-xs font-bold text-slate-500">QUESTION</span>
-          <span className="text-sm font-black text-indigo-600">{currentIndex + 1} / 5</span>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setIsMobileMonitorOpen(true)}
+            className="md:hidden px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold border border-indigo-100"
+          >
+            Show Monitoring
+          </button>
+          <div className="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-slate-50 rounded-xl border border-slate-200">
+            <span className="hidden md:inline text-xs font-bold text-slate-500">QUESTION</span>
+            <span className="text-sm font-black text-indigo-600">{currentIndex + 1} / 5</span>
+          </div>
         </div>
       </header>
 
@@ -727,11 +689,22 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       <div className="flex-1 flex flex-col md:flex-row md:overflow-hidden relative">
         
         {/* Right Column: V8 Monitoring Sidebar */}
-        <aside className="fixed md:relative top-24 right-4 md:top-auto md:right-auto md:order-last w-auto md:w-[320px] lg:w-[380px] md:max-w-[35vw] shrink-0 bg-transparent md:bg-slate-900 text-white md:border-l border-slate-700 overflow-visible md:overflow-y-auto flex flex-col shadow-none md:shadow-xl z-[70] pointer-events-none md:pointer-events-auto">
-          <div className="p-0 md:p-4 flex flex-col gap-4 pointer-events-auto">
+        <aside className={`
+          ${isMobileMonitorOpen ? 'fixed inset-0 z-[100] bg-slate-900 flex pt-16 px-4 pb-4 overflow-y-auto' : 'hidden md:flex'}
+          md:relative md:order-last md:w-[320px] lg:w-[380px] md:max-w-[35vw] shrink-0 md:bg-slate-900 text-white md:border-l border-slate-700 flex-col shadow-xl md:z-[70]
+        `}>
+          {isMobileMonitorOpen && (
+            <button 
+              onClick={() => setIsMobileMonitorOpen(false)}
+              className="md:hidden absolute top-4 right-4 text-slate-300 bg-slate-800 p-2 rounded-full font-bold"
+            >
+              Close
+            </button>
+          )}
+          <div className="p-0 md:p-4 flex flex-col gap-4 mt-8 md:mt-0">
             
             {/* Camera Preview */}
-            <div className="w-24 h-32 md:w-full md:h-auto md:aspect-[4/3] bg-black rounded-xl overflow-hidden relative shadow-2xl md:shadow-lg shrink-0 border-2 border-white/10 md:border-none">
+            <div className="w-full aspect-[4/3] bg-black rounded-xl overflow-hidden relative shadow-2xl md:shadow-lg shrink-0">
               <CameraMonitor 
                 mediaStream={mediaRef.current?.stream || undefined}
                 onVideoReady={(v) => { videoElRef.current = v; }}
@@ -841,17 +814,17 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
               {(!cameraReady || proctoring.engineState !== 'READY') ? 'Initializing Engine...' : 'Start Interview'}
             </button>
           </div>
-        ) : loading && questions.length === 0 ? (
+        ) : loading ? (
           <div className="flex flex-col items-center justify-center space-y-4 h-full animate-in fade-in duration-500">
             <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
-            <p className="text-slate-500 font-medium text-lg">Curating your specialized {candidate.role} assessment...</p>
+            <p className="text-slate-500 font-medium text-lg">{loadingText}</p>
           </div>
         ) : (
           <>
             {/* AI Question Section */}
             <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 pr-28 md:pr-48 mt-8 md:mt-0">
               <div className="flex items-center gap-3">
-                <div className={`w-3 h-3 rounded-full ${isAiSpeaking ? 'bg-indigo-500 animate-ping' : 'bg-slate-300'}`} />
+                <div className={`w-3 h-3 rounded-full ${isSpeaking ? 'bg-indigo-500 animate-ping' : 'bg-slate-300'}`} />
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">AI Interviewer</span>
               </div>
               <div className="relative">
@@ -877,7 +850,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
                 {isListening ? 'Listening...' : isEditing ? 'Editing Response' : 'Your Response'}
               </span>
             </div>
-            {!isListening && userInput && (
+            {!isListening && transcript && (
               <button 
                 onClick={() => setIsEditing(!isEditing)}
                 className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5 transition-colors"
@@ -890,15 +863,15 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
           <div className={`min-h-[120px] md:min-h-[160px] bg-white border-2 rounded-[24px] md:rounded-[32px] p-4 md:p-8 transition-all ${
             isListening ? 'border-rose-200 shadow-xl shadow-rose-100/50' : 
-            isEditing || userInput ? 'border-indigo-200 shadow-xl shadow-indigo-100/50' : 
+            isEditing || transcript ? 'border-indigo-200 shadow-xl shadow-indigo-100/50' : 
             'border-slate-100 shadow-sm'
           }`}>
           <div className="relative">
               <textarea
                 className={`w-full h-28 md:h-40 p-3 md:p-4 bg-slate-50 border-2 rounded-2xl resize-none outline-none transition-all text-sm md:text-base text-slate-700 font-medium ${isListening ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10'}`}
-                value={userInput || ""}
+                value={transcript || ""}
                 onChange={(e) => {
-                  setUserInput(e.target.value);
+                  setTranscript(e.target.value);
                   setIsEditing(true);
                 }}
                 placeholder={isListening ? "Listening..." : "Type or speak your answer here..."}
@@ -921,7 +894,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         <div className="max-w-4xl mx-auto flex items-center gap-3 md:gap-6">
           <button
             onClick={toggleMic}
-            disabled={!hasStarted || isAiSpeaking}
+            disabled={!hasStarted || isSpeaking}
             className={`w-16 h-16 md:w-20 md:h-20 shrink-0 rounded-full flex items-center justify-center transition-all ${
               isListening ? 'bg-rose-500 text-white shadow-xl shadow-rose-200' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
             } disabled:opacity-50`}
@@ -931,7 +904,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
           <button
             onClick={handleNext}
-            disabled={!hasStarted || !userInput.trim() || isAiSpeaking || (isListening && userInput.length === 0)}
+            disabled={!hasStarted || !transcript.trim() || isSpeaking || isProcessing || (isListening && transcript.length === 0)}
             className="flex-1 bg-slate-900 hover:bg-indigo-600 disabled:bg-slate-100 disabled:text-slate-300 text-white h-16 md:h-20 rounded-2xl md:rounded-[28px] font-bold text-lg md:text-xl shadow-xl shadow-slate-200/50 transition-all flex items-center justify-center gap-2 md:gap-3 active:scale-[0.98]"
           >
             <span className="truncate">{currentIndex < 4 ? 'Next Question' : 'Complete Interview'}</span>

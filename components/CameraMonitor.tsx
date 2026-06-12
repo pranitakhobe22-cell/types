@@ -57,7 +57,8 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
   const SMOOTHING = 0.8;
   const MIN_FACE_AREA = 0.03;
 
-  const FRAME_PROCESS_INTERVAL = 32; // ~30fps
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 768;
+  const FRAME_PROCESS_INTERVAL = isMobile ? 333 : 32; // ~3fps on mobile, ~30fps on desktop
   const HEARTBEAT_INTERVAL = 500;
   const animationFrameIdRef = useRef<number | null>(null);
   const isComponentMountedRef = useRef<boolean>(true);

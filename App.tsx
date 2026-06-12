@@ -67,14 +67,21 @@ function App() {
 
   const handleInterviewComplete = async (
     history: { question: string; answer: string; ideal_answer: string }[],
-    warnings: { type: string; message: string }[] = [],
-    status: 'COMPLETED' | 'TERMINATED' = 'COMPLETED'
+    proctoringReport: any,
+    evalReport: any
   ) => {
     try {
         const { SupabaseService } = await import('./services/supabaseService');
         const sessionId = localStorage.getItem('current_session_id');
         if (sessionId) {
-            await SupabaseService.completeSession(sessionId, 0); // Assuming 0 duration for now
+            if (evalReport) {
+                await SupabaseService.saveEvaluationReport(sessionId, evalReport);
+            }
+            if (proctoringReport) {
+                await SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any);
+            }
+            // Mark session as completed and save completed_at
+            await SupabaseService.completeSession(sessionId, proctoringReport?.sessionDurationMs ? Math.round(proctoringReport.sessionDurationMs / 1000) : 0);
         }
     } catch (e) {
         console.error("Failed to complete session:", e);
@@ -188,9 +195,9 @@ function App() {
       {flowState === 'interview' && candidate && (
         <DynamicInterviewScreen 
           candidate={candidate} 
-          onComplete={(history, report) => {
-            console.log("Proctoring Report:", report);
-            handleInterviewComplete(history);
+          onComplete={(history, proctoringReport, evalReport) => {
+            console.log("Proctoring Report:", proctoringReport);
+            handleInterviewComplete(history, proctoringReport, evalReport);
           }} 
         />
       )}
