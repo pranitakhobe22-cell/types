@@ -91,6 +91,32 @@ export class SupabaseService {
             .order('session_date', { ascending: false });
 
         if (error) throw error;
+        
+        // Patch: The database view often queries the wrong table (question_evaluations) instead of session_responses
+        // We will fetch session_responses manually to ensure the Admin Dashboard has the full breakdown
+        try {
+            const { data: responses } = await supabase.from('session_responses').select('*');
+            if (data && responses) {
+                data.forEach(session => {
+                    const sessionResponses = responses.filter(r => r.session_id === session.session_id);
+                    // If the view missed the answers, manually attach them from session_responses
+                    if (sessionResponses.length > 0 && (!session.all_questions_and_answers || session.all_questions_and_answers.length === 0)) {
+                        session.all_questions_and_answers = sessionResponses.map(r => ({
+                            question_text: r.question_text,
+                            candidate_answer: r.candidate_answer,
+                            content_score: r.content_score,
+                            grammar_score: r.grammar_score,
+                            fluency_score: r.fluency_score,
+                            verdict: r.verdict,
+                            feedback: r.feedback
+                        }));
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn("Failed to manually join session_responses:", e);
+        }
+
         return data;
     }
 
@@ -215,23 +241,43 @@ export class SupabaseService {
     // EVALUATION REPORTS
     // ==========================================
     static async saveEvaluationReport(sessionId: string, report: any) {
+        // Enforce strict Enum matching for the Postgres CHECK constraint
+        const allowedRecommendations = ['Strong Hire', 'Hire', 'Consider', 'Reject'];
+        let sanitizedRecommendation = 'Consider';
+        
+        if (report.hiringRecommendation) {
+            const normalized = report.hiringRecommendation.trim();
+            // Try to match case-insensitively first
+            const match = allowedRecommendations.find(r => r.toLowerCase() === normalized.toLowerCase());
+            if (match) {
+                sanitizedRecommendation = match;
+            } else if (normalized.toLowerCase().includes('strong')) {
+                sanitizedRecommendation = 'Strong Hire';
+            } else if (normalized.toLowerCase().includes('reject') || normalized.toLowerCase().includes('fail')) {
+                sanitizedRecommendation = 'Reject';
+            } else if (normalized.toLowerCase().includes('hire')) {
+                sanitizedRecommendation = 'Hire';
+            }
+        }
+
         const { error } = await supabase
             .from('evaluation_reports')
             .upsert({
                 session_id: sessionId,
                 total_score: report.totalScore,
-                technical_score: report.technicalScore,
-                communication_score: report.communicationScore,
-                confidence_score: report.confidenceScore,
-                proctoring_score: report.proctoringScore,
+                // Automatically calculate missing metrics if the AI generated them inside 'detailedAnalysis.metrics'
+                technical_score: report.technicalScore ?? (report.detailedAnalysis?.metrics ? ((report.detailedAnalysis.metrics.accuracy || 0) + (report.detailedAnalysis.metrics.depth || 0)) / 2 * 10 : null),
+                communication_score: report.communicationScore ?? (report.detailedAnalysis?.metrics ? ((report.detailedAnalysis.metrics.clarity || 0) + (report.detailedAnalysis.metrics.vocabulary || 0)) / 2 * 10 : null),
+                confidence_score: report.confidenceScore ?? null,
+                proctoring_score: report.proctoringScore ?? null,
                 final_verdict: report.finalVerdict,
-                hiring_recommendation: report.hiringRecommendation || 'Consider',
+                hiring_recommendation: sanitizedRecommendation,
                 strengths: report.detailedAnalysis?.strengths || [],
                 failures: report.detailedAnalysis?.failures || [],
                 verdict_justification: report.verdictJustification,
                 evaluation_logic: report.evaluationLogic || {},
-                risk_score: report.riskScore,
-                risk_level: report.riskLevel,
+                risk_score: report.riskScore ?? null,
+                risk_level: ['Low', 'Medium', 'High', 'Critical'].includes(report.riskLevel) ? report.riskLevel : null,
                 risk_reason: report.riskReason || [],
                 proctoring_summary: report.proctoringSummary || {},
                 evaluation_weights_snapshot: report.evaluationWeightsSnapshot || {},
@@ -239,7 +285,7 @@ export class SupabaseService {
                 evaluation_model: report.evaluationModel,
                 evaluation_prompt_version: report.evaluationPromptVersion,
                 evaluated_at: report.evaluatedAt || new Date().toISOString(),
-                candidate_outcome: report.candidateOutcome
+                candidate_outcome: ['Pending', 'Advanced', 'Rejected', 'Hired'].includes(report.candidateOutcome) ? report.candidateOutcome : null
             }, { onConflict: 'session_id' });
 
         if (error) {
