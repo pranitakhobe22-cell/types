@@ -5,6 +5,8 @@ import { EndScreen } from './components/EndScreen';
 import { AdminDashboard } from './components/AdminDashboard';
 
 import { HealthService, SystemHealth } from './services/healthService';
+import { SupabaseService } from './services/supabaseService';
+import { getDeviceFingerprint } from './services/deviceFingerprint';
 import { AlertTriangle, Server, Database, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 
 function App() {
@@ -48,9 +50,6 @@ function App() {
     setCandidate(data);
     
     try {
-        const { SupabaseService } = await import('./services/supabaseService');
-        const { getDeviceFingerprint } = await import('./services/deviceFingerprint');
-        
         const candidateRecord = await SupabaseService.upsertCandidate({ name: data.name, email: data.email, role: data.role } as any);
         const fp = await getDeviceFingerprint();
         
@@ -71,7 +70,6 @@ function App() {
     evalReport: any
   ) => {
     try {
-        const { SupabaseService } = await import('./services/supabaseService');
         const sessionId = localStorage.getItem('current_session_id');
         if (sessionId) {
             const savePromises: Promise<any>[] = [];

@@ -11,6 +11,7 @@ import {
   InterviewMediaResources, RawDetectionFrame, ProctorViolation, TimelineEvent, 
   HeartbeatMetrics, ProctoringEngineState, ProctoringReport, DashboardTelemetry 
 } from '../types';
+import { getDeviceFingerprint } from '../services/deviceFingerprint';
 
 // Speech Recognition Types removed, using useSpeech hook
 import { ProctoringState, ProctoringAction } from '../types';
@@ -333,11 +334,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     const initMediaAndDevice = async () => {
       try {
         // Record Device Fingerprint
-        import('../services/deviceFingerprint').then(async ({ getDeviceFingerprint }) => {
-          const fp = await getDeviceFingerprint();
-          console.log("[Device Fingerprint]", fp);
-          // TODO: Save device fingerprint to session via SupabaseService once the session ID is properly mapped
-        });
+        const fp = await getDeviceFingerprint();
+        console.log("[Device Fingerprint]", fp);
+        // TODO: Save device fingerprint to session via SupabaseService once the session ID is properly mapped
 
         const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
         const stream = await navigator.mediaDevices.getUserMedia({

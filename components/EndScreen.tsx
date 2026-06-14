@@ -6,6 +6,7 @@ import {
   Star, ThumbsUp, ThumbsDown, BarChart2, Zap
 } from 'lucide-react';
 import { Logo } from './Logo';
+import { SupabaseService } from '../services/supabaseService';
 
 interface EndScreenProps {
   candidate: { name: string; email: string; role: string };
@@ -185,14 +186,12 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
         setReport(result as EvaluationReport);
         
         // Save report to Supabase
-        import('../services/supabaseService').then(({ SupabaseService }) => {
-            const sessionId = localStorage.getItem('current_session_id');
-            if (sessionId) {
-                SupabaseService.saveEvaluationReport(sessionId, result).catch(err => {
-                    console.error("Failed to save evaluation report to Supabase:", err?.message || JSON.stringify(err, null, 2), err?.details, err?.hint);
-                });
-            }
-        });
+        const sessionId = localStorage.getItem('current_session_id');
+        if (sessionId) {
+            SupabaseService.saveEvaluationReport(sessionId, result).catch(err => {
+                console.error("Failed to save evaluation report to Supabase:", err?.message || JSON.stringify(err, null, 2), err?.details, err?.hint);
+            });
+        }
 
       } catch (err) {
         console.error("EndScreen: Evaluation failed", err);

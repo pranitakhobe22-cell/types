@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 
 import { SystemHealth } from '../services/healthService';
+import { SupabaseService } from '../services/supabaseService';
 
 interface AdminDashboardProps {
     onLogout: () => void;
@@ -47,7 +48,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
     useEffect(() => {
         const load = async () => {
             try {
-                const { SupabaseService } = await import('../services/supabaseService');
+                // Config and data load
                 
                 // Load config (StorageService is fine for local admin UI settings if they aren't synced yet)
                 setConfig(await StorageService.getConfig());
