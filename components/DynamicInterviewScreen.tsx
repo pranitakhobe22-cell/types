@@ -250,7 +250,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [isMobileMonitorOpen, setIsMobileMonitorOpen] = useState(false);
   const MAX_QUESTIONS = 5;
 
-  const synthRef = useRef<SpeechSynthesis | null>(null);
+  const synthRef = useRef<SpeechSynthesis | null>(typeof window !== 'undefined' ? window.speechSynthesis : null);
 
   useEffect(() => {
     console.log('TRANSCRIPT UPDATED', Date.now(), transcript);
@@ -513,7 +513,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
     return () => {
       mounted = false;
-      synthRef.current.cancel();
+      synthRef.current?.cancel();
     };
   }, [hasStarted, candidate.role, proctoring.engineState, questions.length]);
 
