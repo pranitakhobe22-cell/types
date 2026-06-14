@@ -12,7 +12,9 @@ import { AlertTriangle, Server, Database, Lock, Loader2, CheckCircle2 } from 'lu
 function App() {
   const [flowState, setFlowState] = useState<'landing' | 'interview' | 'completed'>('landing');
   const [candidate, setCandidate] = useState<{ name: string; email: string; role: string } | null>(null);
-  const [interviewHistory, setInterviewHistory] = useState<{ question: string; answer: string; ideal_answer: string }[]>([]);
+  const [interviewHistory, setInterviewHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any }[]>([]);
+  const [finalEvalReport, setFinalEvalReport] = useState<any>(null);
+  const [finalProctoringReport, setFinalProctoringReport] = useState<any>(null);
   
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(true);
@@ -69,16 +71,20 @@ function App() {
     proctoringReport: any,
     evalReport: any
   ) => {
+    setInterviewHistory(history);
+    setFinalProctoringReport(proctoringReport);
+    setFinalEvalReport(evalReport);
+
     try {
         const sessionId = localStorage.getItem('current_session_id');
         if (sessionId) {
             const savePromises: Promise<any>[] = [];
             
             if (evalReport) {
-                savePromises.push(SupabaseService.saveEvaluationReport(sessionId, evalReport));
+                savePromises.push(SupabaseService.saveEvaluationReport(sessionId, evalReport).catch(e => console.error("Eval save failed", e)));
             }
             if (proctoringReport) {
-                savePromises.push(SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any));
+                savePromises.push(SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any).catch(e => console.error("Proctoring save failed", e)));
             }
             
             savePromises.push(
@@ -86,15 +92,17 @@ function App() {
                     sessionId, 
                     proctoringReport?.sessionDurationMs ? Math.round(proctoringReport.sessionDurationMs / 1000) : 0,
                     proctoringReport?.violationScore >= 15 ? 'TERMINATED' : 'COMPLETED'
-                )
+                ).catch(e => console.error("Session complete save failed", e))
             );
 
-            await Promise.all(savePromises);
+            // Wait for all saves to either resolve or reject
+            await Promise.allSettled(savePromises);
         }
     } catch (e) {
-        console.error("Failed to complete session:", e);
+        console.error("Failed to complete session gracefully:", e);
     }
-    setInterviewHistory(history);
+    
+    // Always navigate to completed screen so the candidate sees their results
     setFlowState('completed');
   };
 
@@ -214,6 +222,8 @@ function App() {
         <EndScreen 
           history={interviewHistory} 
           candidate={candidate} 
+          evalReport={finalEvalReport}
+          proctoringReport={finalProctoringReport}
           onHome={handleReset} 
         />
       )}

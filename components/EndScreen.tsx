@@ -1,16 +1,19 @@
-import React, { useEffect, useState } from 'react';
-import { AIService, EvaluationReport } from '../services/aiService';
+import React, { useState } from 'react';
+import { EvaluationReport } from '../services/aiService';
+import { ProctoringReport } from '../types';
 import {
   CheckCircle, AlertCircle, ArrowLeft, Trophy, Target,
   TrendingUp, TrendingDown, ChevronDown, ChevronUp,
-  Star, ThumbsUp, ThumbsDown, BarChart2, Zap
+  Star, ThumbsUp, ThumbsDown, BarChart2, Zap,
+  ShieldAlert, EyeOff, Monitor, Copy, Maximize, AlertTriangle, Clock
 } from 'lucide-react';
 import { Logo } from './Logo';
-import { SupabaseService } from '../services/supabaseService';
 
 interface EndScreenProps {
   candidate: { name: string; email: string; role: string };
   history: { question: string; answer: string; ideal_answer: string }[];
+  evalReport?: EvaluationReport | null;
+  proctoringReport?: ProctoringReport | null;
   onHome: () => void;
 }
 
@@ -170,39 +173,25 @@ const QuestionCard: React.FC<{ item: EvaluationReport['questionBreakdown'][0]; i
   );
 };
 
-export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome }) => {
-  const [report, setReport] = useState<EvaluationReport | null>(null);
-  const [loading, setLoading] = useState(true);
+export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, evalReport, proctoringReport, onHome }) => {
+  const report = evalReport;
+  
+  // Deterministic Risk Mapping
+  const integrityScore = proctoringReport?.integrityScore ?? 100;
+  let riskLevel = 'Low';
+  let riskColor = 'text-emerald-500';
+  let riskBg = 'bg-emerald-50 border-emerald-200';
+  if (integrityScore < 70) {
+      riskLevel = 'High';
+      riskColor = 'text-rose-500';
+      riskBg = 'bg-rose-50 border-rose-200';
+  } else if (integrityScore < 90) {
+      riskLevel = 'Medium';
+      riskColor = 'text-amber-500';
+      riskBg = 'bg-amber-50 border-amber-200';
+  }
 
-  useEffect(() => {
-    const fetchReport = async () => {
-      setLoading(true);
-      if (!history || history.length === 0) {
-        setLoading(false);
-        return;
-      }
-      try {
-        const result = await AIService.evaluateInterview(history);
-        setReport(result as EvaluationReport);
-        
-        // Save report to Supabase
-        const sessionId = localStorage.getItem('current_session_id');
-        if (sessionId) {
-            SupabaseService.saveEvaluationReport(sessionId, result).catch(err => {
-                console.error("Failed to save evaluation report to Supabase:", err?.message || JSON.stringify(err, null, 2), err?.details, err?.hint);
-            });
-        }
-
-      } catch (err) {
-        console.error("EndScreen: Evaluation failed", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchReport();
-  }, [history]);
-
-  if (loading) {
+  if (!report) {
     return (
       <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-6 space-y-8">
         <div className="relative">
@@ -262,19 +251,19 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
               {/* Score Ring */}
               <div className="md:col-span-4 bg-white border border-slate-200 rounded-[48px] p-10 flex flex-col items-center justify-center space-y-6 shadow-sm">
                 <div className="relative">
-                  <ScoreRing score={report.totalScore} size={200} />
+                  <ScoreRing score={report?.totalScore || 0} size={200} />
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <span className="text-6xl font-black text-slate-900 flex items-baseline">
-                      {report.totalScore}
+                      {report?.totalScore || 0}
                       <span className="text-2xl text-slate-400 font-bold ml-1">/100</span>
                     </span>
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Score</span>
                   </div>
                 </div>
                 <div className={`px-6 py-2.5 rounded-2xl font-black text-sm border ${categoryColors[report.category] || categoryColors['Average']}`}>
-                  {(report.category || 'Average').toUpperCase()} PERFORMANCE
+                  {(report?.category || 'Average').toUpperCase()} PERFORMANCE
                 </div>
-                {report.hiringRecommendation && (
+                {report?.hiringRecommendation && (
                   <div className={`px-6 py-2.5 rounded-2xl font-black text-sm ${hiringColors[report.hiringRecommendation] || 'bg-slate-600 text-white'}`}>
                     {report.hiringRecommendation.toUpperCase()}
                   </div>
@@ -288,7 +277,7 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
                     <BarChart2 size={16} className="text-indigo-500" /> Performance Metrics
                   </h3>
                   <div className="space-y-5">
-                    {report.detailedAnalysis?.metrics && Object.entries(report.detailedAnalysis.metrics).map(([key, value]) => (
+                    {report?.detailedAnalysis?.metrics && Object.entries(report.detailedAnalysis.metrics).map(([key, value]) => (
                       <MetricBar key={key} label={key} value={value as number} />
                     ))}
                   </div>
@@ -301,7 +290,7 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
                       <Trophy className="text-amber-500" size={18} /> Strengths
                     </h3>
                     <ul className="space-y-3">
-                      {(report.detailedAnalysis?.strengths || []).map((s, i) => (
+                      {(report?.detailedAnalysis?.strengths || []).map((s, i) => (
                         <li key={i} className="flex gap-3 text-sm font-medium text-slate-600">
                           <div className="mt-1.5 w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
                           {s}
@@ -314,7 +303,7 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
                       <Target className="text-rose-500" size={18} /> Improvements Needed
                     </h3>
                     <ul className="space-y-3">
-                      {(report.detailedAnalysis?.failures || []).map((f, i) => (
+                      {(report?.detailedAnalysis?.failures || []).map((f, i) => (
                         <li key={i} className="flex gap-3 text-sm font-medium text-slate-600">
                           <div className="mt-1.5 w-2 h-2 rounded-full bg-rose-500 shrink-0" />
                           {f}
@@ -325,9 +314,78 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
                 </div>
               </div>
             </div>
+            
+            {/* --- SECTION 1.5: Integrity & Proctoring Breakdown --- */}
+            {proctoringReport && (
+              <section className="bg-white border border-slate-200 rounded-[40px] p-10 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-3">
+                    <ShieldAlert size={24} className={riskColor} />
+                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">Proctoring & Integrity</h2>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Integrity Score</p>
+                      <p className="text-3xl font-black text-slate-900">{integrityScore}<span className="text-lg text-slate-400">/100</span></p>
+                    </div>
+                    <div className={`px-4 py-2 rounded-xl font-bold text-sm border ${riskBg}`}>
+                      {riskLevel} Risk
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid md:grid-cols-4 gap-4 mb-8">
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                    <Monitor className="text-slate-400 mb-2" size={20} />
+                    <p className="text-2xl font-black text-slate-700">{proctoringReport.tabSwitchEvents}</p>
+                    <p className="text-xs font-medium text-slate-500 uppercase">Tab Switches</p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                    <Maximize className="text-slate-400 mb-2" size={20} />
+                    <p className="text-2xl font-black text-slate-700">{proctoringReport.fullscreenExitEvents}</p>
+                    <p className="text-xs font-medium text-slate-500 uppercase">Fullscreen Exits</p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                    <EyeOff className="text-slate-400 mb-2" size={20} />
+                    <p className="text-2xl font-black text-slate-700">{proctoringReport.noFaceEvents}</p>
+                    <p className="text-xs font-medium text-slate-500 uppercase">Face Lost Events</p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                    <Copy className="text-slate-400 mb-2" size={20} />
+                    <p className="text-2xl font-black text-slate-700">{proctoringReport.copyPasteEvents}</p>
+                    <p className="text-xs font-medium text-slate-500 uppercase">Copy/Paste Events</p>
+                  </div>
+                </div>
+
+                {proctoringReport.timeline && proctoringReport.timeline.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-4">
+                      <Clock size={16} className="text-slate-400" /> Incident Timeline
+                    </h3>
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                      {proctoringReport.timeline.map((event: any, i: number) => (
+                        <div key={i} className="flex gap-4 items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
+                          <div className="text-xs font-mono font-bold text-slate-400 w-16 shrink-0">
+                            {new Date(event.timestamp).toISOString().substr(14, 5)}
+                          </div>
+                          <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
+                          <div className="flex-1">
+                            <p className="text-sm font-bold text-slate-700">{event.event.replace(/_/g, ' ')}</p>
+                            {event.detail && <p className="text-xs text-slate-500">{event.detail}</p>}
+                          </div>
+                          <div className="text-xs font-bold text-slate-400">
+                            Sev: {event.severity}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* --- SECTION 2: Per-Question Breakdown --- */}
-            {report.questionBreakdown && report.questionBreakdown.length > 0 && (
+            {report?.questionBreakdown && report.questionBreakdown.length > 0 && (
               <section>
                 <div className="flex items-center gap-3 mb-6">
                   <Zap size={20} className="text-indigo-500" />
@@ -345,9 +403,9 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, onHome
             <div className="bg-slate-900 rounded-[40px] p-10 text-white shadow-2xl">
               <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-4">Strategic Verdict</h3>
               <p className="text-xl font-medium leading-relaxed italic text-white/90 mb-6">
-                "{report.finalVerdict}"
+                "{report?.finalVerdict || 'Pending'}"
               </p>
-              {report.verdictJustification && (
+              {report?.verdictJustification && (
                 <p className="text-sm text-slate-400 leading-relaxed border-t border-white/10 pt-6">
                   {report.verdictJustification}
                 </p>
