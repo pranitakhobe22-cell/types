@@ -37,11 +37,6 @@ export const useSpeech = () => {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  const pendingTranscriptRef = useRef('');
-  const updateTimeoutRef = useRef<number | null>(null);
-  const questionStartIndexRef = useRef(0);
-  const lastResultLengthRef = useRef(0);
-  const accumulatedPrefixRef = useRef('');
   const shouldKeepListeningRef = useRef(false);
 
   // Initialize Speech Recognition
@@ -53,29 +48,24 @@ export const useSpeech = () => {
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       recognition.continuous = !isMobile;
       recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
       recognition.lang = 'en-US';
 
       recognition.onresult = (event: any) => {
-        let currentTranscript = '';
-        lastResultLengthRef.current = event.results.length;
+        let finalTranscript = '';
+        let interimTranscript = '';
 
-        // If the browser natively flushed its buffer (length dropped), we must reset our start index
-        // and save everything we've spoken so far into the prefix!
-        if (event.results.length < questionStartIndexRef.current) {
-            accumulatedPrefixRef.current = pendingTranscriptRef.current + ' ';
-            questionStartIndexRef.current = 0;
+        for (let i = 0; i < event.results.length; i++) {
+          const text = event.results[i][0].transcript;
+
+          if (event.results[i].isFinal) {
+            finalTranscript += text + ' ';
+          } else {
+            interimTranscript += text;
+          }
         }
 
-        const startIndex = questionStartIndexRef.current;
-        for (let i = startIndex; i < event.results.length; ++i) {
-          currentTranscript += event.results[i][0].transcript;
-        }
-
-        const newTranscript = (accumulatedPrefixRef.current + currentTranscript).toLowerCase();
-        
-        // No throttling, React 18 batches state updates natively
-        pendingTranscriptRef.current = newTranscript;
-        setTranscript(newTranscript);
+        setTranscript((finalTranscript + interimTranscript).trim());
       };
 
       recognition.onerror = (event: any) => {
@@ -152,9 +142,16 @@ export const useSpeech = () => {
 
   const resetTranscript = useCallback(() => {
     setTranscript('');
-    pendingTranscriptRef.current = '';
-    accumulatedPrefixRef.current = '';
-    questionStartIndexRef.current = lastResultLengthRef.current;
+    if (recognitionRef.current) {
+        // Force the browser to naturally flush its internal buffer (event.results)
+        // by explicitly stopping it. Our onend handler will immediately restart it!
+        shouldKeepListeningRef.current = true;
+        try {
+            recognitionRef.current.stop();
+        } catch (e) {
+            // Ignore if already stopped
+        }
+    }
   }, []);
 
   const speak = useCallback((text: string, options?: SpeakOptions | (() => void)) => {
