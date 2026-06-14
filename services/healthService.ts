@@ -23,43 +23,52 @@ export class HealthService {
             return health;
         }
 
-        // 1. Check Database (Try to read job_posts table limit 1)
-        try {
-            const { error } = await supabase.from('job_posts').select('id').limit(1);
-            if (error) {
-                health.errors.push(`Database error: ${error.message}`);
-            } else {
-                health.database = true;
-            }
-        } catch (e: any) {
-            health.errors.push(`Database reachability failed: ${e.message}`);
-        }
+        // Run all checks in parallel to minimize startup latency
+        const [dbCheck, storageCheck, authCheck] = await Promise.all([
+            // 1. Check Database
+            (async () => {
+                try {
+                    const { error } = await supabase.from('job_posts').select('id').limit(1);
+                    if (error) return { ok: false, error: `Database error: ${error.message}` };
+                    return { ok: true };
+                } catch (e: any) {
+                    return { ok: false, error: `Database reachability failed: ${e.message}` };
+                }
+            })(),
+            
+            // 2. Check Storage
+            (async () => {
+                try {
+                    const { error } = await supabase.storage.listBuckets();
+                    if (error && error.message.includes("FetchError")) {
+                        return { ok: false, error: `Storage reachability failed: ${error.message}` };
+                    }
+                    return { ok: true };
+                } catch (e: any) {
+                    return { ok: false, error: `Storage reachability failed: ${e.message}` };
+                }
+            })(),
 
-        // 2. Check Storage (Try to list buckets or get one)
-        try {
-            // listBuckets often returns [] for anonymous users depending on RLS.
-            // As long as it doesn't throw a network error, storage is reachable.
-            const { error } = await supabase.storage.listBuckets();
-            if (error && error.message.includes("FetchError")) {
-                health.errors.push(`Storage reachability failed: ${error.message}`);
-            } else {
-                health.storage = true;
-            }
-        } catch (e: any) {
-            health.errors.push(`Storage reachability failed: ${e.message}`);
-        }
+            // 3. Check Auth
+            (async () => {
+                try {
+                    const { error } = await supabase.auth.getSession();
+                    if (error) return { ok: false, error: `Auth error: ${error.message}` };
+                    return { ok: true };
+                } catch (e: any) {
+                    return { ok: false, error: `Auth reachability failed: ${e.message}` };
+                }
+            })()
+        ]);
 
-        // 3. Check Auth session ability (Just getting session is enough to test reachability)
-        try {
-            const { error } = await supabase.auth.getSession();
-            if (error) {
-                health.errors.push(`Auth error: ${error.message}`);
-            } else {
-                health.auth = true;
-            }
-        } catch (e: any) {
-            health.errors.push(`Auth reachability failed: ${e.message}`);
-        }
+        if (dbCheck.ok) health.database = true;
+        else health.errors.push(dbCheck.error!);
+
+        if (storageCheck.ok) health.storage = true;
+        else health.errors.push(storageCheck.error!);
+
+        if (authCheck.ok) health.auth = true;
+        else health.errors.push(authCheck.error!);
 
         return health;
     }

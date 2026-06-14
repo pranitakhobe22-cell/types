@@ -209,7 +209,7 @@ interface DynamicInterviewScreenProps {
 export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ candidate, onComplete }) => {
   const [questions, setQuestions] = useState<GeneratedQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string }[]>([]);
+  const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any }[]>([]);
   const {
     isListening, transcript, setTranscript, resetTranscript,
     startListening, stopListening, isSupported, speak, stopSpeaking, isSpeaking, warmUp
@@ -572,7 +572,8 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     const newEntry = { 
       question: currentQ.question, 
       answer: transcript, 
-      ideal_answer: currentQ.ideal_answer 
+      ideal_answer: currentQ.ideal_answer,
+      evaluation: evaluationResult
     };
 
     const newHistory = [...history, newEntry];

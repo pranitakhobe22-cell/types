@@ -203,143 +203,202 @@ export const AIService = {
   },
 
   async evaluateInterview(
-    candidateAnswers: { question: string; answer: string; ideal_answer: string }[]
+    candidateAnswers: { question: string; answer: string; ideal_answer: string; evaluation?: any }[]
   ): Promise<EvaluationReport> {
-    // Build a structured comparison for the AI to evaluate against
-    const formattedData = candidateAnswers.map((item, i) => ({
-      questionNumber: i + 1,
-      question: item.question,
-      idealAnswer: item.ideal_answer,
-      candidateAnswer: item.answer || "[No answer provided]"
-    }));
+    
+    // 1. Locally aggregate the scores and compile question breakdown
+    let sumContent = 0;
+    let sumCommunication = 0;
+    let sumConfidence = 0;
+
+    const questionEvaluations = candidateAnswers.map((item, index) => {
+        const evalData = item.evaluation || {};
+        
+        const contentScore = evalData.contentScore || 0;
+        const communicationScore = evalData.communicationScore || 0;
+        const confidenceScore = evalData.confidenceScore || 0;
+        
+        sumContent += contentScore;
+        sumCommunication += communicationScore;
+        sumConfidence += confidenceScore;
+
+        // Calculate keyword coverage (matched / total)
+        const matched = evalData.matchedKeyPoints?.length || 0;
+        const missed = evalData.missingKeyPoints?.length || 0;
+        const totalKeywords = matched + missed;
+        const keywordCoverage = totalKeywords > 0 ? (matched / totalKeywords) * 100 : 0;
+
+        return {
+            questionId: `Q${index + 1}`,
+            question: item.question,
+            candidateAnswer: item.answer || "[No answer provided]",
+            contentScore,
+            communicationScore,
+            confidenceScore,
+            keywordCoverage,
+            strengths: evalData.matchedKeyPoints || [],
+            weaknesses: evalData.missingKeyPoints || [],
+            explanation: evalData.feedback || "Answer recorded.",
+            verdict: evalData.verdict || "Partial",
+            idealAnswerSummary: item.ideal_answer
+        };
+    });
+
+    const count = candidateAnswers.length || 1;
+    const averageContent = sumContent / count;
+    const averageCommunication = sumCommunication / count;
+    const averageConfidence = sumConfidence / count;
+    const averageKeywordCoverage = questionEvaluations.reduce((acc, q) => acc + q.keywordCoverage, 0) / count;
+
+    // Weighted scoring logic as requested:
+    // technicalScore (content) * 0.50 + communicationScore * 0.20 + keywordCoverage * 0.15 + confidenceScore * 0.15
+    // Note: Content/Comm are out of 10. Confidence/Coverage are out of 100.
+    const weightedScore = 
+      ((averageContent / 10) * 100) * 0.50 +
+      ((averageCommunication / 10) * 100) * 0.20 +
+      averageKeywordCoverage * 0.15 +
+      averageConfidence * 0.15;
+
+    let totalScore = Math.round(weightedScore);
+    totalScore = Math.max(0, Math.min(100, totalScore));
+
+    let category: "Excellent" | "Good" | "Average" | "Poor" = "Poor";
+    if (totalScore >= 85) category = "Excellent";
+    else if (totalScore >= 70) category = "Good";
+    else if (totalScore >= 50) category = "Average";
+
+    // 2. Generate Executive Summary from AI
+    const aggregatedData = {
+        averageContent,
+        averageCommunication,
+        averageConfidence,
+        averageKeywordCoverage,
+        questionEvaluations: questionEvaluations.map(q => ({
+            questionId: q.questionId,
+            contentScore: q.contentScore,
+            communicationScore: q.communicationScore,
+            confidenceScore: q.confidenceScore,
+            keywordCoverage: q.keywordCoverage,
+            strengths: q.strengths,
+            weaknesses: q.weaknesses,
+            explanation: q.explanation
+        }))
+    };
 
     const prompt = `
-You are a strict but fair technical interviewer at a top-tier company. Your job is to evaluate a candidate's interview responses rigorously.
+You are an expert technical interviewer compiling a final executive summary.
+Do NOT re-evaluate the questions. We already have the detailed scores.
 
-EVALUATION CRITERIA:
-- Compare each answer DIRECTLY against the ideal answer provided
-- Score based on how many key concepts the candidate actually covered
-- Do NOT inflate scores — a vague answer should score low
-- A blank or off-topic answer should score 0-2
-- An answer that covers all key points concisely should score 8-10
+INTERVIEW DATA:
+${JSON.stringify(aggregatedData, null, 2)}
 
-INTERVIEW DATA TO EVALUATE:
-${JSON.stringify(formattedData, null, 2)}
+Overall Weighted Score: ${totalScore}/100
 
-SCORING RUBRIC (per question, 0-10):
-- 0-2: No answer, completely wrong, or irrelevant
-- 3-4: Very partial — mentions topic but misses most key points
-- 5-6: Partial — covers some key points but has significant gaps
-- 7-8: Good — covers most key points with minor omissions
-- 9-10: Excellent — comprehensive, accurate, well-articulated
-
-OVERALL METRICS (0-10 each, averaged across all questions):
-- relevance: How well answers addressed the actual question asked
-- accuracy: Technical correctness of the content
-- clarity: How clearly ideas were communicated
-- depth: Level of technical depth demonstrated
-- vocabulary: Use of proper technical terminology
-
-OUTPUT REQUIREMENTS (STRICT JSON — no extra text, no markdown):
+Provide a brief executive summary.
+OUTPUT REQUIREMENTS (STRICT JSON ONLY):
 {
-  "totalScore": <integer 0-100, weighted average of question scores>,
-  "category": <"Excellent" if >=85 | "Good" if >=70 | "Average" if >=50 | "Poor" if <50>,
-  "detailedAnalysis": {
-    "strengths": [<3 specific strengths observed in the interview>],
-    "failures": [<3 specific areas where the candidate clearly fell short>],
-    "metrics": {
-      "relevance": <0-10>,
-      "accuracy": <0-10>,
-      "clarity": <0-10>,
-      "depth": <0-10>,
-      "vocabulary": <0-10>
-    }
-  },
-  "questionBreakdown": [
-    {
-      "question": "<question text>",
-      "candidateAnswer": "<candidate's answer>",
-      "score": <0-10>,
-      "verdict": <"Excellent" | "Good" | "Partial" | "Poor">,
-      "feedback": "<1-2 sentence specific feedback on this answer>",
-      "keyPointsHit": [<list of key concepts the candidate correctly mentioned>],
-      "keyPointsMissed": [<list of key concepts from the ideal answer that were missing>],
-      "idealAnswerSummary": "<brief summary of what a perfect answer would include>"
-    }
-  ],
-  "finalVerdict": "<2-3 sentence overall assessment of the candidate>",
-  "verdictJustification": "<specific technical evidence from the answers to support the verdict>",
-  "hiringRecommendation": <"Strong Hire" if >=85 | "Hire" if >=70 | "Consider" if >=50 | "Reject" if <50>
+  "ExecutiveSummary": "<2-3 sentences assessing the candidate globally>",
+  "KeyStrengths": ["<strength 1>", "<strength 2>"],
+  "KeyWeaknesses": ["<weakness 1>", "<weakness 2>"],
+  "HiringRecommendation": "Strong Hire" | "Hire" | "Consider" | "Reject",
+  "FinalVerdict": "<1-2 sentence final verdict>"
 }`;
 
     try {
-      let text = await resilientGenerate(prompt, 2, 'eval');
+      let text = await resilientGenerate(prompt, 1, 'eval');
       
-      // Strip markdown code fences if present
       text = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-      
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error("Invalid AI response format");
       
       const parsed = JSON.parse(jsonMatch[0]);
       
-      // Enforce strict total score calculation from question scores to prevent LLM math hallucinations
-      if (parsed.questionBreakdown && parsed.questionBreakdown.length > 0) {
-        const sum = parsed.questionBreakdown.reduce((acc: number, q: any) => acc + (q.score || 0), 0);
-        const avg = sum / parsed.questionBreakdown.length;
-        parsed.totalScore = Math.round(avg * 10); // Scale 0-10 to 0-100
-      } else {
-        parsed.totalScore = 0;
-      }
-      
-      parsed.totalScore = Math.max(0, Math.min(100, parsed.totalScore));
-      
-      return parsed as EvaluationReport;
+      const questionBreakdown: QuestionFeedback[] = questionEvaluations.map(q => ({
+          question: q.question,
+          candidateAnswer: q.candidateAnswer,
+          score: q.contentScore,
+          verdict: q.verdict as any,
+          feedback: q.explanation,
+          keyPointsHit: q.strengths,
+          keyPointsMissed: q.weaknesses,
+          idealAnswerSummary: q.idealAnswerSummary
+      }));
+
+      return {
+          totalScore,
+          category,
+          detailedAnalysis: {
+              strengths: parsed.KeyStrengths || [],
+              failures: parsed.KeyWeaknesses || [],
+              metrics: {
+                  relevance: averageContent,
+                  accuracy: averageContent,
+                  clarity: averageCommunication,
+                  depth: averageContent,
+                  vocabulary: averageCommunication
+              }
+          },
+          questionBreakdown,
+          finalVerdict: parsed.ExecutiveSummary || "Interview completed.",
+          verdictJustification: parsed.FinalVerdict || "Aggregated from per-question evaluations.",
+          hiringRecommendation: parsed.HiringRecommendation || (totalScore >= 70 ? "Hire" : "Consider")
+      };
     } catch (error) {
-      console.error("Error evaluating interview:", error);
-      // Structured fallback so the UI doesn't break
-      return this._buildFallbackReport(candidateAnswers);
+      console.error("Summary generation failed, using fallback:", error);
+      
+      const questionBreakdown: QuestionFeedback[] = questionEvaluations.map(q => ({
+          question: q.question,
+          candidateAnswer: q.candidateAnswer,
+          score: q.contentScore,
+          verdict: q.verdict as any,
+          feedback: q.explanation,
+          keyPointsHit: q.strengths,
+          keyPointsMissed: q.weaknesses,
+          idealAnswerSummary: q.idealAnswerSummary
+      }));
+
+      return this._buildFallbackReport(candidateAnswers, totalScore, category, averageContent, averageCommunication, questionBreakdown);
     }
   },
 
   _computeFallbackScore(parsed: any): number {
-    if (parsed.questionBreakdown && parsed.questionBreakdown.length > 0) {
-      const avg = parsed.questionBreakdown.reduce((acc: number, q: any) => acc + (q.score || 5), 0) / parsed.questionBreakdown.length;
-      return Math.round(avg * 10);
-    }
     return 55;
   },
 
-  _buildFallbackReport(candidateAnswers: { question: string; answer: string; ideal_answer: string }[]): EvaluationReport {
+  _buildFallbackReport(
+      candidateAnswers: any[], 
+      totalScore: number = 55, 
+      category: any = "Average", 
+      avgContent: number = 5, 
+      avgCommunication: number = 5,
+      questionBreakdown: QuestionFeedback[] = []
+  ): EvaluationReport {
     return {
-      totalScore: 55,
-      category: "Average",
+      totalScore,
+      category,
       detailedAnalysis: {
         strengths: [
           "Candidate attempted all questions",
-          "Basic communication was maintained",
-          "Showed willingness to engage with topics"
+          "Basic communication was maintained"
         ],
         failures: [
-          "Evaluation engine encountered an error — manual review recommended",
-          "Detailed scoring unavailable for this session",
-          "AI analysis could not be completed successfully"
+          "Executive summary generation failed — manual review recommended"
         ],
-        metrics: { relevance: 6, accuracy: 5, clarity: 6, depth: 5, vocabulary: 5 }
+        metrics: { relevance: avgContent, accuracy: avgContent, clarity: avgCommunication, depth: avgContent, vocabulary: avgCommunication }
       },
-      questionBreakdown: candidateAnswers.map((item, i) => ({
+      questionBreakdown: questionBreakdown.length > 0 ? questionBreakdown : candidateAnswers.map((item, i) => ({
         question: item.question,
         candidateAnswer: item.answer || "[No answer provided]",
-        score: 5,
+        score: item.evaluation?.contentScore || 5,
         verdict: "Partial",
-        feedback: "Evaluation engine failed. Manual review of this answer is recommended.",
+        feedback: "Executive summary failed. See individual question feedback.",
         keyPointsHit: [],
-        keyPointsMissed: ["Full evaluation not available"],
+        keyPointsMissed: [],
         idealAnswerSummary: item.ideal_answer
       })),
-      finalVerdict: "The candidate completed the interview. A full AI evaluation was not available due to a technical error. Manual review is recommended.",
-      verdictJustification: "Evaluation API encountered an error. Scores shown are default placeholders.",
-      hiringRecommendation: "Consider"
+      finalVerdict: "The candidate completed the interview. Summary AI was unavailable, but question scores are valid.",
+      verdictJustification: "Aggregated locally.",
+      hiringRecommendation: totalScore >= 70 ? "Hire" : "Consider"
     };
   },
 

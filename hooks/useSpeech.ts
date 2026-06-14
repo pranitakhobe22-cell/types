@@ -48,27 +48,32 @@ export const useSpeech = () => {
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
+      let finalTranscriptRef = '';
+      let updateTimeout: number | null = null;
+      let pendingTranscript = '';
+
       recognition.onresult = (event: any) => {
-        let finalTranscript = '';
         let interimTranscript = '';
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcriptText = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
+            finalTranscriptRef += transcriptText + ' ';
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            interimTranscript += transcriptText;
           }
         }
 
-        if (finalTranscript || interimTranscript) {
-          // Append or replace based on how results are being reported
-          // Use event.results to get the full state if continuous
-          let fullTranscript = "";
-          for (let i = 0; i < event.results.length; i++) {
-             fullTranscript += event.results[i][0].transcript;
-          }
-          setTranscript(fullTranscript.toLowerCase());
+        const newTranscript = (finalTranscriptRef + interimTranscript).toLowerCase();
+
+        // Throttle updates using requestAnimationFrame to prevent React render blocking
+        if (!updateTimeout) {
+            updateTimeout = requestAnimationFrame(() => {
+                setTranscript(pendingTranscript);
+                updateTimeout = null;
+            });
         }
+        pendingTranscript = newTranscript;
       };
 
       recognition.onerror = (event: any) => {

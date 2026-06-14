@@ -74,14 +74,23 @@ function App() {
         const { SupabaseService } = await import('./services/supabaseService');
         const sessionId = localStorage.getItem('current_session_id');
         if (sessionId) {
+            const savePromises: Promise<any>[] = [];
+            
             if (evalReport) {
-                await SupabaseService.saveEvaluationReport(sessionId, evalReport);
+                savePromises.push(SupabaseService.saveEvaluationReport(sessionId, evalReport));
             }
             if (proctoringReport) {
-                await SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any);
+                savePromises.push(SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any));
             }
-            // Mark session as completed and save completed_at
-            await SupabaseService.completeSession(sessionId, proctoringReport?.sessionDurationMs ? Math.round(proctoringReport.sessionDurationMs / 1000) : 0);
+            
+            savePromises.push(
+                SupabaseService.completeSession(
+                    sessionId, 
+                    proctoringReport?.sessionDurationMs ? Math.round(proctoringReport.sessionDurationMs / 1000) : 0
+                )
+            );
+
+            await Promise.all(savePromises);
         }
     } catch (e) {
         console.error("Failed to complete session:", e);
