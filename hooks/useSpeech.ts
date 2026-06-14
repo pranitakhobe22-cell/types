@@ -41,6 +41,7 @@ export const useSpeech = () => {
   const updateTimeoutRef = useRef<number | null>(null);
   const questionStartIndexRef = useRef(0);
   const lastResultLengthRef = useRef(0);
+  const accumulatedPrefixRef = useRef('');
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -57,13 +58,19 @@ export const useSpeech = () => {
         let currentTranscript = '';
         lastResultLengthRef.current = event.results.length;
 
-        // Start accumulating from where the current question began
-        const startIndex = Math.min(questionStartIndexRef.current, event.results.length);
+        // If the browser natively flushed its buffer (length dropped), we must reset our start index
+        // and save everything we've spoken so far into the prefix!
+        if (event.results.length < questionStartIndexRef.current) {
+            accumulatedPrefixRef.current = pendingTranscriptRef.current + ' ';
+            questionStartIndexRef.current = 0;
+        }
+
+        const startIndex = questionStartIndexRef.current;
         for (let i = startIndex; i < event.results.length; ++i) {
           currentTranscript += event.results[i][0].transcript;
         }
 
-        const newTranscript = currentTranscript.toLowerCase();
+        const newTranscript = (accumulatedPrefixRef.current + currentTranscript).toLowerCase();
 
         // Throttle updates using requestAnimationFrame to prevent React render blocking
         if (!updateTimeoutRef.current) {
@@ -139,6 +146,7 @@ export const useSpeech = () => {
   const resetTranscript = useCallback(() => {
     setTranscript('');
     pendingTranscriptRef.current = '';
+    accumulatedPrefixRef.current = '';
     questionStartIndexRef.current = lastResultLengthRef.current;
   }, []);
 
