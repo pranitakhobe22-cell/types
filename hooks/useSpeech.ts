@@ -65,12 +65,14 @@ export const useSpeech = () => {
           }
         }
 
-        setTranscript((finalTranscript + interimTranscript).trim());
+        const combinedText = (finalTranscript + interimTranscript).trim();
+        console.log('RESULT EVENT', event.results.length, Date.now(), combinedText);
+        setTranscript(combinedText);
       };
 
       recognition.onerror = (event: any) => {
         console.error("Speech Recognition Error:", event.error);
-        if (event.error === 'not-allowed' || event.error === 'aborted' || event.error === 'no-speech') {
+        if (event.error === 'not-allowed' || event.error === 'aborted') {
           shouldKeepListeningRef.current = false;
           setIsListening(false);
         }

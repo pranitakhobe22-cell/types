@@ -250,7 +250,11 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [isMobileMonitorOpen, setIsMobileMonitorOpen] = useState(false);
   const MAX_QUESTIONS = 5;
 
-  const synthRef = useRef<SpeechSynthesis>(window.speechSynthesis);
+  const synthRef = useRef<window.speechSynthesis | null>(null);
+
+  useEffect(() => {
+    console.log('TRANSCRIPT UPDATED', Date.now(), transcript);
+  }, [transcript]);
 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
   const [toastWarning, setToastWarning] = useState<{ message: string, type: 'warning' | 'danger' } | null>(null);
