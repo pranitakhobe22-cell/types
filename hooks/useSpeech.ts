@@ -37,9 +37,10 @@ export const useSpeech = () => {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  const finalTranscriptRef = useRef('');
   const pendingTranscriptRef = useRef('');
   const updateTimeoutRef = useRef<number | null>(null);
+  const questionStartIndexRef = useRef(0);
+  const lastResultLengthRef = useRef(0);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -53,18 +54,16 @@ export const useSpeech = () => {
       recognition.lang = 'en-US';
 
       recognition.onresult = (event: any) => {
-        let interimTranscript = '';
+        let currentTranscript = '';
+        lastResultLengthRef.current = event.results.length;
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const transcriptText = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscriptRef.current += transcriptText + ' ';
-          } else {
-            interimTranscript += transcriptText;
-          }
+        // Start accumulating from where the current question began
+        const startIndex = Math.min(questionStartIndexRef.current, event.results.length);
+        for (let i = startIndex; i < event.results.length; ++i) {
+          currentTranscript += event.results[i][0].transcript;
         }
 
-        const newTranscript = (finalTranscriptRef.current + interimTranscript).toLowerCase();
+        const newTranscript = currentTranscript.toLowerCase();
 
         // Throttle updates using requestAnimationFrame to prevent React render blocking
         if (!updateTimeoutRef.current) {
@@ -139,8 +138,8 @@ export const useSpeech = () => {
 
   const resetTranscript = useCallback(() => {
     setTranscript('');
-    finalTranscriptRef.current = '';
     pendingTranscriptRef.current = '';
+    questionStartIndexRef.current = lastResultLengthRef.current;
   }, []);
 
   const speak = useCallback((text: string, options?: SpeakOptions | (() => void)) => {
