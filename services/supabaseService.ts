@@ -136,11 +136,11 @@ export class SupabaseService {
         if (error) throw error;
     }
 
-    static async completeSession(sessionId: string, durationSeconds: number) {
+    static async completeSession(sessionId: string, durationSeconds: number, status: 'COMPLETED' | 'TERMINATED' = 'COMPLETED') {
         const { error } = await supabase
             .from('interview_sessions')
             .update({ 
-                status: 'COMPLETED',
+                status: status,
                 completed_at: new Date().toISOString(),
                 duration_seconds: durationSeconds
             })

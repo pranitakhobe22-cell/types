@@ -86,7 +86,8 @@ function App() {
             savePromises.push(
                 SupabaseService.completeSession(
                     sessionId, 
-                    proctoringReport?.sessionDurationMs ? Math.round(proctoringReport.sessionDurationMs / 1000) : 0
+                    proctoringReport?.sessionDurationMs ? Math.round(proctoringReport.sessionDurationMs / 1000) : 0,
+                    proctoringReport?.violationScore >= 15 ? 'TERMINATED' : 'COMPLETED'
                 )
             );
 

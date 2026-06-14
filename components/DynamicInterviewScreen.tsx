@@ -35,10 +35,17 @@ const createInitialState = (): ProctoringState => ({
   maxConcurrentFaces: 1,
   microphoneHealthy: true,
   networkHealthy: true,
-  heartbeatCount: 0
+  heartbeatCount: 0,
+  fullscreenExitEvents: 0,
+  copyPasteEvents: 0,
+  violationScore: 0,
+  integrityScore: 100,
+  totalGazeAwayDurationMs: 0,
+  lastViolationTime: 0
 });
 
 const generateViolationId = () => Math.random().toString(36).substring(2, 9);
+const VIOLATION_COOLDOWN = 5000;
 
 const baseReducer = (state: ProctoringState, action: ProctoringAction): ProctoringState => {
   const now = Date.now();
@@ -63,9 +70,24 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
     }
 
     case 'TAB_HIDDEN': {
-      const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'TAB_HIDDEN', severity: 3, timestamp: now, message: 'Browser tab hidden' };
-      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'TAB_HIDDEN', severity: 3 };
-      return { ...state, violations: [...state.violations, v], timeline: [...state.timeline, t], currentRiskScore: state.currentRiskScore + 3, overallRiskScore: state.overallRiskScore + 3 };
+      if (now - state.lastViolationTime < VIOLATION_COOLDOWN) return state;
+      const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'TAB_HIDDEN', severity: 2, timestamp: now, message: 'Browser tab hidden' };
+      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'TAB_HIDDEN', severity: 2 };
+      return { ...state, violations: [...state.violations, v], timeline: [...state.timeline, t], violationScore: state.violationScore + 2, lastViolationTime: now };
+    }
+
+    case 'FULLSCREEN_EXIT': {
+      if (now - state.lastViolationTime < VIOLATION_COOLDOWN) return state;
+      const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'FULLSCREEN_EXIT', severity: 3, timestamp: now, message: 'Exited fullscreen mode' };
+      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'FULLSCREEN_EXIT', severity: 3 };
+      return { ...state, fullscreenExitEvents: state.fullscreenExitEvents + 1, violations: [...state.violations, v], timeline: [...state.timeline, t], violationScore: state.violationScore + 3, lastViolationTime: now };
+    }
+
+    case 'COPY_PASTE': {
+      if (now - state.lastViolationTime < VIOLATION_COOLDOWN) return state;
+      const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'COPY_PASTE', severity: 2, timestamp: now, message: 'Clipboard action detected' };
+      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'COPY_PASTE', severity: 2 };
+      return { ...state, copyPasteEvents: state.copyPasteEvents + 1, violations: [...state.violations, v], timeline: [...state.timeline, t], violationScore: state.violationScore + 2, lastViolationTime: now };
     }
 
     case 'CAMERA_LOST': {
@@ -100,14 +122,16 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
         if (newState.noFaceState === 'FACE_PRESENT') {
           newState.noFaceState = 'NO_FACE_START';
           newState.noFaceStartTime = now;
-        } else if (newState.noFaceState === 'NO_FACE_START' && newState.noFaceStartTime && now - newState.noFaceStartTime > 3000) {
+        } else if (newState.noFaceState === 'NO_FACE_START' && newState.noFaceStartTime && now - newState.noFaceStartTime > 15000) {
           newState.noFaceState = 'VIOLATION_CREATED';
-          const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'NO_FACE', severity: 3, timestamp: now, message: 'No face detected for 3s' };
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'NO_FACE', severity: 3, detail: 'Face missing >3s' };
-          newState.violations = [...newState.violations, v];
-          newState.timeline = [...newState.timeline, t];
-          newState.currentRiskScore += 3;
-          newState.overallRiskScore += 3;
+          if (now - state.lastViolationTime >= VIOLATION_COOLDOWN) {
+            const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'NO_FACE', severity: 3, timestamp: now, message: 'No face detected for 15s' };
+            const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'NO_FACE', severity: 3, detail: 'Face missing >15s' };
+            newState.violations = [...newState.violations, v];
+            newState.timeline = [...newState.timeline, t];
+            newState.violationScore += 3;
+            newState.lastViolationTime = now;
+          }
         }
       } else {
         if (newState.noFaceState === 'VIOLATION_CREATED') {
@@ -123,14 +147,16 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
         if (newState.multiFaceState === 'SINGLE_FACE') {
           newState.multiFaceState = 'MULTI_FACE_START';
           newState.multiFaceStartTime = now;
-        } else if (newState.multiFaceState === 'MULTI_FACE_START' && newState.multiFaceStartTime && now - newState.multiFaceStartTime > 2000) {
+        } else if (newState.multiFaceState === 'MULTI_FACE_START' && newState.multiFaceStartTime && now - newState.multiFaceStartTime > 3000) {
           newState.multiFaceState = 'VIOLATION_CREATED' as any;
-          const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'MULTIPLE_FACES', severity: 5, timestamp: now, message: 'Multiple faces detected' };
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'MULTIPLE_FACES', severity: 5 };
-          newState.violations = [...newState.violations, v];
-          newState.timeline = [...newState.timeline, t];
-          newState.currentRiskScore += 5;
-          newState.overallRiskScore += 5;
+          if (now - state.lastViolationTime >= VIOLATION_COOLDOWN) {
+            const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'MULTIPLE_FACES', severity: 5, timestamp: now, message: 'Multiple faces detected for 3s' };
+            const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'MULTIPLE_FACES', severity: 5 };
+            newState.violations = [...newState.violations, v];
+            newState.timeline = [...newState.timeline, t];
+            newState.violationScore += 5;
+            newState.lastViolationTime = now;
+          }
         }
       } else {
         if (newState.multiFaceState === 'VIOLATION_CREATED' as any) {
@@ -147,17 +173,15 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
         if (newState.gazeState === 'LOOKING') {
           newState.gazeState = 'AWAY_START';
           newState.gazeAwayStartTime = now;
-        } else if (newState.gazeState === 'AWAY_START' && newState.gazeAwayStartTime && now - newState.gazeAwayStartTime > 2000) {
+        } else if (newState.gazeState === 'AWAY_START' && newState.gazeAwayStartTime && now - newState.gazeAwayStartTime > 12000) {
           newState.gazeState = 'VIOLATION_CREATED';
           const reason = action.frame.facePosition === 'PARTIAL_OUT' ? 'Face partially out' : 
                          Math.abs(action.frame.headYaw) > 30 ? 'Head turned away' : 
                          `Looking ${action.frame.gazeDirection}`;
-          const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'GAZE_AWAY', severity: 1, timestamp: now, message: `Candidate looking away: ${reason}` };
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'GAZE_AWAY', severity: 1, detail: reason };
-          newState.violations = [...newState.violations, v];
+          // NO PENALTY YET - Just log the data!
+          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'GAZE_AWAY_LOG_ONLY', severity: 0, detail: reason };
           newState.timeline = [...newState.timeline, t];
-          newState.currentRiskScore += 1;
-          newState.overallRiskScore += 1;
+          newState.totalGazeAwayDurationMs += (now - newState.gazeAwayStartTime);
         }
       } else {
         if (newState.gazeState === 'VIOLATION_CREATED') {
@@ -228,6 +252,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const synthRef = useRef<SpeechSynthesis>(window.speechSynthesis);
 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
+  const [toastWarning, setToastWarning] = useState<{ message: string, type: 'warning' | 'danger' } | null>(null);
   const sessionIdRef = useRef<string>(localStorage.getItem('current_session_id') || "");
 
   useEffect(() => {
@@ -400,11 +425,21 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   // 2. Setup System Event Listeners
   useEffect(() => {
     const handleVis = () => { if (document.hidden) dispatch({ type: 'TAB_HIDDEN' }) };
+    const handleBlur = () => { dispatch({ type: 'TAB_HIDDEN' }) };
+    const handleFullscreen = () => { 
+        if (!document.fullscreenElement) dispatch({ type: 'FULLSCREEN_EXIT' });
+    };
+    const handleClipboard = (e: any) => { dispatch({ type: 'COPY_PASTE' }) };
     const handleUnload = (e: any) => { dispatch({ type: 'REFRESH_ATTEMPT' }); e.preventDefault(); e.returnValue = ''; };
     const handleOffline = () => dispatch({ type: 'NETWORK_LOST' });
     const handleOnline = () => dispatch({ type: 'NETWORK_RECOVERED' });
     
     document.addEventListener('visibilitychange', handleVis);
+    window.addEventListener('blur', handleBlur);
+    document.addEventListener('fullscreenchange', handleFullscreen);
+    document.addEventListener('copy', handleClipboard);
+    document.addEventListener('paste', handleClipboard);
+    document.addEventListener('cut', handleClipboard);
     window.addEventListener('beforeunload', handleUnload);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
@@ -413,6 +448,11 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     
     return () => {
       document.removeEventListener('visibilitychange', handleVis);
+      window.removeEventListener('blur', handleBlur);
+      document.removeEventListener('fullscreenchange', handleFullscreen);
+      document.removeEventListener('copy', handleClipboard);
+      document.removeEventListener('paste', handleClipboard);
+      document.removeEventListener('cut', handleClipboard);
       window.removeEventListener('beforeunload', handleUnload);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('online', handleOnline);
@@ -496,6 +536,40 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     window.addEventListener('offline', handleOffline);
     return () => window.removeEventListener('offline', handleOffline);
   }, []);
+
+  // Handle Warning and Termination Logic
+  useEffect(() => {
+     if (proctoring.violationScore >= 15 && !isProcessingRef.current && hasStarted) {
+        setToastWarning({ message: "Interview Terminated: Multiple integrity violations detected.", type: 'danger' });
+        setIsProcessing(true);
+        isProcessingRef.current = true;
+        setLoadingText("Terminating interview...");
+        setLoading(true);
+        stopListening();
+        
+        setTimeout(async () => {
+            const proctoringReport = compileReport();
+            let evalReport = null;
+            try {
+              evalReport = await AIService.evaluateInterview(history);
+            } catch (e) {
+              console.error("Evaluation failed during termination:", e);
+            }
+            onComplete(history, proctoringReport, evalReport);
+        }, 100);
+     } else if (proctoring.violationScore >= 10 && proctoring.violationScore < 15 && hasStarted) {
+        setToastWarning({ message: `Severe Warning: Integrity violations detected. Score: ${proctoring.violationScore}/15. Further violations will terminate the interview.`, type: 'danger' });
+     } else if (proctoring.violationScore >= 5 && proctoring.violationScore < 10 && hasStarted) {
+        setToastWarning({ message: `Warning: Please remain focused on the interview. Score: ${proctoring.violationScore}/15.`, type: 'warning' });
+     }
+  }, [proctoring.violationScore, hasStarted, history]);
+
+  useEffect(() => {
+     if (toastWarning && toastWarning.type !== 'danger' && proctoring.violationScore < 15) {
+        const t = setTimeout(() => setToastWarning(null), 5000);
+        return () => clearTimeout(t);
+     }
+  }, [toastWarning, proctoring.violationScore]);
 
   const speakQuestion = (text: string) => {
     speak(text);
@@ -617,7 +691,12 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       gazeAwayEvents: violations.filter(v => v.type === 'GAZE_AWAY').length,
       multipleFaceEvents: violations.filter(v => v.type === 'MULTIPLE_FACES').length,
       tabSwitchEvents: violations.filter(v => v.type === 'TAB_HIDDEN').length,
+      fullscreenExitEvents: violations.filter(v => v.type === 'FULLSCREEN_EXIT').length,
+      copyPasteEvents: violations.filter(v => v.type === 'COPY_PASTE').length,
       microphoneLostEvents: violations.filter(v => v.type === 'MICROPHONE_LOST').length,
+      violationScore: proctoring.violationScore,
+      integrityScore: Math.max(0, 100 - proctoring.violationScore * 10),
+      totalGazeAwayDurationMs: proctoring.totalGazeAwayDurationMs,
       violations,
       timeline,
       sessionDurationMs: now - proctoring.sessionStartTime,
@@ -691,6 +770,13 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
   return (
     <div className="flex-1 bg-[#F8FAFC] flex flex-col md:h-[100dvh] md:overflow-hidden font-sans relative">
+      {/* Top Banner for Warnings */}
+      {toastWarning && (
+        <div className={`fixed top-0 left-0 w-full z-[100] text-center p-3 font-bold text-white shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-top-4 fade-in duration-300 ${toastWarning.type === 'danger' ? 'bg-red-600' : 'bg-orange-500'}`}>
+          <AlertTriangle size={20} />
+          {toastWarning.message}
+        </div>
+      )}
       
       {/* Progress Bar */}
       <div className="w-full h-1.5 bg-slate-100 z-50">
@@ -845,6 +931,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
                 const unlock = new SpeechSynthesisUtterance('');
                 unlock.volume = 0;
                 window.speechSynthesis.speak(unlock);
+                document.documentElement.requestFullscreen().catch(e => console.warn("Fullscreen error", e));
                 setHasStarted(true);
               }}
               disabled={!cameraReady || proctoring.engineState !== 'READY'}

@@ -151,7 +151,8 @@ export type ProctorViolation = {
   id: string;
   sessionId: string;           // Correlation ID
   type: 'TAB_HIDDEN' | 'NO_FACE' | 'GAZE_AWAY' | 'MULTIPLE_FACES'
-       | 'CAMERA_LOST' | 'MICROPHONE_LOST' | 'REFRESH_ATTEMPT';
+       | 'CAMERA_LOST' | 'MICROPHONE_LOST' | 'REFRESH_ATTEMPT'
+       | 'FULLSCREEN_EXIT' | 'COPY_PASTE';
   severity: number;
   timestamp: number;
   message: string;
@@ -212,6 +213,11 @@ export type ProctoringReport = {
   gazeAwayEvents: number;
   multipleFaceEvents: number;
   tabSwitchEvents: number;
+  fullscreenExitEvents: number;
+  copyPasteEvents: number;
+  violationScore: number;
+  integrityScore: number;
+  totalGazeAwayDurationMs: number;
   microphoneLostEvents: number;
   violations: ProctorViolation[];
   timeline: TimelineEvent[];
@@ -250,6 +256,12 @@ export type ProctoringState = {
   microphoneHealthy: boolean;
   networkHealthy: boolean;
   heartbeatCount: number;
+  fullscreenExitEvents: number;
+  copyPasteEvents: number;
+  violationScore: number;
+  integrityScore: number;
+  totalGazeAwayDurationMs: number;
+  lastViolationTime: number;
 };
 
 export type ProctoringAction = 
@@ -257,6 +269,8 @@ export type ProctoringAction =
   | { type: 'ENGINE_READY' }
   | { type: 'HEARTBEAT'; metrics: HeartbeatMetrics }
   | { type: 'TAB_HIDDEN' }
+  | { type: 'FULLSCREEN_EXIT' }
+  | { type: 'COPY_PASTE' }
   | { type: 'REFRESH_ATTEMPT' }
   | { type: 'CAMERA_LOST' }
   | { type: 'MICROPHONE_LOST' }
