@@ -42,6 +42,7 @@ export const useSpeech = () => {
   const questionStartIndexRef = useRef(0);
   const lastResultLengthRef = useRef(0);
   const accumulatedPrefixRef = useRef('');
+  const shouldKeepListeningRef = useRef(false);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -71,27 +72,31 @@ export const useSpeech = () => {
         }
 
         const newTranscript = (accumulatedPrefixRef.current + currentTranscript).toLowerCase();
-
-        // Throttle updates using requestAnimationFrame to prevent React render blocking
-        if (!updateTimeoutRef.current) {
-            updateTimeoutRef.current = requestAnimationFrame(() => {
-                setTranscript(pendingTranscriptRef.current);
-                updateTimeoutRef.current = null;
-            });
-        }
+        
+        // No throttling, React 18 batches state updates natively
         pendingTranscriptRef.current = newTranscript;
+        setTranscript(newTranscript);
       };
 
       recognition.onerror = (event: any) => {
         console.error("Speech Recognition Error:", event.error);
         if (event.error === 'not-allowed' || event.error === 'aborted' || event.error === 'no-speech') {
+          shouldKeepListeningRef.current = false;
           setIsListening(false);
         }
       };
 
       recognition.onend = () => {
-        console.log("Speech Recognition Ended");
-        setIsListening(false);
+        if (shouldKeepListeningRef.current) {
+          try {
+            recognition.start();
+          } catch (e) {
+            console.error("Failed to restart speech recognition:", e);
+            setIsListening(false);
+          }
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognitionRef.current = recognition;
@@ -128,6 +133,7 @@ export const useSpeech = () => {
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening) {
       try {
+        shouldKeepListeningRef.current = true;
         recognitionRef.current.start();
         setIsListening(true);
       } catch (e) {
@@ -138,6 +144,7 @@ export const useSpeech = () => {
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current) {
+      shouldKeepListeningRef.current = false;
       recognitionRef.current.stop();
       setIsListening(false);
     }
@@ -239,6 +246,7 @@ export const useSpeech = () => {
 
   const abortListening = useCallback(() => {
     if (recognitionRef.current) {
+      shouldKeepListeningRef.current = false;
       recognitionRef.current.abort();
       setIsListening(false);
     }
