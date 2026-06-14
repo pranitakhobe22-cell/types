@@ -37,6 +37,10 @@ export const useSpeech = () => {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
+  const finalTranscriptRef = useRef('');
+  const pendingTranscriptRef = useRef('');
+  const updateTimeoutRef = useRef<number | null>(null);
+
   // Initialize Speech Recognition
   useEffect(() => {
     const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -48,32 +52,28 @@ export const useSpeech = () => {
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
-      let finalTranscriptRef = '';
-      let updateTimeout: number | null = null;
-      let pendingTranscript = '';
-
       recognition.onresult = (event: any) => {
         let interimTranscript = '';
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const transcriptText = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscriptRef += transcriptText + ' ';
+            finalTranscriptRef.current += transcriptText + ' ';
           } else {
             interimTranscript += transcriptText;
           }
         }
 
-        const newTranscript = (finalTranscriptRef + interimTranscript).toLowerCase();
+        const newTranscript = (finalTranscriptRef.current + interimTranscript).toLowerCase();
 
         // Throttle updates using requestAnimationFrame to prevent React render blocking
-        if (!updateTimeout) {
-            updateTimeout = requestAnimationFrame(() => {
-                setTranscript(pendingTranscript);
-                updateTimeout = null;
+        if (!updateTimeoutRef.current) {
+            updateTimeoutRef.current = requestAnimationFrame(() => {
+                setTranscript(pendingTranscriptRef.current);
+                updateTimeoutRef.current = null;
             });
         }
-        pendingTranscript = newTranscript;
+        pendingTranscriptRef.current = newTranscript;
       };
 
       recognition.onerror = (event: any) => {
@@ -139,6 +139,8 @@ export const useSpeech = () => {
 
   const resetTranscript = useCallback(() => {
     setTranscript('');
+    finalTranscriptRef.current = '';
+    pendingTranscriptRef.current = '';
   }, []);
 
   const speak = useCallback((text: string, options?: SpeakOptions | (() => void)) => {
