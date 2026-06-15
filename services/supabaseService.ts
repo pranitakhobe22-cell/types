@@ -66,12 +66,13 @@ export class SupabaseService {
     // ==========================================
     // INTERVIEW SESSIONS
     // ==========================================
-    static async createSession(candidateId: string, jobPostId: string, deviceInfo: any, metadata: any) {
+    static async createSession(candidateId: string, jobPostId: string, deviceInfo: any, metadata: any, candidateName?: string) {
         const payload: any = {
             candidate_id: candidateId,
             status: 'CREATED'
         };
         if (jobPostId) payload.job_post_id = jobPostId;
+        if (candidateName) payload.candidate_name = candidateName;
 
         const { data, error } = await supabase
             .from('interview_sessions')
@@ -210,9 +211,10 @@ export class SupabaseService {
     // ==========================================
     // SESSION RESPONSES
     // ==========================================
-    static async saveResponse(sessionId: string, questionIndex: number, result: any, idealAnswer: string) {
+    static async saveResponse(sessionId: string, questionIndex: number, result: any, idealAnswer: string, candidateName?: string) {
         const payload = {
             session_id: sessionId,
+            candidate_name: candidateName || null,
             question_index: questionIndex,
             question_text: result.questionText,
             candidate_answer: result.userAnswer,
@@ -256,7 +258,7 @@ export class SupabaseService {
     // ==========================================
     // PROCTORING
     // ==========================================
-    static async saveProctoringReport(sessionId: string, report: any, telemetry: DashboardTelemetry) {
+    static async saveProctoringReport(sessionId: string, report: any, telemetry: DashboardTelemetry, candidateName?: string) {
         const events: any[] = [];
         
         // Convert Violations to Events
@@ -264,6 +266,7 @@ export class SupabaseService {
             report.violations.forEach((v: ProctorViolation) => {
                 events.push({
                     session_id: sessionId,
+                    candidate_name: candidateName || null,
                     event_type: v.type,
                     severity: v.severity > 5 ? 'High' : (v.severity > 2 ? 'Medium' : 'Low'),
                     risk_points: v.severity > 5 ? 15 : (v.severity > 2 ? 5 : 1),
@@ -280,6 +283,7 @@ export class SupabaseService {
             report.timeline.forEach((t: TimelineEvent) => {
                 events.push({
                     session_id: sessionId,
+                    candidate_name: candidateName || null,
                     event_type: t.event,
                     severity: t.severity > 5 ? 'High' : (t.severity > 2 ? 'Medium' : 'Low'),
                     risk_points: t.severity > 5 ? 10 : (t.severity > 2 ? 5 : 1),
@@ -303,7 +307,7 @@ export class SupabaseService {
     // ==========================================
     // EVALUATION REPORTS
     // ==========================================
-    static async saveEvaluationReport(sessionId: string, report: any) {
+    static async saveEvaluationReport(sessionId: string, report: any, candidateName?: string) {
         // Enforce strict Enum matching for the Postgres CHECK constraint
         const allowedRecommendations = ['Strong Hire', 'Hire', 'Consider', 'Reject'];
         let sanitizedRecommendation = 'Consider';
@@ -332,6 +336,7 @@ export class SupabaseService {
             .from('evaluation_reports')
             .upsert({
                 session_id: sessionId,
+                candidate_name: candidateName || null,
                 total_score: report.overallScores?.difficultyWeightedPerformance ?? report.totalScore ?? 50,
                 technical_score: report.executiveSummary?.technicalScore ?? null,
                 communication_score: report.overallScores?.communicationScore ?? null,
@@ -352,12 +357,66 @@ export class SupabaseService {
                 evaluation_model: report.metadata?.modelUsed ?? "gemini-2.5-flash-lite",
                 evaluation_prompt_version: "11.0",
                 evaluated_at: new Date().toISOString(),
-                candidate_outcome: 'PENDING'
+                candidate_outcome: 'PENDING',
+
+                // New columns
+                trust_score: report.executiveSummary?.trustScore ?? null,
+                topic_coverage: report.executiveSummary?.topicCoverage ?? null,
+                knowledge_stability: report.executiveSummary?.knowledgeStability ?? null,
+                reasoning_score: report.overallScores?.reasoningScore ?? null,
+                consistency_score: report.overallScores?.consistencyScore ?? null,
+                difficulty_weighted_performance: report.overallScores?.difficultyWeightedPerformance ?? null,
+                report_confidence: report.executiveSummary?.reportConfidence ?? null,
+                recommendation_status: report.executiveSummary?.recommendationStatus ?? null,
+                score_calculation_version: report.metadata?.scoreCalculationVersion ?? null
             }, { onConflict: 'session_id' });
 
         if (error) {
             console.error("Supabase Evaluation Report Error Details:", error.message, error.details, error.hint);
             throw error;
+        }
+
+        // Save contradictions
+        if (report.contradictions && report.contradictions.length > 0) {
+            try {
+                await supabase.from('contradictions').delete().eq('session_id', sessionId);
+                
+                const contradictionPayloads = report.contradictions.map((c: any) => ({
+                    session_id: sessionId,
+                    candidate_name: candidateName || null,
+                    q_index1: Number(c.qIndex1),
+                    q_index2: Number(c.qIndex2),
+                    explanation: c.explanation,
+                    severity: c.severity || 'medium',
+                    status: c.status || 'possible',
+                    confidence: Number(c.confidence ?? 80)
+                }));
+                const { error: contrErr } = await supabase.from('contradictions').insert(contradictionPayloads);
+                if (contrErr) console.error("Error saving contradictions:", contrErr.message);
+            } catch (e) {
+                console.error("Contradictions save exception:", e);
+            }
+        }
+
+        // Save validation results
+        if (report.validationResults && report.validationResults.length > 0) {
+            try {
+                await supabase.from('validation_results').delete().eq('session_id', sessionId);
+                
+                const validationPayloads = report.validationResults.map((vr: any) => ({
+                    session_id: sessionId,
+                    candidate_name: candidateName || null,
+                    parent_question: vr.parentQuestion,
+                    parent_score: Number(vr.parentScore),
+                    followup_question: vr.followupQuestion,
+                    followup_score: Number(vr.followupScore),
+                    reliability: Number(vr.reliability)
+                }));
+                const { error: valErr } = await supabase.from('validation_results').insert(validationPayloads);
+                if (valErr) console.error("Error saving validation results:", valErr.message);
+            } catch (e) {
+                console.error("Validation results save exception:", e);
+            }
         }
     }
 

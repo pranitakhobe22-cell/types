@@ -55,7 +55,7 @@ function App() {
         const candidateRecord = await SupabaseService.upsertCandidate({ name: data.name, email: data.email, role: data.role } as any);
         const fp = await getDeviceFingerprint();
         
-        const session = await SupabaseService.createSession(candidateRecord.id, undefined as any, fp, {});
+        const session = await SupabaseService.createSession(candidateRecord.id, undefined as any, fp, {}, candidateRecord.name);
         localStorage.setItem('current_session_id', session.id);
         
         setFlowState('interview');
@@ -81,10 +81,10 @@ function App() {
             const savePromises: Promise<any>[] = [];
             
             if (evalReport) {
-                savePromises.push(SupabaseService.saveEvaluationReport(sessionId, evalReport).catch(e => console.error("Eval save failed", e)));
+                savePromises.push(SupabaseService.saveEvaluationReport(sessionId, evalReport, candidate?.name).catch(e => console.error("Eval save failed", e)));
             }
             if (proctoringReport) {
-                savePromises.push(SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any).catch(e => console.error("Proctoring save failed", e)));
+                savePromises.push(SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any, candidate?.name).catch(e => console.error("Proctoring save failed", e)));
             }
             
             savePromises.push(

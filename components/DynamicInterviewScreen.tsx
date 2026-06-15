@@ -697,7 +697,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
     // Save to Supabase
     try {
-      await SupabaseService.saveResponse(sessionIdRef.current, history.length, evaluationResult, currentQ.ideal_answer);
+      await SupabaseService.saveResponse(sessionIdRef.current, history.length, evaluationResult, currentQ.ideal_answer, candidate.name);
     } catch (err) {
       console.error("Failed to save response to Supabase:", err);
     }
