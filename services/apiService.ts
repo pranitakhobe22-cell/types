@@ -53,7 +53,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 1,
     question: "Tell me about your professional background and what you are looking for in your next role.",
-    difficulty: "Easy" as const,
+    difficulty: "easy" as const,
     ideal_answer: "Candidate should clearly state their current role, years of experience, and key skills.",
     keyPoints: ["Current Role", "Experience", "Skills"],
     maxScore: 10
@@ -61,7 +61,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 2,
     question: "Describe a challenging project you worked on. What was your role and how did you overcome the obstacles?",
-    difficulty: "Medium" as const,
+    difficulty: "medium" as const,
     ideal_answer: "Candidate defines problem, their specific action, and a positive result.",
     keyPoints: ["Problem definition", "Action taken", "Result"],
     maxScore: 10
@@ -69,7 +69,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 3,
     question: "How do you handle disagreements with colleagues or managers?",
-    difficulty: "Medium" as const,
+    difficulty: "medium" as const,
     ideal_answer: "Seeks to understand, communicates respectfully, finds compromise.",
     keyPoints: ["Communication", "Respect", "Compromise"],
     maxScore: 10
@@ -77,7 +77,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 4,
     question: "Where do you see yourself professionally in five years?",
-    difficulty: "Easy" as const,
+    difficulty: "easy" as const,
     ideal_answer: "Presents clear career progression goals aligned with the role.",
     keyPoints: ["Career goals", "Ambition", "Alignment"],
     maxScore: 10
@@ -85,7 +85,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 5,
     question: "What do you consider your greatest professional strength?",
-    difficulty: "Easy" as const,
+    difficulty: "easy" as const,
     ideal_answer: "Identifies a relevant strength and provides a quick example.",
     keyPoints: ["Relevance", "Self-awareness", "Example"],
     maxScore: 10
@@ -93,7 +93,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 6,
     question: "Describe a time when you had to learn a new technology or skill quickly.",
-    difficulty: "Medium" as const,
+    difficulty: "medium" as const,
     ideal_answer: "Shows adaptability, resourcefulness, and successfully applying the new skill.",
     keyPoints: ["Adaptability", "Learning process", "Application"],
     maxScore: 10
@@ -101,7 +101,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 7,
     question: "How do you prioritize your work when dealing with multiple tight deadlines?",
-    difficulty: "Medium" as const,
+    difficulty: "medium" as const,
     ideal_answer: "Uses a framework (like Eisenhower matrix), communicates with stakeholders, stays organized.",
     keyPoints: ["Time management", "Communication", "Organization"],
     maxScore: 10
@@ -109,7 +109,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 8,
     question: "Tell me about a time you made a mistake. How did you handle it?",
-    difficulty: "Medium" as const,
+    difficulty: "medium" as const,
     ideal_answer: "Takes accountability, fixes the issue, and learns from it.",
     keyPoints: ["Accountability", "Resolution", "Learning"],
     maxScore: 10
@@ -117,7 +117,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 9,
     question: "What is your approach to giving and receiving constructive feedback?",
-    difficulty: "Medium" as const,
+    difficulty: "medium" as const,
     ideal_answer: "Views it as an opportunity for growth; gives it specifically and kindly.",
     keyPoints: ["Open-mindedness", "Growth mindset", "Tact"],
     maxScore: 10
@@ -125,7 +125,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
   {
     id: 10,
     question: "Why are you interested in joining our company specifically?",
-    difficulty: "Easy" as const,
+    difficulty: "easy" as const,
     ideal_answer: "Shows research about the company and aligns personal goals with company mission.",
     keyPoints: ["Research", "Alignment", "Enthusiasm"],
     maxScore: 10
@@ -209,7 +209,7 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
       questions = [{
         id: 1,
         question: `Tell me about your interest in ${candidate.customTopic} and what you hope to achieve.`,
-        difficulty: "Easy",
+        difficulty: "easy",
         ideal_answer: "The candidate should relate their skills and goals clearly.",
         maxScore: 10,
         keyPoints: ["Interest", "Goals"]
@@ -262,213 +262,150 @@ export const submitAnswer = async (
   settings?: RoleSettings
 ): Promise<{ evaluation: EvaluationResult; nextQuestion: Question | null }> => {
 
-  const referenceAnswer = currentQuestion.ideal_answer || "A coherent and professional response.";
-  const keyPoints = currentQuestion.keyPoints || [];
+  const isBehavioral = currentQuestion.type?.startsWith("Behavioral");
+  const keyConceptsStr = currentQuestion.keyConcepts 
+    ? currentQuestion.keyConcepts.map(kc => `[${kc.importance.toUpperCase()}] ${kc.concept}`).join("\n")
+    : (currentQuestion.keyPoints?.join(", ") || "Analyze based on general knowledge.");
 
   // Construct persona based on settings
   const difficulty = settings?.difficulty ?? "Medium";
   const preset = settings?.preset ?? "Normal";
 
-  let personaInstruction = "You are an expert HR Interviewer.";
-  if (preset === 'Strict') {
-    personaInstruction += " You are extremely critical and strict. Deduct points for any vagueness.";
-  } else if (preset === 'Relaxed') {
-    personaInstruction += " You are friendly and lenient. Focus on the general idea rather than technical perfection.";
+  let difficultyRubric = "Difficulty: MEDIUM.\n- Focus: Balanced evaluation.\n- Passing score: 7/10.";
+  if (difficulty === 'Very Easy' || difficulty === 'Easy') {
+    difficultyRubric = `Difficulty: EASY.\n- Focus: CONCEPTUAL UNDERSTANDING.\n- Passing score: 5/10.`;
+  } else if (difficulty === 'Hard' || difficulty === 'Very Hard') {
+    difficultyRubric = `Difficulty: STRICT/HARD.\n- Focus: PRECISION and DEPTH.\n- Passing score: 8/10.`;
   }
 
-  // 1. Difficulty-based Rubric Construction
-  let difficultyRubric = "Generic Evaluation";
-  if (difficulty === 'Very Easy' || difficulty === 'Easy') {
-    difficultyRubric = `Difficulty: EASY. 
-      - Focus: CONCEPTUAL UNDERSTANDING.
-      - Ignore minor grammar or stuttering.
-      - Passing score: 5/10.
-      - Look for: Basic grasp of the topic.`;
-  } else if (difficulty === 'Hard' || difficulty === 'Very Hard') {
-    difficultyRubric = `Difficulty: STRICT/HARD.
-      - Focus: PROFESSIONALISM, PRECISION, and GRAMMAR.
-      - Penalty for: Filler words (um, ah), repetitive phrasing, or vague answers.
-      - Passing score: 8/10.
-      - Requirements: Must hit ALL key points. Stuttering or lack of fluency should significantly affect the score.`;
-  } else {
-    difficultyRubric = `Difficulty: MEDIUM.
-      - Focus: Balanced evaluation of concept and communication.
-      - Passing score: 7/10.
-      - Requirements: Hits most key points with clear delivery.`;
-  }
+  const technicalSchema = `"analysis": {
+        "technicalAccuracy": 0-10,
+        "conceptCoverage": 0-10,
+        "depth": 0-10,
+        "communication": 0-10
+      }`;
+
+  const behavioralSchema = `"behavioralMetrics": {
+        "communication": 0-10,
+        "problemSolving": 0-10,
+        "ownership": 0-10,
+        "teamwork": 0-10,
+        "adaptability": 0-10,
+        "leadershipPotential": 0-10,
+        "responseStructure": 0-10,
+        "evidenceStrength": 0-10
+      }`;
 
   const evalPrompt = `
-    You are an advanced AI Interview Evaluator designed to perform STRICT, EVIDENCE-BASED candidate evaluation.
+    You are an advanced AI Interview Evaluator. 
+    CORE RULES:
+    1. NO ASSUMPTIONS: Do not assume skills.
+    2. NO GENERIC PRAISE: Back up feedback with specific reasons.
+    3. DEPTH OVER SURFACE: Penalize memorized answers.
 
-    CORE RULES (MANDATORY):
-    1. NO ASSUMPTIONS: Do NOT assume skills, knowledge, or intent. If not explicitly shown -> treat as weak/missing.
-    2. NO GENERIC PRAISE: Every judgment must be backed by a specific reason/evidence.
-    3. DEPTH OVER SURFACE: Penalize shallow/memorized answers. Reward structured thinking.
-    4. REALISTIC EVALUATION: Only evaluate what can be inferred from text.
-
-    [ROLE CONTEXT]
-    Position: ${candidate.position}
-    Interview Difficulty: ${difficulty}
-    
-    [EVALUATION RUBRIC]
+    [INTERVIEW CONTEXT]
+    Position: ${candidate.position || 'Engineer'}
+    Question Type: ${currentQuestion.type || 'Technical'}
     ${difficultyRubric}
 
-    [INTERVIEW PROGRESS]
+    [QUESTION AND CONCEPTS]
     Question: "${currentQuestion.question}"
-    Reference/Ideal Key Points: ${keyPoints.join(", ") || "Analyze based on general knowledge"}
-    Candidate's Answer: "${answer}"
+    Target Key Concepts to look for: 
+    ${keyConceptsStr}
     
-    [VISUAL DATA]
-    Vision Analysis Summary: ${visualMetrics?.currentExpression || 'Neutral'}
-    Confidence: ${visualMetrics?.confidenceLevel || 0}%
+    Candidate's Answer: "${answer}"
 
     Return strict JSON with:
     {
       "contentScore": number (0-10),
-      "grammarScore": number (0-10),
-      "fluencyScore": number (0-10),
       "verdict": "Pass" | "Borderline" | "Fail",
       "feedback": "Concise 2-sentence feedback, NO GENERIC PRAISE",
       "matchedKeyPoints": ["point1", ...],
       "missingKeyPoints": ["point1", ...],
-      "expressionAnalysis": "Brief note on confidence/smile seen in vision analysis",
-      "analysis": {
-        "technicalAccuracy": 0-10,
-        "problemSolving": 0-10,
-        "practicalExecution": 0-10,
-        "communication": 0-10
-      }
+      ${isBehavioral ? behavioralSchema : technicalSchema}
     }
   `;
 
-  try {
-    const evalAi = getEvalAi();
-    const evalResponse = await evalAi.models.generateContent({
-      model: MODEL_FAST,
-      contents: evalPrompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            contentScore: { type: Type.NUMBER },
-            grammarScore: { type: Type.NUMBER },
-            fluencyScore: { type: Type.NUMBER },
-            matchedKeyPoints: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            missingKeyPoints: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            verdict: { type: Type.STRING, enum: ["Pass", "Borderline", "Fail"] },
-            feedback: { type: Type.STRING },
-            expressionAnalysis: { type: Type.STRING },
-            analysis: {
-              type: Type.OBJECT,
-              properties: {
-                technicalAccuracy: { type: Type.NUMBER },
-                problemSolving: { type: Type.NUMBER },
-                practicalExecution: { type: Type.NUMBER },
-                communication: { type: Type.NUMBER }
-              }
-            }
-          }
-        }
-      }
-    });
-
-    // Cleanup potential Markdown formatting from AI response
-    let cleanText = evalResponse.text || "{}";
-    cleanText = cleanText.trim();
-    if (cleanText.startsWith('```json')) {
-      cleanText = cleanText.replace(/^```json/, '').replace(/```$/, '');
-    } else if (cleanText.startsWith('```')) {
-      cleanText = cleanText.replace(/^```/, '').replace(/```$/, '');
+  const generateEval = async (prompt: string, useFallback = false): Promise<EvaluationResult> => {
+    let cleanText = "";
+    if (!useFallback) {
+      const evalAi = getEvalAi();
+      const evalResponse = await evalAi.models.generateContent({
+        model: MODEL_FAST,
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      cleanText = evalResponse.text || "{}";
+    } else {
+      cleanText = await fallbackToNvidia(prompt);
     }
+
+    cleanText = cleanText.trim();
+    if (cleanText.startsWith('\`\`\`json')) cleanText = cleanText.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '');
+    else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '');
 
     const evalJson = JSON.parse(cleanText);
 
-    const evaluation: EvaluationResult = {
+    // Map new fields back to legacy fields for frontend compatibility if needed
+    let finalAnalysis = evalJson.analysis;
+    if (evalJson.analysis && evalJson.analysis.conceptCoverage !== undefined) {
+      finalAnalysis = {
+        technicalAccuracy: evalJson.analysis.technicalAccuracy,
+        problemSolving: evalJson.analysis.conceptCoverage, // mapping
+        practicalExecution: evalJson.analysis.depth, // mapping
+        communication: evalJson.analysis.communication
+      };
+    }
+
+    return {
       questionId: Number(currentQuestion.id),
       questionText: currentQuestion.question,
       userAnswer: answer,
-
       contentScore: evalJson.contentScore ?? 0,
-      grammarScore: evalJson.grammarScore ?? 0,
-      fluencyScore: evalJson.fluencyScore ?? 0,
-      // Calculated legacy communication score for backward compatibility
-      communicationScore: ((evalJson.grammarScore ?? 0) + (evalJson.fluencyScore ?? 0)) / 2,
-
+      grammarScore: 0,
+      fluencyScore: 0,
+      communicationScore: evalJson.analysis?.communication || evalJson.behavioralMetrics?.communication || 0,
       matchedKeyPoints: evalJson.matchedKeyPoints || [],
       missingKeyPoints: evalJson.missingKeyPoints || [],
       verdict: evalJson.verdict || "Borderline",
-      feedback: evalJson.feedback || "No feedback provided.",
-
-      analysis: evalJson.analysis,
-
+      feedback: evalJson.feedback || "Answer recorded.",
+      analysis: finalAnalysis,
+      behavioralMetrics: evalJson.behavioralMetrics,
       confidenceScore: visualMetrics?.confidenceLevel ?? 0,
-      expressionAnalysis: evalJson.expressionAnalysis || "Visual analysis unavailable.",
-      timestamp: new Date().toISOString(),
+      expressionAnalysis: "Visual analysis processed.",
+      timestamp: new Date().toISOString()
     };
+  };
 
-    // Returning only evaluation, nextQuestion logic moved to InterviewScreen
+  try {
+    const evaluation = await generateEval(evalPrompt, false);
     return { evaluation, nextQuestion: null };
-
   } catch (error) {
-    console.warn("Gemini Evaluation Failed, attempting NVIDIA fallback...");
-    
+    console.warn("Gemini Evaluation Failed, attempting NVIDIA fallback...", error);
     try {
-      const text = await fallbackToNvidia(evalPrompt);
-      let cleanText = text || "{}";
-      cleanText = cleanText.trim();
-      if (cleanText.startsWith('\`\`\`json')) {
-        cleanText = cleanText.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '');
-      } else if (cleanText.startsWith('\`\`\`')) {
-        cleanText = cleanText.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '');
-      }
-      
-      const evalJson = JSON.parse(cleanText);
-
-      const evaluation: EvaluationResult = {
-        questionId: Number(currentQuestion.id),
-        questionText: currentQuestion.question,
-        userAnswer: answer,
-        contentScore: evalJson.contentScore ?? 0,
-        grammarScore: evalJson.grammarScore ?? 0,
-        fluencyScore: evalJson.fluencyScore ?? 0,
-        communicationScore: ((evalJson.grammarScore ?? 0) + (evalJson.fluencyScore ?? 0)) / 2,
-        matchedKeyPoints: evalJson.matchedKeyPoints || [],
-        missingKeyPoints: evalJson.missingKeyPoints || [],
-        verdict: evalJson.verdict || "Borderline",
-        feedback: evalJson.feedback || "No feedback provided.",
-        analysis: evalJson.analysis,
-        confidenceScore: visualMetrics?.confidenceLevel ?? 0,
-        expressionAnalysis: evalJson.expressionAnalysis || "Visual analysis unavailable.",
-        timestamp: new Date().toISOString(),
-      };
+      const evaluation = await generateEval(evalPrompt, true);
       return { evaluation, nextQuestion: null };
     } catch (nvidiaErr) {
       console.error("NVIDIA Evaluation Fallback also failed:", nvidiaErr);
-      // Return a graceful fallback result so the app doesn't crash
-    const fallbackEval: EvaluationResult = {
-      questionId: Number(currentQuestion.id),
-      questionText: currentQuestion.question,
-      userAnswer: answer,
-      contentScore: 5,
-      grammarScore: 5,
-      fluencyScore: 5,
-      communicationScore: 5,
-      matchedKeyPoints: [],
-      missingKeyPoints: [],
-      verdict: "Borderline",
-      feedback: "System could not generate detailed feedback at this time. Answer recorded.",
-      confidenceScore: visualMetrics?.confidenceLevel ?? 0,
-      expressionAnalysis: "N/A",
-      timestamp: new Date().toISOString()
-    };
-    return { evaluation: fallbackEval, nextQuestion: null };
+      // Safe Fallback
+      const fallbackEval: EvaluationResult = {
+        questionId: Number(currentQuestion.id),
+        questionText: currentQuestion.question,
+        userAnswer: answer,
+        contentScore: 0,
+        grammarScore: 0,
+        fluencyScore: 0,
+        communicationScore: 0,
+        matchedKeyPoints: [],
+        missingKeyPoints: [],
+        verdict: "Borderline",
+        feedback: "Evaluation is pending due to system load. Answer recorded successfully.",
+        confidenceScore: visualMetrics?.confidenceLevel ?? 0,
+        expressionAnalysis: "N/A",
+        timestamp: new Date().toISOString(),
+        evaluationPending: true // Mark as pending!
+      };
+      return { evaluation: fallbackEval, nextQuestion: null };
     }
   }
 };

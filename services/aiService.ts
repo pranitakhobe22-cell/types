@@ -99,9 +99,14 @@ async function fallbackToNvidia(prompt: string): Promise<string> {
   return data.choices[0].message.content;
 }
 
-export interface GeneratedQuestion {
-  question: string;
-  ideal_answer: string;
+import { Question } from "../types";
+
+export interface InterviewBranch {
+  q1: Question;
+  q2: { easy: Question; medium: Question; hard: Question };
+  q3: { easy: Question; medium: Question; hard: Question };
+  q4: Question;
+  q5: Question;
 }
 
 export interface QuestionFeedback {
@@ -136,66 +141,49 @@ export interface EvaluationReport {
 }
 
 export const AIService = {
-  async generateQuestions(
-    role: string,
-    experienceLevel: string,
-    interviewType: string,
-    count: number,
-    skills: string = ""
-  ): Promise<GeneratedQuestion[]> {
+  selectInterviewBranch(role: string): InterviewBranch {
     const bank = role === "CSE" ? CSE_QUESTION_BANK : ECE_QUESTION_BANK;
 
-    let selected: any[] = [];
-    
-    if (role === 'CSE') {
-      selected = [
-        ...this._pick(bank.filter(q => q.topic === 'DSA'), 1),
-        ...this._pick(bank.filter(q => ['DBMS', 'OS', 'CN', 'Web'].includes(q.topic!)), 1),
-        ...this._pick(bank.filter(q => q.topic === 'PS'), 1),
-        ...this._pick(bank.filter(q => q.category === 'Behavioral'), 2),
-      ];
-    } else {
-      selected = [
-        ...this._pick(bank.filter(q => q.topic === 'Core'), 1),
-        ...this._pick(bank.filter(q => ['Embedded', 'Comm'].includes(q.topic!)), 1),
-        ...this._pick(bank.filter(q => q.topic === 'Numerical'), 1),
-        ...this._pick(bank.filter(q => q.category === 'Behavioral'), 2),
-      ];
-    }
-
-    // Return questions immediately so the interview can start without waiting for the LLM
-    return selected.map(q => ({
-      question: q.question,
-      ideal_answer: "" // Will be populated in the background
-    }));
-  },
-
-  async populateIdealAnswers(role: string, questions: GeneratedQuestion[]): Promise<void> {
-    if (questions.length === 0) return;
-    
-    const prompt = `
-    For these ${role} interview questions, provide a concise but comprehensive "ideal_answer" for each one.
-    The ideal answer should cover all key technical points a strong candidate would mention.
-    
-    Questions:
-    ${questions.map((q, i) => `${i+1}. ${q.question}`).join('\n')}
-
-    Output format (STRICT JSON ARRAY OF STRINGS ONLY):
-    ["answer 1 text", "answer 2 text", ...]`;
-
-    try {
-      const text = await resilientGenerate(prompt);
-      const idealAnswers = JSON.parse(text.match(/\[[\s\S]*\]/)![0]);
+    // Helper to get questions of specific type and difficulty
+    const getQ = (type: string, difficulty?: string, excludeCategories: string[] = []) => {
+      let filtered = bank.filter(q => q.type === type);
+      if (difficulty) filtered = filtered.filter(q => q.difficulty === difficulty);
+      if (excludeCategories.length > 0) {
+        filtered = filtered.filter(q => !excludeCategories.includes(q.category || ""));
+      }
       
-      questions.forEach((q, i) => {
-        q.ideal_answer = idealAnswers[i] || "High quality technical response expected.";
-      });
-    } catch (error) {
-      console.error("Ideal answer generation failed, using fallback:", error);
-      questions.forEach(q => {
-        if (!q.ideal_answer) q.ideal_answer = "Detailed technical response required.";
-      });
-    }
+      // Fallback if strict filtering fails (e.g. not enough questions in MVP bank)
+      if (filtered.length === 0) {
+        filtered = bank.filter(q => q.type === type);
+        if (filtered.length === 0) return bank[0]; // Absolute fallback
+      }
+      
+      return this._pick(filtered, 1)[0];
+    };
+
+    const q1 = getQ('Fundamentals', 'medium');
+    const usedCategories = [q1.category || ""];
+
+    // Ensure diverse categories for Q2
+    const q2_easy = getQ('Core', 'easy', usedCategories);
+    const q2_medium = getQ('Core', 'medium', usedCategories);
+    const q2_hard = getQ('Core', 'hard', usedCategories);
+
+    // Ensure diverse categories for Q3 (just avoid Q1 for now, Q2 is dynamic so avoiding Q2 is trickier here without pre-picking all combinations, but we can avoid Q1 category at least)
+    const q3_easy = getQ('Scenario', 'easy', usedCategories);
+    const q3_medium = getQ('Scenario', 'medium', usedCategories);
+    const q3_hard = getQ('Scenario', 'hard', usedCategories);
+
+    const q4 = getQ('Behavioral Experience');
+    const q5 = getQ('Behavioral Situation');
+
+    return {
+      q1,
+      q2: { easy: q2_easy, medium: q2_medium, hard: q2_hard },
+      q3: { easy: q3_easy, medium: q3_medium, hard: q3_hard },
+      q4,
+      q5
+    };
   },
 
   _pick(arr: any[], n: number) {
@@ -214,13 +202,16 @@ export const AIService = {
     const questionEvaluations = candidateAnswers.map((item, index) => {
         const evalData = item.evaluation || {};
         
-        const contentScore = evalData.contentScore || 0;
-        const communicationScore = evalData.communicationScore || 0;
-        const confidenceScore = evalData.confidenceScore || 0;
+        const contentScore = evalData.contentScore || 5;
+        const techAcc = evalData.analysis?.technicalAccuracy ?? (contentScore * 10);
+        const probSolv = evalData.analysis?.problemSolving ?? (contentScore * 10);
+        const practExec = evalData.analysis?.practicalExecution ?? (contentScore * 10);
+        const comm = evalData.analysis?.communication ?? (contentScore * 10);
         
-        sumContent += contentScore;
-        sumCommunication += communicationScore;
-        sumConfidence += confidenceScore;
+        const weightedQScore = (techAcc * 0.40) + (probSolv * 0.30) + (practExec * 0.15) + (comm * 0.15); // Out of 100
+        
+        sumContent += weightedQScore / 10; // For legacy metric calculation (0-10)
+        sumCommunication += comm / 10;
 
         // Calculate keyword coverage (matched / total)
         const matched = evalData.matchedKeyPoints?.length || 0;
@@ -232,9 +223,9 @@ export const AIService = {
             questionId: `Q${index + 1}`,
             question: item.question,
             candidateAnswer: item.answer || "[No answer provided]",
-            contentScore,
-            communicationScore,
-            confidenceScore,
+            contentScore: Number((weightedQScore / 10).toFixed(1)),
+            communicationScore: Number((comm / 10).toFixed(1)),
+            confidenceScore: 0,
             keywordCoverage,
             strengths: evalData.matchedKeyPoints || [],
             weaknesses: evalData.missingKeyPoints || [],
@@ -245,19 +236,12 @@ export const AIService = {
     });
 
     const count = candidateAnswers.length || 1;
-    const averageContent = sumContent / count;
-    const averageCommunication = sumCommunication / count;
-    const averageConfidence = sumConfidence / count;
+    const averageContent = sumContent / count; // 0-10
+    const averageCommunication = sumCommunication / count; // 0-10
     const averageKeywordCoverage = questionEvaluations.reduce((acc, q) => acc + q.keywordCoverage, 0) / count;
 
-    // Weighted scoring logic as requested:
-    // technicalScore (content) * 0.50 + communicationScore * 0.20 + keywordCoverage * 0.15 + confidenceScore * 0.15
-    // Note: Content/Comm are out of 10. Confidence/Coverage are out of 100.
-    const weightedScore = 
-      ((averageContent / 10) * 100) * 0.50 +
-      ((averageCommunication / 10) * 100) * 0.20 +
-      averageKeywordCoverage * 0.15 +
-      averageConfidence * 0.15;
+    // Use unified scoring formula directly for the final score: Average of the weighted question scores
+    const weightedScore = (averageContent / 10) * 100;
 
     let totalScore = Math.round(weightedScore);
     totalScore = Math.max(0, Math.min(100, totalScore));
@@ -271,7 +255,6 @@ export const AIService = {
     const aggregatedData = {
         averageContent,
         averageCommunication,
-        averageConfidence,
         averageKeywordCoverage,
         questionEvaluations: questionEvaluations.map(q => ({
             questionId: q.questionId,
@@ -400,44 +383,6 @@ OUTPUT REQUIREMENTS (STRICT JSON ONLY):
       verdictJustification: "Aggregated locally.",
       hiringRecommendation: totalScore >= 70 ? "Hire" : "Consider"
     };
-  },
-
-  async generateNextDynamicQuestion(
-    role: string,
-    history: { question: string; answer: string; ideal_answer: string }[]
-  ): Promise<GeneratedQuestion> {
-    const prompt = `
-    You are an expert interviewer. Generate the next logical question for a candidate.
-    
-    Role: ${role}
-    Interview History:
-    ${JSON.stringify(history, null, 2)}
-
-    Instructions:
-    1. Analyze the candidate's last answer.
-    2. Does it show deep knowledge or surface-level? 
-    3. Adapt difficulty: If they did well, go harder. If they struggled, pivot to a slightly easier or different conceptual area of the ${role} role.
-    4. Mix of technical, situational, and problem-solving.
-    5. Avoid repeating questions.
-    6. Return a single question and its ideal_answer.
-
-    Output format (STRICT JSON):
-    {
-      "question": "Question text",
-      "ideal_answer": "Expected key points"
-    }`;
-
-    try {
-      const text = await resilientGenerate(prompt);
-
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("Invalid response format from AI");
-
-      return JSON.parse(jsonMatch[0]);
-    } catch (error: any) {
-      console.error("Dynamic Question Error:", error);
-      throw new Error("Failed to generate next question");
-    }
   },
 
   async listModels(): Promise<string[]> {

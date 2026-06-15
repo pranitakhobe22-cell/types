@@ -1,219 +1,402 @@
-export const CSE_QUESTION_BANK = [
-  // DSA / Programming (1-30)
-  { question: "What is time complexity?", topic: "DSA", category: "Technical" },
-  { question: "Difference between array and linked list", topic: "DSA", category: "Technical" },
-  { question: "What is a stack? Real-world example", topic: "DSA", category: "Technical" },
-  { question: "Queue vs Stack", topic: "DSA", category: "Technical" },
-  { question: "What is recursion?", topic: "DSA", category: "Technical" },
-  { question: "Explain binary search", topic: "DSA", category: "Technical" },
-  { question: "What is a hash table?", topic: "DSA", category: "Technical" },
-  { question: "Collision handling techniques", topic: "DSA", category: "Technical" },
-  { question: "What is a tree?", topic: "DSA", category: "Technical" },
-  { question: "Binary tree vs BST", topic: "DSA", category: "Technical" },
-  { question: "What is DFS and BFS?", topic: "DSA", category: "Technical" },
-  { question: "What is dynamic programming?", topic: "DSA", category: "Technical" },
-  { question: "Greedy vs DP", topic: "DSA", category: "Technical" },
-  { question: "What is a graph?", topic: "DSA", category: "Technical" },
-  { question: "Adjacency list vs matrix", topic: "DSA", category: "Technical" },
-  { question: "What is sorting? Name types", topic: "DSA", category: "Technical" },
-  { question: "Quick sort vs merge sort", topic: "DSA", category: "Technical" },
-  { question: "What is heap?", topic: "DSA", category: "Technical" },
-  { question: "What is priority queue?", topic: "DSA", category: "Technical" },
-  { question: "What is backtracking?", topic: "DSA", category: "Technical" },
-  { question: "What is memoization?", topic: "DSA", category: "Technical" },
-  { question: "What is Big-O notation?", topic: "DSA", category: "Technical" },
-  { question: "What is worst-case vs average-case?", topic: "DSA", category: "Technical" },
-  { question: "What is space complexity?", topic: "DSA", category: "Technical" },
-  { question: "What is recursion stack overflow?", topic: "DSA", category: "Technical" },
-  { question: "What is two-pointer technique?", topic: "DSA", category: "Technical" },
-  { question: "What is sliding window?", topic: "DSA", category: "Technical" },
-  { question: "What is linked list cycle detection?", topic: "DSA", category: "Technical" },
-  { question: "What is topological sorting?", topic: "DSA", category: "Technical" },
-  { question: "What is shortest path algorithm?", topic: "DSA", category: "Technical" },
+import { Question } from "../types";
 
-  // DBMS / OS / CN (31-55)
-  { question: "What is DBMS?", topic: "DBMS", category: "Technical" },
-  { question: "SQL vs NoSQL", topic: "DBMS", category: "Technical" },
-  { question: "What is normalization?", topic: "DBMS", category: "Technical" },
-  { question: "What is primary key?", topic: "DBMS", category: "Technical" },
-  { question: "What is foreign key?", topic: "DBMS", category: "Technical" },
-  { question: "What is indexing?", topic: "DBMS", category: "Technical" },
-  { question: "What is transaction?", topic: "DBMS", category: "Technical" },
-  { question: "ACID properties", topic: "DBMS", category: "Technical" },
-  { question: "What is deadlock?", topic: "OS", category: "Technical" },
-  { question: "What is process vs thread?", topic: "OS", category: "Technical" },
-  { question: "What is scheduling?", topic: "OS", category: "Technical" },
-  { question: "What is virtual memory?", topic: "OS", category: "Technical" },
-  { question: "Paging vs segmentation", topic: "OS", category: "Technical" },
-  { question: "What is cache memory?", topic: "OS", category: "Technical" },
-  { question: "What is OS?", topic: "OS", category: "Technical" },
-  { question: "What is TCP/IP?", topic: "CN", category: "Technical" },
-  { question: "HTTP vs HTTPS", topic: "CN", category: "Technical" },
-  { question: "What is DNS?", topic: "CN", category: "Technical" },
-  { question: "What is IP address?", topic: "CN", category: "Technical" },
-  { question: "What is subnetting?", topic: "CN", category: "Technical" },
-  { question: "What is firewall?", topic: "CN", category: "Technical" },
-  { question: "What is load balancing?", topic: "CN", category: "Technical" },
-  { question: "What is REST API?", topic: "Web", category: "Technical" },
-  { question: "What is client-server model?", topic: "Web", category: "Technical" },
-  { question: "What is latency vs bandwidth?", topic: "CN", category: "Technical" },
+export const CSE_QUESTION_BANK: Question[] = [
+  // ==========================================
+  // FUNDAMENTALS (Medium)
+  // ==========================================
+  {
+    id: "cse_f_1",
+    question: "What is the difference between an Array and a Linked List?",
+    topic: "Data Structures",
+    category: "DSA",
+    type: "Fundamentals",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Contiguous vs Non-contiguous memory", importance: "high" },
+      { concept: "Fixed size vs Dynamic size", importance: "high" },
+      { concept: "O(1) access for arrays", importance: "medium" },
+      { concept: "O(1) insertion/deletion for linked lists (if pointer known)", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_f_2",
+    question: "What are the four pillars of Object-Oriented Programming?",
+    topic: "Programming",
+    category: "OOP",
+    type: "Fundamentals",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Encapsulation", importance: "high" },
+      { concept: "Inheritance", importance: "high" },
+      { concept: "Polymorphism", importance: "high" },
+      { concept: "Abstraction", importance: "high" }
+    ]
+  },
+  
+  // ==========================================
+  // CORE TECHNICAL (Easy/Medium/Hard)
+  // ==========================================
+  {
+    id: "cse_c_1",
+    question: "What is a Stack?",
+    topic: "Data Structures",
+    category: "DSA",
+    type: "Core",
+    difficulty: "easy",
+    keyConcepts: [
+      { concept: "LIFO (Last In First Out)", importance: "high" },
+      { concept: "Push and Pop operations", importance: "high" },
+      { concept: "Use cases like undo/redo or recursion", importance: "low" }
+    ]
+  },
+  {
+    id: "cse_c_2",
+    question: "Explain the concept of Database Indexing.",
+    topic: "Database",
+    category: "Database",
+    type: "Core",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Speeds up data retrieval", importance: "high" },
+      { concept: "Uses B-Trees or Hash maps internally", importance: "medium" },
+      { concept: "Slows down write operations (insert/update)", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_c_3",
+    question: "What is a Deadlock and what are the Coffman conditions?",
+    topic: "Operating Systems",
+    category: "OS",
+    type: "Core",
+    difficulty: "hard",
+    keyConcepts: [
+      { concept: "Multiple processes blocking each other", importance: "high" },
+      { concept: "Mutual Exclusion", importance: "medium" },
+      { concept: "Hold and Wait", importance: "medium" },
+      { concept: "No Preemption", importance: "medium" },
+      { concept: "Circular Wait", importance: "medium" }
+    ]
+  },
 
-  // Problem Solving / Logic (56-75)
-  { question: "Reverse a string", topic: "PS", category: "ProblemSolving" },
-  { question: "Check palindrome", topic: "PS", category: "ProblemSolving" },
-  { question: "Find duplicates in array", topic: "PS", category: "ProblemSolving" },
-  { question: "Fibonacci logic", topic: "PS", category: "ProblemSolving" },
-  { question: "Find largest element", topic: "PS", category: "ProblemSolving" },
-  { question: "Count vowels", topic: "PS", category: "ProblemSolving" },
-  { question: "Remove duplicates", topic: "PS", category: "ProblemSolving" },
-  { question: "Two sum problem", topic: "PS", category: "ProblemSolving" },
-  { question: "Valid parentheses", topic: "PS", category: "ProblemSolving" },
-  { question: "Merge two arrays", topic: "PS", category: "ProblemSolving" },
-  { question: "Rotate array", topic: "PS", category: "ProblemSolving" },
-  { question: "Missing number problem", topic: "PS", category: "ProblemSolving" },
-  { question: "Prime number check", topic: "PS", category: "ProblemSolving" },
-  { question: "Factorial logic", topic: "PS", category: "ProblemSolving" },
-  { question: "Binary to decimal", topic: "PS", category: "ProblemSolving" },
-  { question: "String compression", topic: "PS", category: "ProblemSolving" },
-  { question: "Find second largest", topic: "PS", category: "ProblemSolving" },
-  { question: "Count frequency", topic: "PS", category: "ProblemSolving" },
-  { question: "Anagram check", topic: "PS", category: "ProblemSolving" },
-  { question: "Subarray sum", topic: "PS", category: "ProblemSolving" },
+  // ==========================================
+  // SCENARIO (Easy/Medium/Hard)
+  // ==========================================
+  {
+    id: "cse_s_1",
+    question: "Users report frequent application crashes. How would you debug the issue?",
+    topic: "Debugging",
+    category: "Software Engineering",
+    type: "Scenario",
+    difficulty: "easy",
+    keyConcepts: [
+      { concept: "Check application and server logs", importance: "high" },
+      { concept: "Reproduce the error locally", importance: "high" },
+      { concept: "Isolate the failing component", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_s_2",
+    question: "A database query takes 20 seconds to execute. How would you optimize it?",
+    topic: "Performance",
+    category: "Database",
+    type: "Scenario",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Use EXPLAIN to analyze query execution", importance: "high" },
+      { concept: "Add proper indexing", importance: "high" },
+      { concept: "Avoid SELECT * and optimize joins", importance: "medium" },
+      { concept: "Implement caching (Redis/Memcached)", importance: "low" }
+    ]
+  },
+  {
+    id: "cse_s_3",
+    question: "How would you design a scalable URL shortening service?",
+    topic: "System Design",
+    category: "System Design",
+    type: "Scenario",
+    difficulty: "hard",
+    keyConcepts: [
+      { concept: "Base62 encoding for short links", importance: "high" },
+      { concept: "Database choice (NoSQL for scaling or SQL with sharding)", importance: "medium" },
+      { concept: "Caching layer for fast redirects", importance: "high" },
+      { concept: "Load balancers to handle traffic", importance: "medium" }
+    ]
+  },
 
-  // Behavioral (76-100)
-  { question: "Tell me about yourself", topic: "Intro", category: "Behavioral" },
-  { question: "Why CSE?", topic: "Motivation", category: "Behavioral" },
-  { question: "Strengths and weaknesses", topic: "Self", category: "Behavioral" },
-  { question: "Biggest failure", topic: "Experience", category: "Behavioral" },
-  { question: "Leadership example", topic: "Leadership", category: "Behavioral" },
-  { question: "Team conflict experience", topic: "Teamwork", category: "Behavioral" },
-  { question: "Handle pressure", topic: "SoftSkills", category: "Behavioral" },
-  { question: "Time management", topic: "SoftSkills", category: "Behavioral" },
-  { question: "Why hire you?", topic: "Value", category: "Behavioral" },
-  { question: "Career goals", topic: "Future", category: "Behavioral" },
-  { question: "Biggest achievement", topic: "Experience", category: "Behavioral" },
-  { question: "Learn new tech quickly?", topic: "Adaptability", category: "Behavioral" },
-  { question: "Handling deadlines", topic: "SoftSkills", category: "Behavioral" },
-  { question: "Ethical dilemma", topic: "Ethics", category: "Behavioral" },
-  { question: "Work in team vs solo", topic: "Teamwork", category: "Behavioral" },
-  { question: "Feedback handling", topic: "SoftSkills", category: "Behavioral" },
-  { question: "Motivation source", topic: "Self", category: "Behavioral" },
-  { question: "Problem-solving approach", topic: "Logic", category: "Behavioral" },
-  { question: "Mistake you learned from", topic: "Experience", category: "Behavioral" },
-  { question: "Adaptability example", topic: "Adaptability", category: "Behavioral" },
-  { question: "Communication skills", topic: "Communication", category: "Behavioral" },
-  { question: "Difficult project", topic: "Experience", category: "Behavioral" },
-  { question: "Innovation example", topic: "Thinking", category: "Behavioral" },
-  { question: "How do you learn?", topic: "Adaptability", category: "Behavioral" },
-  { question: "Where do you see yourself?", topic: "Future", category: "Behavioral" },
+  // ==========================================
+  // BEHAVIORAL (Experience / Situation)
+  // ==========================================
+  {
+    id: "cse_b_1",
+    question: "Tell me about a challenging technical project you worked on and how you handled difficulties.",
+    topic: "Experience",
+    category: "Soft Skills",
+    type: "Behavioral Experience",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Described the project scope clearly", importance: "high" },
+      { concept: "Explained their specific contribution", importance: "high" },
+      { concept: "Highlighted lessons learned", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_b_2",
+    question: "What would you do if production went down at midnight?",
+    topic: "Situation",
+    category: "Soft Skills",
+    type: "Behavioral Situation",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Immediate acknowledgment and communication", importance: "high" },
+      { concept: "Check logs and monitoring tools to isolate", importance: "high" },
+      { concept: "Rollback to a stable version if necessary", importance: "medium" },
+      { concept: "Post-mortem analysis after recovery", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_c_4",
+    question: "What is the difference between SQL and NoSQL databases?",
+    topic: "Database",
+    category: "Database",
+    type: "Core",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Relational vs Non-relational", importance: "high" },
+      { concept: "Structured schemas vs Dynamic schemas", importance: "high" },
+      { concept: "Vertical scaling vs Horizontal scaling", importance: "medium" },
+      { concept: "ACID compliance", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_c_5",
+    question: "What is Database Normalization?",
+    topic: "Database",
+    category: "Database",
+    type: "Core",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Reduces data redundancy", importance: "high" },
+      { concept: "Improves data integrity", importance: "high" },
+      { concept: "1NF, 2NF, 3NF", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_c_6",
+    question: "What is Virtual Memory?",
+    topic: "Operating Systems",
+    category: "OS",
+    type: "Core",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Using disk space as RAM", importance: "high" },
+      { concept: "Paging and swapping", importance: "high" },
+      { concept: "Allows running larger programs than physical RAM", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_f_3",
+    question: "What is an API?",
+    topic: "Web Development",
+    category: "Software Engineering",
+    type: "Fundamentals",
+    difficulty: "easy",
+    keyConcepts: [
+      { concept: "Application Programming Interface", importance: "high" },
+      { concept: "Allows different software to communicate", importance: "high" },
+      { concept: "Endpoints, requests, responses", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_f_4",
+    question: "What is the difference between HTTP and HTTPS?",
+    topic: "Networking",
+    category: "Networking",
+    type: "Fundamentals",
+    difficulty: "easy",
+    keyConcepts: [
+      { concept: "HTTPS is secure (encrypted)", importance: "high" },
+      { concept: "Uses SSL/TLS", importance: "high" },
+      { concept: "Port 80 vs Port 443", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_s_4",
+    question: "How do you secure a REST API?",
+    topic: "Security",
+    category: "Software Engineering",
+    type: "Scenario",
+    difficulty: "hard",
+    keyConcepts: [
+      { concept: "Authentication (JWT, OAuth)", importance: "high" },
+      { concept: "HTTPS / SSL", importance: "high" },
+      { concept: "Rate limiting", importance: "medium" },
+      { concept: "Input validation / sanitization", importance: "medium" }
+    ]
+  },
+  {
+    id: "cse_b_3",
+    question: "Describe a time you had a disagreement with a team member. How did you resolve it?",
+    topic: "Teamwork",
+    category: "Soft Skills",
+    type: "Behavioral Situation",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Open communication and listening", importance: "high" },
+      { concept: "Focus on the problem, not the person", importance: "high" },
+      { concept: "Finding a compromise", importance: "medium" }
+    ]
+  }
 ];
 
-export const ECE_QUESTION_BANK = [
-  // Core Electronics (1-30)
-  { question: "What is Ohm’s Law?", topic: "Core", category: "Technical" },
-  { question: "What is Kirchhoff’s Law?", topic: "Core", category: "Technical" },
-  { question: "AC vs DC", topic: "Core", category: "Technical" },
-  { question: "What is resistor?", topic: "Core", category: "Technical" },
-  { question: "What is capacitor?", topic: "Core", category: "Technical" },
-  { question: "What is inductor?", topic: "Core", category: "Technical" },
-  { question: "What is diode?", topic: "Core", category: "Technical" },
-  { question: "What is transistor?", topic: "Core", category: "Technical" },
-  { question: "BJT vs MOSFET", topic: "Core", category: "Technical" },
-  { question: "What is amplifier?", topic: "Core", category: "Technical" },
-  { question: "What is gain?", topic: "Core", category: "Technical" },
-  { question: "What is filter?", topic: "Core", category: "Technical" },
-  { question: "Types of filters", topic: "Core", category: "Technical" },
-  { question: "What is rectifier?", topic: "Core", category: "Technical" },
-  { question: "Half wave vs full wave", topic: "Core", category: "Technical" },
-  { question: "What is voltage regulator?", topic: "Core", category: "Technical" },
-  { question: "What is impedance?", topic: "Core", category: "Technical" },
-  { question: "What is resonance?", topic: "Core", category: "Technical" },
-  { question: "What is power factor?", topic: "Core", category: "Technical" },
-  { question: "What is signal?", topic: "Comm", category: "Technical" },
-  { question: "Analog vs digital", topic: "Comm", category: "Technical" },
-  { question: "What is noise?", topic: "Comm", category: "Technical" },
-  { question: "What is modulation?", topic: "Comm", category: "Technical" },
-  { question: "AM vs FM", topic: "Comm", category: "Technical" },
-  { question: "What is bandwidth?", topic: "Comm", category: "Technical" },
-  { question: "What is frequency?", topic: "Comm", category: "Technical" },
-  { question: "What is waveform?", topic: "Comm", category: "Technical" },
-  { question: "What is phase?", topic: "Comm", category: "Technical" },
-  { question: "What is sampling theorem?", topic: "Comm", category: "Technical" },
-  { question: "What is Nyquist rate?", topic: "Comm", category: "Technical" },
+export const ECE_QUESTION_BANK: Question[] = [
+  // ==========================================
+  // FUNDAMENTALS (Medium)
+  // ==========================================
+  {
+    id: "ece_f_1",
+    question: "What is the difference between Analog and Digital Signals?",
+    topic: "Signals",
+    category: "Core Electronics",
+    type: "Fundamentals",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Continuous vs Discrete values", importance: "high" },
+      { concept: "Susceptibility to noise (Analog is higher)", importance: "high" },
+      { concept: "Representation (Sine waves vs Binary)", importance: "medium" }
+    ]
+  },
+  {
+    id: "ece_f_2",
+    question: "What is Ohm's Law and what is its limitation?",
+    topic: "Circuits",
+    category: "Core Electronics",
+    type: "Fundamentals",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "V = IR", importance: "high" },
+      { concept: "Proportionality between voltage and current", importance: "medium" },
+      { concept: "Fails for non-linear devices (diodes/transistors)", importance: "high" }
+    ]
+  },
 
-  // Embedded / Communication (31-55)
-  { question: "What is microcontroller?", topic: "Embedded", category: "Technical" },
-  { question: "Microprocessor vs microcontroller", topic: "Embedded", category: "Technical" },
-  { question: "What is Arduino?", topic: "Embedded", category: "Technical" },
-  { question: "What is embedded system?", topic: "Embedded", category: "Technical" },
-  { question: "What is UART?", topic: "Embedded", category: "Technical" },
-  { question: "SPI vs I2C", topic: "Embedded", category: "Technical" },
-  { question: "What is PCB?", topic: "Embedded", category: "Technical" },
-  { question: "What is RTOS?", topic: "Embedded", category: "Technical" },
-  { question: "What is interrupt?", topic: "Embedded", category: "Technical" },
-  { question: "What is ADC?", topic: "Embedded", category: "Technical" },
-  { question: "What is DAC?", topic: "Embedded", category: "Technical" },
-  { question: "What is GSM?", topic: "Comm", category: "Technical" },
-  { question: "What is IoT?", topic: "Embedded", category: "Technical" },
-  { question: "What is Bluetooth?", topic: "Comm", category: "Technical" },
-  { question: "What is WiFi?", topic: "Comm", category: "Technical" },
-  { question: "What is antenna?", topic: "Comm", category: "Technical" },
-  { question: "What is propagation?", topic: "Comm", category: "Technical" },
-  { question: "What is signal attenuation?", topic: "Comm", category: "Technical" },
-  { question: "What is multiplexing?", topic: "Comm", category: "Technical" },
-  { question: "TDM vs FDM", topic: "Comm", category: "Technical" },
-  { question: "What is communication channel?", topic: "Comm", category: "Technical" },
-  { question: "What is error detection?", topic: "Comm", category: "Technical" },
-  { question: "What is parity bit?", topic: "Comm", category: "Technical" },
-  { question: "What is encoding?", topic: "Comm", category: "Technical" },
-  { question: "What is decoding?", topic: "Comm", category: "Technical" },
+  // ==========================================
+  // CORE TECHNICAL (Easy/Medium/Hard)
+  // ==========================================
+  {
+    id: "ece_c_1",
+    question: "What is a diode and what is its primary function?",
+    topic: "Components",
+    category: "Core Electronics",
+    type: "Core",
+    difficulty: "easy",
+    keyConcepts: [
+      { concept: "Allows current in one direction only", importance: "high" },
+      { concept: "PN Junction", importance: "medium" },
+      { concept: "Used for rectification", importance: "medium" }
+    ]
+  },
+  {
+    id: "ece_c_2",
+    question: "Explain Time Division Multiplexing (TDM).",
+    topic: "Communication",
+    category: "Communication",
+    type: "Core",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Transmitting multiple signals over one channel", importance: "high" },
+      { concept: "Dividing channel into separate time slots", importance: "high" },
+      { concept: "Requires synchronization", importance: "medium" }
+    ]
+  },
+  {
+    id: "ece_c_3",
+    question: "Explain the working of a MOSFET and compare it with BJT.",
+    topic: "Semiconductors",
+    category: "Core Electronics",
+    type: "Core",
+    difficulty: "hard",
+    keyConcepts: [
+      { concept: "Voltage-controlled device (MOSFET) vs Current-controlled (BJT)", importance: "high" },
+      { concept: "High input impedance in MOSFET", importance: "high" },
+      { concept: "Gate, Source, Drain terminals", importance: "medium" },
+      { concept: "Faster switching speed in MOSFET", importance: "medium" }
+    ]
+  },
 
-  // Numerical / Problem Solving (56-75)
-  { question: "Calculate current using Ohm’s Law", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Power calculation", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Series vs parallel circuits", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Voltage division rule", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Current division rule", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Find resistance", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Capacitor charging", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Inductor behavior", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Frequency calculation", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Time period", topic: "Numerical", category: "ProblemSolving" },
-  { question: "RMS value", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Peak value", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Gain calculation", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Efficiency calculation", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Signal power", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Bandwidth calculation", topic: "Numerical", category: "ProblemSolving" },
-  { question: "SNR calculation", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Digital logic truth table", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Boolean simplification", topic: "Numerical", category: "ProblemSolving" },
-  { question: "Logic gate output", topic: "Numerical", category: "ProblemSolving" },
+  // ==========================================
+  // SCENARIO (Easy/Medium/Hard)
+  // ==========================================
+  {
+    id: "ece_s_1",
+    question: "A circuit is not producing the expected output. How would you troubleshoot it?",
+    topic: "Troubleshooting",
+    category: "Practical",
+    type: "Scenario",
+    difficulty: "easy",
+    keyConcepts: [
+      { concept: "Check power supply and grounds", importance: "high" },
+      { concept: "Use multimeter to verify voltages", importance: "high" },
+      { concept: "Inspect for loose connections or burnt components", importance: "medium" }
+    ]
+  },
+  {
+    id: "ece_s_2",
+    question: "A communication channel has excessive noise. How would you identify the source?",
+    topic: "Troubleshooting",
+    category: "Communication",
+    type: "Scenario",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Use a spectrum analyzer", importance: "high" },
+      { concept: "Check for EMI (Electromagnetic Interference)", importance: "medium" },
+      { concept: "Verify grounding and shielding", importance: "high" },
+      { concept: "Check SNR ratio", importance: "low" }
+    ]
+  },
+  {
+    id: "ece_s_3",
+    question: "How would you design a scalable IoT sensor network?",
+    topic: "System Design",
+    category: "Embedded",
+    type: "Scenario",
+    difficulty: "hard",
+    keyConcepts: [
+      { concept: "Choose appropriate protocol (MQTT, CoAP)", importance: "high" },
+      { concept: "Low power consumption strategy (Sleep modes)", importance: "high" },
+      { concept: "Edge computing for data processing", importance: "medium" },
+      { concept: "Secure communication (TLS/encryption)", importance: "medium" }
+    ]
+  },
 
-  // Behavioral (76-100)
-  { question: "Why ECE?", topic: "Motivation", category: "Behavioral" },
-  { question: "Interest in electronics", topic: "Self", category: "Behavioral" },
-  { question: "Practical project experience", topic: "Experience", category: "Behavioral" },
-  { question: "Circuit failure handling", topic: "Experience", category: "Behavioral" },
-  { question: "Lab mistakes", topic: "Experience", category: "Behavioral" },
-  { question: "Teamwork example", topic: "Teamwork", category: "Behavioral" },
-  { question: "Innovation in electronics", topic: "Thinking", category: "Behavioral" },
-  { question: "Handling deadlines", topic: "SoftSkills", category: "Behavioral" },
-  { question: "Problem-solving approach", topic: "Logic", category: "Behavioral" },
-  { question: "Learning new tools", topic: "Adaptability", category: "Behavioral" },
-  { question: "Strengths/weaknesses", topic: "Self", category: "Behavioral" },
-  { question: "Career goals", topic: "Future", category: "Behavioral" },
-  { question: "Industry interest", topic: "Motivation", category: "Behavioral" },
-  { question: "Hardware vs software", topic: "Interest", category: "Behavioral" },
-  { question: "Pressure handling", topic: "SoftSkills", category: "Behavioral" },
-  { question: "Biggest challenge", topic: "Experience", category: "Behavioral" },
-  { question: "Technical curiosity", topic: "Self", category: "Behavioral" },
-  { question: "Leadership example", topic: "Leadership", category: "Behavioral" },
-  { question: "Communication skills", topic: "Communication", category: "Behavioral" },
-  { question: "Internship expectations", topic: "Future", category: "Behavioral" },
-  { question: "Mistake learned from", topic: "Experience", category: "Behavioral" },
-  { question: "Adaptability", topic: "Adaptability", category: "Behavioral" },
-  { question: "Time management", topic: "SoftSkills", category: "Behavioral" },
-  { question: "Why hire you?", topic: "Value", category: "Behavioral" },
-  { question: "Future vision", topic: "Future", category: "Behavioral" },
+  // ==========================================
+  // BEHAVIORAL (Experience / Situation)
+  // ==========================================
+  {
+    id: "ece_b_1",
+    question: "Tell me about a project where you learned a new tool or technology quickly.",
+    topic: "Experience",
+    category: "Soft Skills",
+    type: "Behavioral Experience",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Explained the tool and the context", importance: "medium" },
+      { concept: "Described learning methodology", importance: "high" },
+      { concept: "Showed adaptability and fast execution", importance: "high" },
+      { concept: "Used STAR method formatting", importance: "low" }
+    ]
+  },
+  {
+    id: "ece_b_2",
+    question: "What would you do if you discovered a critical design flaw just before a project demonstration?",
+    topic: "Situation",
+    category: "Soft Skills",
+    type: "Behavioral Situation",
+    difficulty: "medium",
+    keyConcepts: [
+      { concept: "Assess the severity of the flaw", importance: "high" },
+      { concept: "Communicate transparently with stakeholders", importance: "high" },
+      { concept: "Propose a mitigation or fallback plan", importance: "medium" },
+      { concept: "Avoid hiding the issue", importance: "medium" }
+    ]
+  }
 ];

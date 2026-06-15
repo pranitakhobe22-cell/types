@@ -20,9 +20,12 @@ export interface Candidate {
 export interface Question {
   id: number | string;
   question: string; // Renamed from text to match spec
-  ideal_answer: string; // Renamed from referenceAnswer to match spec
+  ideal_answer?: string; // Kept optional for backward compatibility during transition
   topic?: string;
-  difficulty?: 'Easy' | 'Medium' | 'Hard';
+  category?: string;
+  type?: 'Fundamentals' | 'Core' | 'Scenario' | 'Behavioral Experience' | 'Behavioral Situation';
+  difficulty?: 'easy' | 'medium' | 'hard';
+  keyConcepts?: { concept: string; importance: 'high' | 'medium' | 'low' }[];
   keyPoints?: string[];
   maxScore?: number;
 }
@@ -80,6 +83,24 @@ export interface EvaluationResult {
     communication: number;
     redFlags?: string[];
   };
+
+  // Adaptive & Behavioral Extensions
+  behavioralMetrics?: {
+    communication: number;
+    problemSolving: number;
+    ownership: number;
+    teamwork: number;
+    adaptability: number;
+    leadershipPotential: number;
+    responseStructure: number;
+    evidenceStrength: number;
+  };
+  transcriptQuality?: number;
+  evaluationPending?: boolean;
+  strengths?: string[];
+  improvements?: string[];
+  recommendedFocusAreas?: string[];
+  highestDifficultyReached?: 'easy' | 'medium' | 'hard';
 
   // Visual/Legacy
   confidenceScore: number; // 0-100 (Visual)

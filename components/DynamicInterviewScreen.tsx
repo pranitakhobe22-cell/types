@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useReducer } from 'react';
 import { Mic, MicOff, Volume2, Send, Loader2, Edit3, CheckCircle, ArrowRight, AlertTriangle } from 'lucide-react';
-import { AIService, GeneratedQuestion } from '../services/aiService';
+import { AIService, InterviewBranch } from '../services/aiService';
 import { submitAnswer } from '../services/apiService';
 import { useSpeech } from '../hooks/useSpeech';
 import { CameraMonitor } from './CameraMonitor';
@@ -232,9 +232,10 @@ interface DynamicInterviewScreenProps {
 }
 
 export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ candidate, onComplete }) => {
-  const [questions, setQuestions] = useState<GeneratedQuestion[]>([]);
+  const [branch, setBranch] = useState<InterviewBranch | null>(null);
+  const [questions, setQuestions] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any }[]>([]);
+  const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any; difficulty?: string; category?: string }[]>([]);
   const {
     isListening, transcript, setTranscript, resetTranscript,
     startListening, stopListening, isSupported, speak, stopSpeaking, isSpeaking, warmUp
@@ -492,17 +493,15 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           }
         }
 
-        const data = await AIService.generateQuestions(candidate.role, 'Intermediate', 'Technical', 5);
+        const newBranch = AIService.selectInterviewBranch(candidate.role);
         if (!mounted) return;
-        setQuestions(data);
+        setBranch(newBranch);
+        setQuestions([newBranch.q1]);
         setLoading(false);
-        
-        // Background task to populate ideal answers without blocking the interview start
-        AIService.populateIdealAnswers(candidate.role, data).catch(console.error);
         
         // Wait for voices to be ready before speaking
         const speakWhenReady = () => {
-           setTimeout(() => { if (mounted) speakQuestion(data[0].question); }, 800);
+           setTimeout(() => { if (mounted) speakQuestion(newBranch.q1.question); }, 800);
         };
         speakWhenReady();
       } catch (err) {
@@ -650,7 +649,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       question: currentQ.question, 
       answer: transcript, 
       ideal_answer: currentQ.ideal_answer,
-      evaluation: evaluationResult
+      evaluation: evaluationResult,
+      difficulty: currentQ.difficulty,
+      category: currentQ.category
     };
 
     const newHistory = [...history, newEntry];
@@ -658,6 +659,47 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
     if (currentIndex < MAX_QUESTIONS - 1) {
       const nextIdx = currentIndex + 1;
+      
+      let nextQ: any = null;
+      if (branch) {
+          const evalScore = evaluationResult?.contentScore || 5; 
+          const techAcc = evaluationResult?.analysis?.technicalAccuracy ?? (evalScore * 10);
+          const probSolv = evaluationResult?.analysis?.problemSolving ?? (evalScore * 10);
+          const practExec = evaluationResult?.analysis?.practicalExecution ?? (evalScore * 10);
+          const comm = evaluationResult?.analysis?.communication ?? (evalScore * 10);
+          
+          const adaptiveScore = (techAcc * 0.40) + (probSolv * 0.30) + (practExec * 0.15) + (comm * 0.15);
+          const normalizedScore = adaptiveScore / 10; // 0-10 scale
+          
+          if (currentIndex === 0) {
+              if (normalizedScore >= 7.5) nextQ = branch.q2.hard;
+              else if (normalizedScore >= 5) nextQ = branch.q2.medium;
+              else nextQ = branch.q2.easy;
+          } else if (currentIndex === 1) {
+              const q1Eval = newHistory[0].evaluation;
+              const q1TechAcc = q1Eval?.analysis?.technicalAccuracy ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
+              const q1ProbSolv = q1Eval?.analysis?.problemSolving ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
+              const q1PractExec = q1Eval?.analysis?.practicalExecution ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
+              const q1Comm = q1Eval?.analysis?.communication ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
+              const q1Score = ((q1TechAcc * 0.40) + (q1ProbSolv * 0.30) + (q1PractExec * 0.15) + (q1Comm * 0.15)) / 10;
+              
+              const avgScore = (normalizedScore * 0.7) + (q1Score * 0.3);
+              if (avgScore >= 7.5) nextQ = branch.q3.hard;
+              else if (avgScore >= 5) nextQ = branch.q3.medium;
+              else nextQ = branch.q3.easy;
+          } else if (currentIndex === 2) {
+              nextQ = branch.q4;
+          } else if (currentIndex === 3) {
+              nextQ = branch.q5;
+          }
+      }
+
+      const updatedQuestions = [...questions];
+      if (nextQ) {
+         updatedQuestions.push(nextQ);
+         setQuestions(updatedQuestions);
+      }
+      
       setCurrentIndex(nextIdx);
       resetTranscript();
       setIsEditing(false);
@@ -666,7 +708,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       setIsProcessing(false);
       isProcessingRef.current = false;
       setTimeout(() => {
-        speakQuestion(questions[nextIdx].question);
+        speakQuestion(updatedQuestions[nextIdx].question);
       }, 300);
     } else {
       setLoadingText("Compiling your results...");

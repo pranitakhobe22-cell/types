@@ -11,7 +11,7 @@ import { Logo } from './Logo';
 
 interface EndScreenProps {
   candidate: { name: string; email: string; role: string };
-  history: { question: string; answer: string; ideal_answer: string }[];
+  history: { question: string; answer: string; ideal_answer: string; difficulty?: string; category?: string }[];
   evalReport?: EvaluationReport | null;
   proctoringReport?: ProctoringReport | null;
   onHome: () => void;
@@ -191,6 +191,20 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, evalRe
       riskBg = 'bg-amber-50 border-amber-200';
   }
 
+  // Determine Highest Difficulty Reached
+  const hasHard = history.some(h => h.difficulty === 'hard');
+  const hasMedium = history.some(h => h.difficulty === 'medium');
+  const highestDifficultyReached = hasHard ? 'Hard' : hasMedium ? 'Medium' : 'Easy';
+  
+  // Determine Recommended Focus Areas
+  const weakCategories = new Set<string>();
+  report?.questionBreakdown?.forEach((q, idx) => {
+      if (q.score <= 6 && history[idx]?.category) {
+          weakCategories.add(history[idx].category!);
+      }
+  });
+  const recommendedFocusAreas = Array.from(weakCategories);
+
   if (!report) {
     return (
       <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-6 space-y-8">
@@ -280,6 +294,33 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, evalRe
                     {report?.detailedAnalysis?.metrics && Object.entries(report.detailedAnalysis.metrics).map(([key, value]) => (
                       <MetricBar key={key} label={key} value={value as number} />
                     ))}
+                  </div>
+                </div>
+
+                {/* Adaptive Summary */}
+                <div className="grid md:grid-cols-2 gap-6 mt-6">
+                  <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-3">
+                      <Zap className="text-amber-500" size={18} /> Adaptive Progression
+                    </h3>
+                    <p className="text-xs text-slate-500 mb-2">Based on performance, the engine dynamically adjusted to:</p>
+                    <div className="inline-flex px-4 py-2 rounded-xl bg-slate-100 font-bold text-slate-800 text-sm border border-slate-200 mt-2">
+                      Peak Difficulty: <span className="ml-2 capitalize text-indigo-600">{highestDifficultyReached}</span>
+                    </div>
+                  </div>
+                  <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-3">
+                      <Target className="text-rose-500" size={18} /> Recommended Focus Areas
+                    </h3>
+                    {recommendedFocusAreas.length > 0 ? (
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {recommendedFocusAreas.map(c => (
+                           <span key={c} className="px-3 py-1 bg-rose-50 border border-rose-100 text-rose-700 text-xs font-bold rounded-lg">{c}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-500 italic mt-2">No specific weak areas detected. Great job!</p>
+                    )}
                   </div>
                 </div>
 
