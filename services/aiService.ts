@@ -167,7 +167,7 @@ export const AIService = {
       return this._pick(filtered, 1)[0];
     };
 
-    const q1 = getQ('Fundamentals', 'medium');
+    const q1 = getQ('Fundamentals', Math.random() > 0.5 ? 'easy' : 'medium');
     const usedCategories = [q1.category || ""];
 
     // Ensure diverse categories for Q2
