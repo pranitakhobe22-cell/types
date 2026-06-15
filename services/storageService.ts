@@ -283,13 +283,19 @@ export const StorageService = {
   getJobs: async (): Promise<JobPost[]> => {
     try {
       // 1. Try Supabase first (Source of Truth)
-      const { data, error } = await supabase.from('jobs').select('*');
+      const { data, error } = await supabase.from('job_posts').select('*');
       
       if (!error && data && data.length > 0) {
         const remoteJobs = data.map(j => ({
-          ...j,
-          questions: typeof j.questions === 'string' ? JSON.parse(j.questions) : j.questions,
-          settings: typeof j.settings === 'string' ? JSON.parse(j.settings) : j.settings
+          id: j.id,
+          title: j.title,
+          description: j.description || '',
+          mode: j.mode || 'AI',
+          status: j.status || 'ACTIVE',
+          company: j.company || 'General',
+          accessKey: j.access_key || '',
+          questions: j.questions ? (typeof j.questions === 'string' ? JSON.parse(j.questions) : j.questions) : [],
+          settings: j.settings ? (typeof j.settings === 'string' ? JSON.parse(j.settings) : j.settings) : DEFAULT_SETTINGS
         })) as JobPost[];
         
         // Sync to local cache
@@ -317,12 +323,18 @@ export const StorageService = {
 
   getJobById: async (id: string): Promise<JobPost | undefined> => {
     try {
-      const { data, error } = await supabase.from('jobs').select('*').eq('id', id).single();
+      const { data, error } = await supabase.from('job_posts').select('*').eq('id', id).single();
       if (!error && data) {
         return {
-          ...data,
-          questions: typeof data.questions === 'string' ? JSON.parse(data.questions) : data.questions,
-          settings: typeof data.settings === 'string' ? JSON.parse(data.settings) : data.settings
+          id: data.id,
+          title: data.title,
+          description: data.description || '',
+          mode: data.mode || 'AI',
+          status: data.status || 'ACTIVE',
+          company: data.company || 'General',
+          accessKey: data.access_key || '',
+          questions: data.questions ? (typeof data.questions === 'string' ? JSON.parse(data.questions) : data.questions) : [],
+          settings: data.settings ? (typeof data.settings === 'string' ? JSON.parse(data.settings) : data.settings) : DEFAULT_SETTINGS
         } as JobPost;
       }
     } catch (e) {}
@@ -338,7 +350,7 @@ export const StorageService = {
 
     // 2. Sync to Supabase
     try {
-      const { error } = await supabase.from('jobs').upsert(
+      const { error } = await supabase.from('job_posts').upsert(
         jobs.map(j => ({
           id: j.id,
           title: j.title,
@@ -346,9 +358,9 @@ export const StorageService = {
           status: j.status,
           questions: j.questions,
           settings: j.settings,
-          accessKey: j.accessKey, // Added
-          company: j.company,    // Added
-          mode: j.mode           // Added
+          access_key: j.accessKey, // Map camelCase accessKey to snake_case access_key
+          company: j.company,
+          mode: j.mode
         }))
       );
       if (error) throw error;
@@ -371,7 +383,7 @@ export const StorageService = {
 
     // 2. Delete from Supabase
     try {
-      const { error } = await supabase.from('jobs').delete().eq('id', jobId);
+      const { error } = await supabase.from('job_posts').delete().eq('id', jobId);
       if (error) throw error;
     } catch (e) {
       console.error("Delete job from Supabase failed", e);

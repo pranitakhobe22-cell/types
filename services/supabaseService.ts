@@ -85,39 +85,95 @@ export class SupabaseService {
     }
 
     static async getAllSessions() {
-        const { data, error } = await supabase
-            .from('view_master_session_record')
-            .select('*')
-            .order('session_date', { ascending: false });
+        // 1. Fetch from vw_candidate_master
+        const { data: masterRecords, error } = await supabase
+            .from('vw_candidate_master')
+            .select('*');
 
-        if (error) throw error;
-        
-        // Patch: The database view often queries the wrong table (question_evaluations) instead of session_responses
-        // We will fetch session_responses manually to ensure the Admin Dashboard has the full breakdown
-        try {
-            const { data: responses } = await supabase.from('session_responses').select('*');
-            if (data && responses) {
-                data.forEach(session => {
-                    const sessionResponses = responses.filter(r => r.session_id === session.session_id);
-                    // If the view missed the answers, manually attach them from session_responses
-                    if (sessionResponses.length > 0 && (!session.all_questions_and_answers || session.all_questions_and_answers.length === 0)) {
-                        session.all_questions_and_answers = sessionResponses.map(r => ({
-                            question_text: r.question_text,
-                            candidate_answer: r.candidate_answer,
-                            content_score: r.content_score,
-                            grammar_score: r.grammar_score,
-                            fluency_score: r.fluency_score,
-                            verdict: r.verdict,
-                            feedback: r.feedback
-                        }));
-                    }
-                });
-            }
-        } catch (e) {
-            console.warn("Failed to manually join session_responses:", e);
+        if (error) {
+            console.error("Supabase getAllSessions error:", error);
+            throw error;
         }
 
-        return data;
+        if (!masterRecords) return [];
+
+        try {
+            // 2. Fetch session_responses for Q&A details
+            const { data: responses } = await supabase.from('session_responses').select('*');
+            // 3. Fetch evaluation_reports for the full master report JSON
+            const { data: reports } = await supabase.from('evaluation_reports').select('*');
+            // 4. Fetch proctoring_events
+            const { data: violations } = await supabase.from('proctoring_events').select('*');
+
+            // 5. Merge them in memory
+            return masterRecords.map(record => {
+                const sessionId = record.session_id;
+
+                const sessionResponses = responses ? responses.filter(r => r.session_id === sessionId) : [];
+                const sessionReport = reports ? reports.find(r => r.session_id === sessionId) : null;
+                const sessionViolations = violations ? violations.filter(v => v.session_id === sessionId) : [];
+
+                return {
+                    session_id: record.session_id,
+                    candidate_name: record.candidate_name,
+                    candidate_email: record.candidate_email,
+                    job_title: record.role, // Align with AdminDashboard rs.job_title
+                    role: record.role,      // Also provide role
+                    session_status: record.session_status,
+                    session_date: record.interview_date,
+                    total_score: record.overall_score,
+                    duration_minutes: record.duration_minutes,
+                    questions_asked: record.questions_asked,
+                    questions_answered: record.questions_answered,
+                    strengths: record.strengths || [],
+                    weaknesses: record.weaknesses || [],
+                    risk_score: record.risk_score,
+                    risk_level: record.risk_level,
+                    recommendation: record.recommendation,
+                    candidate_outcome: record.candidate_outcome,
+                    
+                    // Joined tables data formatted for AdminDashboard
+                    all_questions_and_answers: sessionResponses.map(r => ({
+                        question_text: r.question_text,
+                        candidate_answer: r.candidate_answer,
+                        content_score: r.content_score,
+                        grammar_score: r.grammar_score,
+                        fluency_score: r.fluency_score,
+                        verdict: r.verdict,
+                        feedback: r.feedback
+                    })),
+                    all_proctoring_events: sessionViolations.map(v => ({
+                        type: v.event_type || v.type,
+                        severity: v.severity,
+                        message: v.detail || v.message,
+                        time: v.occurred_at || v.timestamp,
+                        snapshot_url: v.snapshot_url,
+                        clip_url: v.clip_url
+                    })),
+                    evaluation_logic: sessionReport ? sessionReport.evaluation_logic : null,
+                    final_verdict: sessionReport ? sessionReport.final_verdict : null,
+                    verdict_justification: sessionReport ? sessionReport.verdict_justification : null
+                };
+            });
+        } catch (e) {
+            console.warn("Failed to manually join session data:", e);
+            // Fallback: return masterRecords with raw mapping
+            return masterRecords.map(record => ({
+                session_id: record.session_id,
+                candidate_name: record.candidate_name,
+                candidate_email: record.candidate_email,
+                job_title: record.role,
+                role: record.role,
+                session_status: record.session_status,
+                session_date: record.interview_date,
+                total_score: record.overall_score,
+                duration_minutes: record.duration_minutes,
+                questions_asked: record.questions_asked,
+                questions_answered: record.questions_answered,
+                strengths: record.strengths || [],
+                weaknesses: record.weaknesses || []
+            }));
+        }
     }
 
     static async updateSessionStatus(sessionId: string, newStatus: string, reason?: string) {
@@ -166,7 +222,14 @@ export class SupabaseService {
             content_score: result.contentScore || null,
             grammar_score: result.grammarScore || null,
             fluency_score: result.fluencyScore || null,
-            verdict: result.verdict || null,
+            verdict: (() => {
+                if (!result.verdict) return null;
+                const v = String(result.verdict).toLowerCase();
+                if (v.includes('excel') || v.includes('good') || v.includes('pass')) return 'Pass';
+                if (v.includes('border') || v.includes('partial')) return 'Borderline';
+                if (v.includes('fail') || v.includes('poor')) return 'Fail';
+                return 'Borderline';
+            })(),
             feedback: result.feedback || null,
             
             // Auditable Fields
@@ -289,7 +352,7 @@ export class SupabaseService {
                 evaluation_model: report.metadata?.modelUsed ?? "gemini-2.5-flash-lite",
                 evaluation_prompt_version: "11.0",
                 evaluated_at: new Date().toISOString(),
-                candidate_outcome: 'Pending'
+                candidate_outcome: 'PENDING'
             }, { onConflict: 'session_id' });
 
         if (error) {
