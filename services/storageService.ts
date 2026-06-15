@@ -38,7 +38,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 1,
         question: "Explain the concept of Reactive programming in modern web development.",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'Web Dev',
         ideal_answer: "Reactive programming is a declarative programming paradigm concerned with data streams and the propagation of change.",
         keyPoints: ["Data streams", "Propagation of change", "Declarative"],
@@ -59,7 +59,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 1,
         question: "Explain the Second Law of Thermodynamics and its practical implications.",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'Thermodynamics',
         ideal_answer: "The Second Law states that entropy of an isolated system always increases. Practically, it means heat cannot spontaneously flow from a cold body to a hot body, and no heat engine can have 100% efficiency.",
         keyPoints: ["Entropy increases", "Heat flow direction", "Efficiency limits"],
@@ -68,7 +68,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 2,
         question: "What is the difference between stress and strain?",
-        difficulty: 'Easy',
+        difficulty: 'easy',
         topic: 'Mechanics',
         ideal_answer: "Stress is force per unit area; strain is the deformation.",
         keyPoints: ["Force/Area", "Deformation"],
@@ -77,7 +77,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 3,
         question: "Describe the working principle of a 4-stroke petrol engine.",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'IC Engines',
         ideal_answer: "Intake, Compression, Power, Exhaust strokes.",
         keyPoints: ["4 strokes", "Spark plug", "Valves"],
@@ -86,7 +86,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 4,
         question: "What defines a fluid's viscosity?",
-        difficulty: 'Easy',
+        difficulty: 'easy',
         topic: 'Fluid Mechanics',
         ideal_answer: "Viscosity is a measure of a fluid's resistance to flow.",
         keyPoints: ["Resistance to flow", "Internal friction"],
@@ -95,7 +95,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 5,
         question: "Explain the purpose of heat treatment in metals.",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'Manufacturing',
         ideal_answer: "To alter physical/chemical properties (hardening, annealing).",
         keyPoints: ["Hardness", "Ductility", "Microstructure"],
@@ -116,7 +116,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 1,
         question: "What is the difference between a Process and a Thread?",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'Operating Systems',
         ideal_answer: "A process is an executing program (isolated); a thread is a unit of execution within a process (shared memory).",
         keyPoints: ["Memory isolation", "Shared resources", "Context switch"],
@@ -125,7 +125,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 2,
         question: "Explain the ACID properties in a Database Management System.",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'DBMS',
         ideal_answer: "Atomicity, Consistency, Isolation, Durability.",
         keyPoints: ["All or nothing", "Valid state", "Transaction independence", "Saved permanently"],
@@ -134,7 +134,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 3,
         question: "Describe the OSI model layers.",
-        difficulty: 'Hard',
+        difficulty: 'hard',
         topic: 'Networks',
         ideal_answer: "Physical, Data Link, Network, Transport, Session, Presentation, Application.",
         keyPoints: ["7 Layers", "Encapsulation", "Specific functions"],
@@ -143,7 +143,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 4,
         question: "How does Garbage Collection work in Java/Python?",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'Languages',
         ideal_answer: "Automatic memory management that reclaims memory used by objects no longer referenced.",
         keyPoints: ["Reference counting", "Reachability", "Memory leak prevention"],
@@ -152,7 +152,7 @@ const SEED_JOBS: JobPost[] = [
       {
         id: 5,
         question: "What is the difference between TCP and UDP?",
-        difficulty: 'Medium',
+        difficulty: 'medium',
         topic: 'Networks',
         ideal_answer: "TCP is connection-oriented/reliable; UDP is connectionless/fast but unreliable.",
         keyPoints: ["Reliability", "Connection setup", "Speed"],

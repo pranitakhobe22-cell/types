@@ -1,24 +1,24 @@
 import React, { useState } from 'react';
-import { EvaluationReport } from '../services/aiService';
-import { ProctoringReport } from '../types';
+import { MasterEvaluationReport, ProctoringReport, Question } from '../types';
 import {
   CheckCircle, AlertCircle, ArrowLeft, Trophy, Target,
   TrendingUp, TrendingDown, ChevronDown, ChevronUp,
   Star, ThumbsUp, ThumbsDown, BarChart2, Zap,
-  ShieldAlert, EyeOff, Monitor, Copy, Maximize, AlertTriangle, Clock
+  ShieldAlert, EyeOff, Monitor, Copy, Maximize, AlertTriangle, Clock,
+  Shield, Brain, MessageSquare, Scale, HelpCircle, Activity, Info
 } from 'lucide-react';
 import { Logo } from './Logo';
 
 interface EndScreenProps {
   candidate: { name: string; email: string; role: string };
   history: { question: string; answer: string; ideal_answer: string; difficulty?: string; category?: string }[];
-  evalReport?: EvaluationReport | null;
+  evalReport?: MasterEvaluationReport | null;
   proctoringReport?: ProctoringReport | null;
   onHome: () => void;
 }
 
-const ScoreRing: React.FC<{ score: number; size?: number }> = ({ score, size = 200 }) => {
-  const r = size / 2 - 16;
+const ScoreRing: React.FC<{ score: number; size?: number }> = ({ score, size = 160 }) => {
+  const r = size / 2 - 12;
   const circumference = 2 * Math.PI * r;
   const offset = circumference - (circumference * score) / 100;
 
@@ -29,12 +29,12 @@ const ScoreRing: React.FC<{ score: number; size?: number }> = ({ score, size = 2
 
   return (
     <svg width={size} height={size} className="transform -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="transparent" stroke="#f1f5f9" strokeWidth="14" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="transparent" stroke="#f1f5f9" strokeWidth="10" />
       <circle
         cx={size / 2} cy={size / 2} r={r}
         fill="transparent"
         stroke={color}
-        strokeWidth="14"
+        strokeWidth="10"
         strokeDasharray={circumference}
         strokeDashoffset={offset}
         strokeLinecap="round"
@@ -51,28 +51,30 @@ const MetricBar: React.FC<{ label: string; value: number; max?: number }> = ({ l
     pct >= 60 ? 'bg-indigo-500' :
     pct >= 40 ? 'bg-amber-500' : 'bg-rose-500';
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       <div className="flex justify-between items-center">
         <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">{label}</span>
-        <span className="text-sm font-black text-slate-800">{value}<span className="text-slate-300 font-normal">/{max}</span></span>
+        <span className="text-xs font-black text-slate-800">{value}<span className="text-slate-300 font-normal">/{max}</span></span>
       </div>
-      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
         <div className={`h-full ${color} rounded-full transition-all duration-700`} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
 };
 
-const QuestionCard: React.FC<{ item: EvaluationReport['questionBreakdown'][0]; index: number }> = ({ item, index }) => {
+const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown'][0]; index: number }> = ({ item, index }) => {
   const [expanded, setExpanded] = useState(false);
+
+  const verdict = item.score >= 8 ? 'Excellent' : item.score >= 6 ? 'Good' : item.score >= 4 ? 'Borderline' : 'Fail';
 
   const verdictConfig: Record<string, { bg: string; text: string; icon: React.ReactNode }> = {
     'Excellent': { bg: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', icon: <Star size={14} className="text-emerald-500" /> },
     'Good': { bg: 'bg-indigo-50 border-indigo-200', text: 'text-indigo-700', icon: <ThumbsUp size={14} className="text-indigo-500" /> },
-    'Partial': { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-700', icon: <TrendingDown size={14} className="text-amber-500" /> },
-    'Poor': { bg: 'bg-rose-50 border-rose-200', text: 'text-rose-700', icon: <ThumbsDown size={14} className="text-rose-500" /> },
+    'Borderline': { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-700', icon: <TrendingDown size={14} className="text-amber-500" /> },
+    'Fail': { bg: 'bg-rose-50 border-rose-200', text: 'text-rose-700', icon: <ThumbsDown size={14} className="text-rose-500" /> },
   };
-  const vc = verdictConfig[item.verdict] || verdictConfig['Partial'];
+  const vc = verdictConfig[verdict] || verdictConfig['Borderline'];
 
   const scoreColor =
     item.score >= 8 ? 'text-emerald-600' :
@@ -80,28 +82,40 @@ const QuestionCard: React.FC<{ item: EvaluationReport['questionBreakdown'][0]; i
     item.score >= 4 ? 'text-amber-600' : 'text-rose-600';
 
   return (
-    <div className={`bg-white border rounded-3xl overflow-hidden shadow-sm transition-all duration-300 ${vc.bg}`}>
+    <div className={`bg-white border rounded-3xl overflow-hidden shadow-sm transition-all duration-300 ${expanded ? 'ring-2 ring-indigo-500/10' : ''}`}>
       {/* Header — always visible */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full text-left p-6 flex items-start justify-between gap-4 hover:bg-black/[0.02] transition-colors"
+        className="w-full text-left p-6 flex items-start justify-between gap-4 hover:bg-slate-50 transition-colors"
       >
         <div className="flex items-start gap-4 flex-1 min-w-0">
-          <div className="w-10 h-10 rounded-2xl bg-slate-100 flex items-center justify-center font-black text-slate-500 shrink-0 text-sm">
+          <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center font-black text-white shrink-0 text-xs">
             Q{index + 1}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-bold text-slate-800 text-sm leading-snug mb-2">{item.question}</p>
-            <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-bold ${vc.bg} ${vc.text}`}>
-              {vc.icon}
-              {item.verdict}
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                item.difficulty === 'hard' ? 'bg-red-50 text-red-600 border border-red-100' :
+                item.difficulty === 'medium' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+                'bg-slate-50 text-slate-600 border border-slate-100'
+              }`}>
+                {item.difficulty}
+              </span>
+              <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                item.transcriptionQualityScore >= 80 ? 'bg-emerald-50 text-emerald-600' :
+                item.transcriptionQualityScore >= 50 ? 'bg-amber-50 text-amber-600' :
+                'bg-rose-50 text-rose-600'
+              }`}>
+                {item.transcriptionQualityScore}% confidence
+              </div>
             </div>
+            <p className="font-bold text-slate-800 text-sm leading-snug">{item.questionText}</p>
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <div className="text-right">
-            <span className={`text-3xl font-black ${scoreColor}`}>{item.score}</span>
-            <span className="text-slate-300 text-sm">/10</span>
+            <span className={`text-2xl font-black ${scoreColor}`}>{item.score}</span>
+            <span className="text-slate-300 text-xs">/10</span>
           </div>
           {expanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
         </div>
@@ -109,33 +123,56 @@ const QuestionCard: React.FC<{ item: EvaluationReport['questionBreakdown'][0]; i
 
       {/* Expanded content */}
       {expanded && (
-        <div className="px-6 pb-6 space-y-5 border-t border-slate-100 pt-5">
+        <div className="px-6 pb-6 space-y-5 border-t border-slate-100 pt-5 bg-slate-50/50">
           {/* Candidate's Answer */}
           <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Your Answer</p>
-            <div className="bg-slate-50 rounded-2xl p-4">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Candidate Response</p>
+            <div className="bg-white rounded-2xl p-4 border border-slate-200">
               <p className="text-sm text-slate-700 leading-relaxed italic">
-                "{item.candidateAnswer || 'No answer recorded'}"
+                "{item.userAnswer || 'No answer recorded'}"
               </p>
             </div>
           </div>
 
           {/* AI Feedback */}
           <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">AI Feedback</p>
-            <p className="text-sm text-slate-700 leading-relaxed">{item.feedback}</p>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Evaluation Feedback</p>
+            <p className="text-sm text-slate-700 leading-relaxed font-medium">{item.feedback}</p>
           </div>
+
+          {/* Technical Errors */}
+          {item.technicalErrors && item.technicalErrors.length > 0 && (
+            <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 space-y-2">
+              <p className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1.5">
+                <AlertTriangle size={14} /> Fact Mismatches & Technical Errors
+              </p>
+              <div className="space-y-1.5">
+                {item.technicalErrors.map((err, i) => (
+                  <div key={i} className="flex items-start gap-2 text-xs text-rose-800">
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
+                      err.severity === 'high' ? 'bg-red-200 text-red-800' :
+                      err.severity === 'medium' ? 'bg-orange-200 text-orange-800' :
+                      'bg-yellow-200 text-yellow-800'
+                    }`}>
+                      {err.severity}
+                    </span>
+                    <p className="leading-relaxed">{err.error}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Key Points */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {item.keyPointsHit && item.keyPointsHit.length > 0 && (
-              <div>
+            {item.matchedKeyPoints && item.matchedKeyPoints.length > 0 && (
+              <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
                 <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <CheckCircle size={12} /> Points Covered
+                  <CheckCircle size={12} /> Key Concepts Covered
                 </p>
                 <ul className="space-y-1.5">
-                  {item.keyPointsHit.map((pt, i) => (
-                    <li key={i} className="flex gap-2 text-xs text-slate-600">
+                  {item.matchedKeyPoints.map((pt, i) => (
+                    <li key={i} className="flex gap-2 text-xs text-slate-600 font-medium">
                       <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                       {pt}
                     </li>
@@ -143,14 +180,14 @@ const QuestionCard: React.FC<{ item: EvaluationReport['questionBreakdown'][0]; i
                 </ul>
               </div>
             )}
-            {item.keyPointsMissed && item.keyPointsMissed.length > 0 && (
-              <div>
+            {item.missingKeyPoints && item.missingKeyPoints.length > 0 && (
+              <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
                 <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <AlertCircle size={12} /> Points Missed
+                  <AlertCircle size={12} /> Key Concepts Missed
                 </p>
                 <ul className="space-y-1.5">
-                  {item.keyPointsMissed.map((pt, i) => (
-                    <li key={i} className="flex gap-2 text-xs text-slate-600">
+                  {item.missingKeyPoints.map((pt, i) => (
+                    <li key={i} className="flex gap-2 text-xs text-slate-600 font-medium">
                       <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
                       {pt}
                     </li>
@@ -160,13 +197,16 @@ const QuestionCard: React.FC<{ item: EvaluationReport['questionBreakdown'][0]; i
             )}
           </div>
 
-          {/* Ideal Answer Summary */}
-          {item.idealAnswerSummary && (
-            <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4">
-              <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-2">What a Great Answer Includes</p>
-              <p className="text-sm text-indigo-800 leading-relaxed">{item.idealAnswerSummary}</p>
+          {/* Sub-Metrics */}
+          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Dimension Scores</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <MetricBar label="Coverage" value={item.analysis?.coverage ?? 5} />
+              <MetricBar label="Understanding" value={item.analysis?.understanding ?? 5} />
+              <MetricBar label="Reasoning" value={item.analysis?.reasoning ?? 5} />
+              <MetricBar label="Communication" value={item.analysis?.communication ?? 5} />
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
@@ -175,35 +215,6 @@ const QuestionCard: React.FC<{ item: EvaluationReport['questionBreakdown'][0]; i
 
 export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, evalReport, proctoringReport, onHome }) => {
   const report = evalReport;
-  
-  // Deterministic Risk Mapping
-  const integrityScore = proctoringReport?.integrityScore ?? 100;
-  let riskLevel = 'Low';
-  let riskColor = 'text-emerald-500';
-  let riskBg = 'bg-emerald-50 border-emerald-200';
-  if (integrityScore < 70) {
-      riskLevel = 'High';
-      riskColor = 'text-rose-500';
-      riskBg = 'bg-rose-50 border-rose-200';
-  } else if (integrityScore < 90) {
-      riskLevel = 'Medium';
-      riskColor = 'text-amber-500';
-      riskBg = 'bg-amber-50 border-amber-200';
-  }
-
-  // Determine Highest Difficulty Reached
-  const hasHard = history.some(h => h.difficulty === 'hard');
-  const hasMedium = history.some(h => h.difficulty === 'medium');
-  const highestDifficultyReached = hasHard ? 'Hard' : hasMedium ? 'Medium' : 'Easy';
-  
-  // Determine Recommended Focus Areas
-  const weakCategories = new Set<string>();
-  report?.questionBreakdown?.forEach((q, idx) => {
-      if (q.score <= 6 && history[idx]?.category) {
-          weakCategories.add(history[idx].category!);
-      }
-  });
-  const recommendedFocusAreas = Array.from(weakCategories);
 
   if (!report) {
     return (
@@ -216,279 +227,430 @@ export const EndScreen: React.FC<EndScreenProps> = ({ candidate, history, evalRe
         </div>
         <div className="text-center space-y-2">
           <h2 className="text-2xl font-black text-slate-900 tracking-tight">Analyzing Your Interview</h2>
-          <p className="text-slate-500 font-medium">Evaluating each answer against expert benchmarks...</p>
+          <p className="text-slate-500 font-medium">Evaluating responses against calibration metrics...</p>
         </div>
       </div>
     );
   }
 
   const hiringColors: Record<string, string> = {
-    'Strong Hire': 'bg-emerald-600 text-white',
-    'Hire': 'bg-indigo-600 text-white',
-    'Consider': 'bg-amber-500 text-white',
-    'Reject': 'bg-rose-600 text-white',
+    'Strong Hire': 'bg-emerald-600 text-white shadow-emerald-100/50',
+    'Hire': 'bg-indigo-600 text-white shadow-indigo-100/50',
+    'Consider': 'bg-amber-500 text-white shadow-amber-100/50',
+    'Reject': 'bg-rose-600 text-white shadow-rose-100/50',
   };
 
-  const categoryColors: Record<string, string> = {
-    'Excellent': 'text-emerald-600 bg-emerald-50 border-emerald-200',
-    'Good': 'text-indigo-600 bg-indigo-50 border-indigo-200',
-    'Average': 'text-amber-600 bg-amber-50 border-amber-200',
-    'Poor': 'text-rose-600 bg-rose-50 border-rose-200',
-  };
+  const integrityScore = report.proctoringSummary?.integrityScore ?? 100;
+  const isInsufficientEvidence = report.executiveSummary?.recommendationStatus === 'insufficient_evidence';
+
+  // Section 5 Stability assessment
+  const stability = report.executiveSummary?.knowledgeStability ?? 100;
+  let stabilityDescription = "Consistent high performance across all evaluated topics, indicating stable core knowledge.";
+  if (stability < 65) {
+    stabilityDescription = "High score variance (knowledge cliffs detected). The candidate showed strong understanding in certain questions but struggled significantly in others, indicating unstable domain familiarity.";
+  } else if (stability < 85) {
+    stabilityDescription = "Moderate score variance. The candidate performed well on some topics but showed minor gaps on others.";
+  }
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans">
-      <div className="max-w-5xl mx-auto px-6 py-12 pb-24 space-y-12">
-
-        {/* Header */}
-        <header className="flex justify-between items-end border-b border-slate-200 pb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-24">
+      {/* Recruiter Decision Panel Container */}
+      <div className="max-w-6xl mx-auto px-6 py-10 space-y-10">
+        
+        {/* Recruiter Header */}
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-200 pb-8 gap-4">
           <div>
-            <div className="flex items-center gap-2 mb-4">
-              <CheckCircle className="text-emerald-500" size={20} />
-              <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Assessment Complete</span>
+            <div className="flex items-center gap-2 mb-2">
+              <Shield className="text-indigo-600" size={16} />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unified Recruiter Decision Report</span>
             </div>
-            <h1 className="text-5xl font-black tracking-tight text-slate-900">{candidate.name}</h1>
-            <p className="text-slate-500 mt-2 text-lg font-medium">
-              Technical Audit — <span className="text-slate-900 font-bold">{candidate.role} Domain</span>
+            <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">{candidate.name}</h1>
+            <p className="text-sm text-slate-500 font-medium mt-1">
+              Applied Role: <span className="text-slate-900 font-bold">{candidate.role} Branch</span> | Session ID: <span className="font-mono text-slate-700 text-xs">{localStorage.getItem('current_session_id') || "N/A"}</span>
             </p>
           </div>
-          <div className="hidden md:block">
-            <Logo className="w-12 h-12 opacity-80" />
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="text-right hidden md:block">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Evaluation Version</p>
+              <p className="text-xs font-mono font-bold text-slate-700">v11.0 / Cost: ${report.telemetry?.sessionApiCostEstimate ?? "0.02"}</p>
+            </div>
+            <Logo className="w-10 h-10 opacity-70" />
           </div>
         </header>
 
-        {report ? (
-          <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
-
-            {/* --- SECTION 1: Score Overview --- */}
-            <div className="grid md:grid-cols-12 gap-8">
-              {/* Score Ring */}
-              <div className="md:col-span-4 bg-white border border-slate-200 rounded-[48px] p-10 flex flex-col items-center justify-center space-y-6 shadow-sm">
-                <div className="relative">
-                  <ScoreRing score={report?.totalScore || 0} size={200} />
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-6xl font-black text-slate-900 flex items-baseline">
-                      {report?.totalScore || 0}
-                      <span className="text-2xl text-slate-400 font-bold ml-1">/100</span>
-                    </span>
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Score</span>
-                  </div>
-                </div>
-                <div className={`px-6 py-2.5 rounded-2xl font-black text-sm border ${categoryColors[report.category] || categoryColors['Average']}`}>
-                  {(report?.category || 'Average').toUpperCase()} PERFORMANCE
-                </div>
-                {report?.hiringRecommendation && (
-                  <div className={`px-6 py-2.5 rounded-2xl font-black text-sm ${hiringColors[report.hiringRecommendation] || 'bg-slate-600 text-white'}`}>
-                    {report.hiringRecommendation.toUpperCase()}
-                  </div>
-                )}
+        {/* SECTION 1 & SECTION 2: Executive Summary & Overall Score Matrix */}
+        <div className="grid md:grid-cols-12 gap-6">
+          {/* Section 1: Executive Summary */}
+          <div className="md:col-span-7 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm flex flex-col justify-between">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                  <Brain size={14} className="text-indigo-500" /> Section 1: Executive Summary
+                </h3>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider shadow-md ${
+                  report.executiveSummary.reportConfidence === 'High' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                  report.executiveSummary.reportConfidence === 'Medium' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                  'bg-rose-50 text-rose-700 border border-rose-200'
+                }`}>
+                  {report.executiveSummary.reportConfidence} Confidence
+                </span>
               </div>
 
-              {/* Metrics */}
-              <div className="md:col-span-8 space-y-6">
-                <div className="bg-white border border-slate-200 rounded-[40px] p-10 shadow-sm">
-                  <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                    <BarChart2 size={16} className="text-indigo-500" /> Performance Metrics
-                  </h3>
-                  <div className="space-y-5">
-                    {report?.detailedAnalysis?.metrics && Object.entries(report.detailedAnalysis.metrics).map(([key, value]) => (
-                      <MetricBar key={key} label={key} value={value as number} />
-                    ))}
+              {isInsufficientEvidence ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-3 items-start text-amber-800 text-sm">
+                  <AlertTriangle className="shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <p className="font-bold">Recommendation Status: Insufficient Evidence</p>
+                    <p className="text-xs text-amber-700 leading-relaxed mt-0.5">The evaluator completed with low confidence due to very brief responses and coverage under 50%. Proceed with caution.</p>
                   </div>
                 </div>
-
-                {/* Adaptive Summary */}
-                <div className="grid md:grid-cols-2 gap-6 mt-6">
-                  <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
-                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-3">
-                      <Zap className="text-amber-500" size={18} /> Adaptive Progression
-                    </h3>
-                    <p className="text-xs text-slate-500 mb-2">Based on performance, the engine dynamically adjusted to:</p>
-                    <div className="inline-flex px-4 py-2 rounded-xl bg-slate-100 font-bold text-slate-800 text-sm border border-slate-200 mt-2">
-                      Peak Difficulty: <span className="ml-2 capitalize text-indigo-600">{highestDifficultyReached}</span>
-                    </div>
-                  </div>
-                  <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
-                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-3">
-                      <Target className="text-rose-500" size={18} /> Recommended Focus Areas
-                    </h3>
-                    {recommendedFocusAreas.length > 0 ? (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {recommendedFocusAreas.map(c => (
-                           <span key={c} className="px-3 py-1 bg-rose-50 border border-rose-100 text-rose-700 text-xs font-bold rounded-lg">{c}</span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-500 italic mt-2">No specific weak areas detected. Great job!</p>
-                    )}
-                  </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-slate-400 uppercase">Hiring Verdict:</span>
+                  <span className={`px-4 py-1.5 rounded-2xl font-black text-xs uppercase ${hiringColors[report.executiveSummary.recommendation]}`}>
+                    {report.executiveSummary.recommendation}
+                  </span>
                 </div>
+              )}
 
-                {/* Strengths & Weaknesses */}
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
-                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-5">
-                      <Trophy className="text-amber-500" size={18} /> Strengths
-                    </h3>
-                    <ul className="space-y-3">
-                      {(report?.detailedAnalysis?.strengths || []).map((s, i) => (
-                        <li key={i} className="flex gap-3 text-sm font-medium text-slate-600">
-                          <div className="mt-1.5 w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                          {s}
-                        </li>
-                      ))}
-                    </ul>
+              <p className="text-slate-600 text-sm font-medium leading-relaxed italic bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                "{report.executiveSummary.summary}"
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 border-t border-slate-100 pt-6">
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tech Score</p>
+                <p className="text-2xl font-black text-slate-800">{report.executiveSummary.technicalScore}<span className="text-xs text-slate-400">/100</span></p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Trust Score</p>
+                <p className="text-2xl font-black text-slate-800">{report.executiveSummary.trustScore}<span className="text-xs text-slate-400">/100</span></p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Topic Coverage</p>
+                <p className="text-2xl font-black text-slate-800">{report.executiveSummary.topicCoverage}%</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stability</p>
+                <p className="text-2xl font-black text-slate-800">{report.executiveSummary.knowledgeStability}%</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Overall Score Matrix */}
+          <div className="md:col-span-5 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm flex flex-col justify-between">
+            <div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-6">
+                <BarChart2 size={14} className="text-indigo-500" /> Section 2: Overall Score Matrix
+              </h3>
+              
+              <div className="space-y-3">
+                <div className="flex justify-between items-center border-b border-slate-50 pb-2">
+                  <span className="text-xs text-slate-500 font-medium">Knowledge Performance</span>
+                  <span className="text-sm font-black text-slate-800">{report.overallScores.knowledgeScore}%</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-slate-50 pb-2">
+                  <span className="text-xs text-slate-500 font-medium">Logical Reasoning</span>
+                  <span className="text-sm font-black text-slate-800">{report.overallScores.reasoningScore}%</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-slate-50 pb-2">
+                  <span className="text-xs text-slate-500 font-medium">Spoken Communication</span>
+                  <span className="text-sm font-black text-slate-800">{report.overallScores.communicationScore}%</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-slate-50 pb-2">
+                  <span className="text-xs text-slate-500 font-medium">Consistency Score</span>
+                  <span className="text-sm font-black text-slate-800">{report.overallScores.consistencyScore}%</span>
+                </div>
+                <div className="flex justify-between items-center border-b border-slate-50 pb-2">
+                  <span className="text-xs text-slate-500 font-medium">Difficulty-Weighted Score</span>
+                  <span className="text-sm font-black text-slate-800">{report.overallScores.difficultyWeightedPerformance}%</span>
+                </div>
+                <div className="flex justify-between items-center pt-2">
+                  <span className="text-xs text-slate-900 font-bold">Trust-Adjusted Final Score</span>
+                  <span className="text-base font-black text-indigo-600">{report.overallScores.trustAdjustedScore}%</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between mt-4">
+              <div className="flex items-center gap-2">
+                <Activity size={16} className="text-indigo-500" />
+                <span className="text-xs font-bold text-slate-600">Benchmark Percentile:</span>
+              </div>
+              <span className="text-sm font-black text-indigo-600">{report.benchmarkComparison?.percentile}th Percentile</span>
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 3 & SECTION 4: Strengths & Weaknesses */}
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* Section 3: Strengths */}
+          <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-6">
+              <Trophy size={14} className="text-emerald-500" /> Section 3: Strengths
+            </h3>
+            <div className="space-y-3">
+              {report.strengths.length > 0 ? (
+                report.strengths.map((str, idx) => (
+                  <div key={idx} className="flex items-start gap-3 bg-emerald-50/30 p-3 rounded-2xl border border-emerald-100/50">
+                    <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={16} />
+                    <p className="text-sm font-semibold text-slate-700">{str}</p>
                   </div>
-                  <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
-                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-5">
-                      <Target className="text-rose-500" size={18} /> Improvements Needed
-                    </h3>
-                    <ul className="space-y-3">
-                      {(report?.detailedAnalysis?.failures || []).map((f, i) => (
-                        <li key={i} className="flex gap-3 text-sm font-medium text-slate-600">
-                          <div className="mt-1.5 w-2 h-2 rounded-full bg-rose-500 shrink-0" />
-                          {f}
-                        </li>
-                      ))}
-                    </ul>
+                ))
+              ) : (
+                <p className="text-xs font-medium text-slate-400 italic">No explicit key strengths identified.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Section 4: Weaknesses */}
+          <div className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-6">
+              <Target size={14} className="text-rose-500" /> Section 4: Weaknesses & Gaps
+            </h3>
+            <div className="space-y-3">
+              {report.weaknesses.length > 0 ? (
+                report.weaknesses.map((weak, idx) => (
+                  <div key={idx} className="flex items-start gap-3 bg-rose-50/30 p-3 rounded-2xl border border-rose-100/50">
+                    <AlertCircle className="text-rose-500 shrink-0 mt-0.5" size={16} />
+                    <p className="text-sm font-semibold text-slate-700">{weak}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs font-medium text-slate-400 italic">No significant technical gaps identified.</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 5 & SECTION 6: Knowledge Stability & Validation Results */}
+        <div className="grid md:grid-cols-12 gap-6">
+          {/* Section 5: Knowledge Stability details */}
+          <div className="md:col-span-5 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm flex flex-col justify-between">
+            <div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-5">
+                <Scale size={14} className="text-indigo-500" /> Section 5: Knowledge Stability
+              </h3>
+              
+              <div className="space-y-4">
+                <div className="flex items-center gap-4">
+                  <div className="text-center bg-indigo-50 border border-indigo-100 p-4 rounded-2xl shrink-0 w-24">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">Stability %</p>
+                    <p className="text-2xl font-black text-indigo-600">{report.executiveSummary.knowledgeStability}%</p>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800">Domain Consistency</h4>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">{stabilityDescription}</p>
                   </div>
                 </div>
               </div>
             </div>
             
-            {/* --- SECTION 1.5: Integrity & Proctoring Breakdown --- */}
-            {proctoringReport && (
-              <section className="bg-white border border-slate-200 rounded-[40px] p-10 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="flex items-center gap-3">
-                    <ShieldAlert size={24} className={riskColor} />
-                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">Proctoring & Integrity</h2>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Integrity Score</p>
-                      <p className="text-3xl font-black text-slate-900">{integrityScore}<span className="text-lg text-slate-400">/100</span></p>
-                    </div>
-                    <div className={`px-4 py-2 rounded-xl font-bold text-sm border ${riskBg}`}>
-                      {riskLevel} Risk
-                    </div>
-                  </div>
-                </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mt-6 flex items-start gap-2.5">
+              <Info size={14} className="text-slate-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-slate-500 leading-normal">Stability measures the statistical standard deviation across technical answers. High values indicate reliable skills; low scores indicate localized knowledge voids.</p>
+            </div>
+          </div>
 
-                <div className="grid md:grid-cols-4 gap-4 mb-8">
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-                    <Monitor className="text-slate-400 mb-2" size={20} />
-                    <p className="text-2xl font-black text-slate-700">{proctoringReport.tabSwitchEvents}</p>
-                    <p className="text-xs font-medium text-slate-500 uppercase">Tab Switches</p>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-                    <Maximize className="text-slate-400 mb-2" size={20} />
-                    <p className="text-2xl font-black text-slate-700">{proctoringReport.fullscreenExitEvents}</p>
-                    <p className="text-xs font-medium text-slate-500 uppercase">Fullscreen Exits</p>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-                    <EyeOff className="text-slate-400 mb-2" size={20} />
-                    <p className="text-2xl font-black text-slate-700">{proctoringReport.noFaceEvents}</p>
-                    <p className="text-xs font-medium text-slate-500 uppercase">Face Lost Events</p>
-                  </div>
-                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-                    <Copy className="text-slate-400 mb-2" size={20} />
-                    <p className="text-2xl font-black text-slate-700">{proctoringReport.copyPasteEvents}</p>
-                    <p className="text-xs font-medium text-slate-500 uppercase">Copy/Paste Events</p>
-                  </div>
-                </div>
+          {/* Section 6: Validation Results */}
+          <div className="md:col-span-7 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-5">
+              <HelpCircle size={14} className="text-indigo-500" /> Section 6: Follow-up Validation Trials
+            </h3>
 
-                {proctoringReport.timeline && proctoringReport.timeline.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2 mb-4">
-                      <Clock size={16} className="text-slate-400" /> Incident Timeline
-                    </h3>
-                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
-                      {proctoringReport.timeline.map((event: any, i: number) => (
-                        <div key={i} className="flex gap-4 items-center p-3 rounded-xl bg-slate-50 border border-slate-100">
-                          <div className="text-xs font-mono font-bold text-slate-400 w-16 shrink-0">
-                            {new Date(event.timestamp).toISOString().substr(14, 5)}
-                          </div>
-                          <div className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-sm font-bold text-slate-700">{event.event.replace(/_/g, ' ')}</p>
-                            {event.detail && <p className="text-xs text-slate-500">{event.detail}</p>}
-                          </div>
-                          <div className="text-xs font-bold text-slate-400">
-                            Sev: {event.severity}
-                          </div>
-                        </div>
-                      ))}
+            {report.validationResults && report.validationResults.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider">Concept / Parent</th>
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-center">Parent</th>
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-center">Follow-up</th>
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-right">Reliability Index</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.validationResults.map((val, idx) => (
+                      <tr key={idx} className="border-b border-slate-50 text-xs">
+                        <td className="py-3 font-semibold text-slate-700 max-w-[200px] truncate" title={val.parentQuestion}>
+                          {val.parentQuestion}
+                        </td>
+                        <td className="py-3 text-center font-bold text-slate-800">{val.parentScore}%</td>
+                        <td className="py-3 text-center font-bold text-slate-800">{val.followupScore}%</td>
+                        <td className="py-3 text-right">
+                          <span className={`px-2 py-0.5 rounded font-black ${
+                            val.reliability >= 80 ? 'bg-emerald-50 text-emerald-700' :
+                            val.reliability >= 50 ? 'bg-amber-50 text-amber-700' :
+                            'bg-rose-50 text-rose-700'
+                          }`}>
+                            {val.reliability}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center p-8 text-center bg-slate-50 rounded-2xl border border-slate-100">
+                <Info className="text-slate-400 mb-2" size={20} />
+                <p className="text-xs text-slate-500 font-medium">No validation trials triggered. (Trials are only triggered when initial technical question scores exceed 8.0).</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* SECTION 7 & SECTION 8: Contradictions & Performance Timeline */}
+        <div className="grid md:grid-cols-12 gap-6">
+          {/* Section 7: Contradictions */}
+          <div className="md:col-span-7 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-5">
+              <AlertTriangle size={14} className="text-rose-500" /> Section 7: Cross-Question Contradictions
+            </h3>
+
+            {report.contradictions && report.contradictions.length > 0 ? (
+              <div className="space-y-3">
+                {report.contradictions.map((c, idx) => (
+                  <div key={idx} className={`p-4 rounded-2xl border flex gap-3 items-start ${
+                    c.status === 'confirmed' ? 'bg-rose-50 border-rose-100 text-rose-900' : 'bg-amber-50 border-amber-100 text-amber-900'
+                  }`}>
+                    <AlertTriangle className="shrink-0 mt-0.5" size={16} />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold uppercase">Contradiction between Answer {c.qIndex1} and Answer {c.qIndex2}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
+                          c.status === 'confirmed' ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800'
+                        }`}>
+                          {c.status}
+                        </span>
+                      </div>
+                      <p className="text-xs leading-relaxed">{c.explanation}</p>
                     </div>
                   </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/50 text-emerald-800 text-xs">
+                <CheckCircle className="text-emerald-500 shrink-0" size={16} />
+                <p className="font-semibold">No direct technical contradictions detected across responses.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Section 8: Performance Timeline */}
+          <div className="md:col-span-5 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm flex flex-col justify-between">
+            <div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-5">
+                <Activity size={14} className="text-indigo-500" /> Section 8: Performance Timeline
+              </h3>
+
+              <div className="flex items-end justify-between h-28 px-4 border-b border-slate-100 pb-2">
+                {report.performanceTrend.timeline.map((point, idx) => (
+                  <div key={idx} className="flex flex-col items-center gap-1.5 flex-1">
+                    <span className="text-[10px] font-bold text-slate-400">{point.score}%</span>
+                    <div 
+                      className={`w-6 rounded-t transition-all duration-1000 ${
+                        point.score >= 80 ? 'bg-emerald-500' :
+                        point.score >= 60 ? 'bg-indigo-500' :
+                        point.score >= 40 ? 'bg-amber-500' : 'bg-rose-500'
+                      }`}
+                      style={{ height: `${point.score * 0.6}px` }}
+                    />
+                    <span className="text-[10px] font-black text-slate-400">Q{point.qIndex}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4">
+              <span className="text-xs font-bold text-slate-600">Performance Trend:</span>
+              <div className="flex items-center gap-1">
+                {report.performanceTrend.trend === 'improving' && (
+                  <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                    <TrendingUp size={14} /> Improving
+                  </span>
                 )}
-              </section>
-            )}
-
-            {/* --- SECTION 2: Per-Question Breakdown --- */}
-            {report?.questionBreakdown && report.questionBreakdown.length > 0 && (
-              <section>
-                <div className="flex items-center gap-3 mb-6">
-                  <Zap size={20} className="text-indigo-500" />
-                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">Question-by-Question Analysis</h2>
-                </div>
-                <div className="space-y-4">
-                  {report.questionBreakdown.map((item, i) => (
-                    <QuestionCard key={i} item={item} index={i} />
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {/* --- SECTION 3: Final Verdict --- */}
-            <div className="bg-slate-900 rounded-[40px] p-10 text-white shadow-2xl">
-              <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-4">Strategic Verdict</h3>
-              <p className="text-xl font-medium leading-relaxed italic text-white/90 mb-6">
-                "{report?.finalVerdict || 'Pending'}"
-              </p>
-              {report?.verdictJustification && (
-                <p className="text-sm text-slate-400 leading-relaxed border-t border-white/10 pt-6">
-                  {report.verdictJustification}
-                </p>
-              )}
-              <div className="mt-8 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center font-bold text-sm">AI</div>
-                  <div>
-                    <p className="text-xs font-bold text-white">REINCREW ENGINE</p>
-                    <p className="text-[10px] text-white/40">Verified Analysis Protocol</p>
-                  </div>
-                </div>
-                <button
-                  onClick={onHome}
-                  className="px-8 py-3 bg-white text-slate-900 rounded-2xl font-bold flex items-center gap-2 hover:bg-slate-100 transition-all"
-                >
-                  <ArrowLeft size={18} />
-                  Exit Dashboard
-                </button>
+                {report.performanceTrend.trend === 'declining' && (
+                  <span className="text-xs font-bold text-rose-600 flex items-center gap-1">
+                    <TrendingDown size={14} /> Declining
+                  </span>
+                )}
+                {report.performanceTrend.trend === 'stable' && (
+                  <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                    <Info size={14} /> Stable Performance
+                  </span>
+                )}
               </div>
             </div>
           </div>
-        ) : (
-          <div className="bg-white border border-slate-200 rounded-[40px] p-20 text-center space-y-6 shadow-sm">
-            <div className="inline-flex items-center justify-center w-20 h-20 bg-rose-50 rounded-full mb-4">
-              <AlertCircle className="text-rose-500" size={40} />
-            </div>
-            <h2 className="text-3xl font-black text-slate-900">Analysis Incomplete</h2>
-            <p className="text-slate-500 max-w-lg mx-auto text-lg">
-              We encountered a technical issue while processing your interview audit.
-              This can happen if the AI engine is under high load or if connectivity was interrupted.
-            </p>
-            <div className="pt-8">
-              <button
-                onClick={() => window.location.reload()}
-                className="px-12 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100"
-              >
-                Retry Analysis
-              </button>
+        </div>
+
+        {/* SECTION 9: Proctoring & Integrity Summary */}
+        <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+              <ShieldAlert size={14} className="text-rose-500" /> Section 9: Integrity Verification Summary
+            </h3>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-medium">Session Integrity Score:</span>
+              <span className={`px-3 py-1 rounded-xl text-xs font-black border ${
+                integrityScore >= 90 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                integrityScore >= 70 ? 'bg-amber-50 text-amber-700 border-amber-100' :
+                'bg-rose-50 text-rose-700 border-rose-100'
+              }`}>
+                {integrityScore}% Integrity
+              </span>
             </div>
           </div>
-        )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Tab Switches</span>
+              <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary.tabSwitches}</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Camera Away Events</span>
+              <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary.faceAwayEvents}</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Multiple Person Detected</span>
+              <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary.multiplePersonEvents}</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Total Warnings Issued</span>
+              <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary.warningsIssued}</span>
+            </div>
+          </div>
+        </section>
+
+        {/* SECTION 10: Question-by-Question Deep Dive (Candidate Evidence Cards) */}
+        <section className="space-y-6">
+          <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+            <MessageSquare size={14} className="text-indigo-500" /> Section 10: Candidate Question-by-Question Proof Cards
+          </h3>
+
+          <div className="space-y-4">
+            {report.questionBreakdown.map((item, idx) => (
+              <QuestionCard key={idx} item={item} index={idx} />
+            ))}
+          </div>
+        </section>
+
+        {/* Action Button Footer */}
+        <footer className="flex justify-between items-center bg-slate-900 text-white rounded-[32px] p-8 shadow-xl mt-12">
+          <div>
+            <h4 className="text-sm font-bold">Unified Recruiter Report Compiled</h4>
+            <p className="text-[10px] text-slate-400 mt-1">Full master evaluation record saved to db.evaluation_logic</p>
+          </div>
+          <button
+            onClick={onHome}
+            className="px-6 py-3 bg-white text-slate-900 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-100 transition-colors"
+          >
+            <ArrowLeft size={16} /> Return to Home
+          </button>
+        </footer>
+
       </div>
     </div>
   );

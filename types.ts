@@ -1,4 +1,19 @@
 
+export interface Question {
+  id: number | string;
+  question: string; // Renamed from text to match spec
+  ideal_answer?: string; // Kept optional for backward compatibility during transition
+  topic?: string;
+  category?: string;
+  type?: 'Fundamentals' | 'Core' | 'Scenario' | 'Behavioral Experience' | 'Behavioral Situation';
+  difficulty?: 'easy' | 'medium' | 'hard';
+  keyConcepts?: { concept: string; importance: 'high' | 'medium' | 'low' }[];
+  keyPoints?: string[];
+  maxScore?: number;
+  isFollowUp?: boolean;
+  discriminationWeight?: number;
+}
+
 export interface Candidate {
   name: string;
   position?: string;
@@ -16,19 +31,7 @@ export interface Candidate {
   idCardImage?: string;
   isVerified?: boolean;
 }
-
-export interface Question {
-  id: number | string;
-  question: string; // Renamed from text to match spec
-  ideal_answer?: string; // Kept optional for backward compatibility during transition
-  topic?: string;
-  category?: string;
-  type?: 'Fundamentals' | 'Core' | 'Scenario' | 'Behavioral Experience' | 'Behavioral Situation';
-  difficulty?: 'easy' | 'medium' | 'hard';
-  keyConcepts?: { concept: string; importance: 'high' | 'medium' | 'low' }[];
-  keyPoints?: string[];
-  maxScore?: number;
-}
+// Note: Keep other types the same, we will append MasterEvaluationReport at the end.
 
 export interface RoleSettings {
   difficulty: 'Very Easy' | 'Easy' | 'Medium' | 'Hard' | 'Very Hard';
@@ -72,7 +75,7 @@ export interface EvaluationResult {
   // Qualitative Analysis
   matchedKeyPoints: string[];
   missingKeyPoints: string[];
-  verdict: 'Pass' | 'Borderline' | 'Fail';
+  verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
   feedback: string;
 
   // Strict Evaluation Segments (New)
@@ -82,6 +85,18 @@ export interface EvaluationResult {
     practicalExecution: number;
     communication: number;
     redFlags?: string[];
+    // New Version 11 scores
+    coverage?: number;
+    understanding?: number;
+    reasoning?: number;
+    depth?: number;
+    clarity?: number;
+    structure?: number;
+    confidence?: number;
+    consistency?: number;
+    answerDirectnessScore?: number;
+    tradeoffReasoningScore?: number;
+    technicalErrors?: { error: string; severity: 'low' | 'medium' | 'high' }[];
   };
 
   // Adaptive & Behavioral Extensions
@@ -97,6 +112,7 @@ export interface EvaluationResult {
   };
   transcriptQuality?: number;
   evaluationPending?: boolean;
+  evaluationConfidence?: number; // 0-100: how confident is the evaluation (low for local fallback, high for AI)
   strengths?: string[];
   improvements?: string[];
   recommendedFocusAreas?: string[];
@@ -354,3 +370,90 @@ export interface VisualMetrics {
 }
 
 export type InterviewState = 'welcome' | 'setup' | 'camera-check' | 'active' | 'rules' | 'completed' | 'conduct-setup';
+
+export interface MasterEvaluationReport {
+  executiveSummary: {
+    recommendation: 'Strong Hire' | 'Hire' | 'Consider' | 'Reject';
+    recommendationStatus: 'normal' | 'insufficient_evidence';
+    technicalScore: number; // 0-100
+    trustScore: number; // 0-100 (trustAdjustedScore)
+    topicCoverage: number; // 0-100
+    knowledgeStability: number; // 0-100 (knowledgeStabilityScore)
+    reportConfidence: 'High' | 'Medium' | 'Low';
+    summary: string;
+  };
+  overallScores: {
+    knowledgeScore: number; // 0-100
+    reasoningScore: number; // 0-100
+    communicationScore: number; // 0-100
+    consistencyScore: number; // 0-100
+    difficultyWeightedPerformance: number; // 0-100
+    trustAdjustedScore: number; // 0-100
+  };
+  strengths: string[];
+  weaknesses: string[];
+  validationResults: {
+    parentQuestion: string;
+    parentScore: number;
+    followupQuestion: string;
+    followupScore: number;
+    reliability: number; // 0-100
+  }[];
+  contradictions: {
+    qIndex1: number;
+    qIndex2: number;
+    explanation: string;
+    severity: 'low' | 'medium' | 'high';
+    status: 'confirmed' | 'possible' | 'insufficient_evidence';
+    confidence: number; // 0-100
+  }[];
+  performanceTrend: {
+    timeline: { qIndex: number; score: number }[];
+    trend: 'improving' | 'stable' | 'declining';
+  };
+  proctoringSummary: {
+    faceAwayEvents: number;
+    multiplePersonEvents: number;
+    tabSwitches: number;
+    warningsIssued: number;
+    integrityScore: number;
+  };
+  questionBreakdown: {
+    questionText: string;
+    difficulty: 'easy' | 'medium' | 'hard';
+    score: number; // 0-10
+    userAnswer: string;
+    feedback: string;
+    matchedKeyPoints: string[];
+    missingKeyPoints: string[];
+    technicalErrors: { error: string; severity: 'low' | 'medium' | 'high' }[];
+    analysis: {
+      coverage: number; // 0-10
+      understanding: number; // 0-10
+      reasoning: number; // 0-10
+      communication: number; // 0-10
+    };
+    speechMetrics?: { fillerRate: number; pauseRate: number; speakingRate: number };
+    transcriptionQualityScore: number; // 0-100
+    followupResult?: {
+      reliability: number; // 0-100
+    };
+  }[];
+  benchmarkComparison: {
+    percentile: number;
+    comparedAgainst: string;
+    sampleSize: number;
+  };
+  telemetry: {
+    followupTriggerRate: number;
+    sessionApiCostEstimate: number;
+    modelCalls: number;
+  };
+  metadata: {
+    evaluationVersion: string;
+    scoreCalculationVersion: string;
+    modelUsed: string;
+    evaluationMode: 'full_ai' | 'fallback_heuristic' | 'mixed';
+    roleLevel: 'intern' | 'junior' | 'mid' | 'senior';
+  };
+}

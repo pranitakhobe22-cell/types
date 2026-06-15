@@ -205,7 +205,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
             const newQuestion: Question = {
                 id: Date.now(),
                 question: "New Question...",
-                difficulty: 'Medium',
+                difficulty: 'medium',
                 ideal_answer: "Add reference answer here...",
                 keyPoints: [],
                 maxScore: 10

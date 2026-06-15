@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useReducer } from 'react';
 import { Mic, MicOff, Volume2, Send, Loader2, Edit3, CheckCircle, ArrowRight, AlertTriangle } from 'lucide-react';
 import { AIService, InterviewBranch } from '../services/aiService';
-import { submitAnswer } from '../services/apiService';
+import { submitAnswer, localDifficultySignal, localEvaluate, hashString } from '../services/apiService';
 import { useSpeech } from '../hooks/useSpeech';
 import { CameraMonitor } from './CameraMonitor';
 import { MonitoringDashboard } from './MonitoringDashboard';
@@ -235,7 +235,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [branch, setBranch] = useState<InterviewBranch | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any; difficulty?: string; category?: string }[]>([]);
+  const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any; difficulty?: string; category?: string; questionData?: any }[]>([]);
   const {
     isListening, transcript, setTranscript, resetTranscript,
     startListening, stopListening, isSupported, speak, stopSpeaking, isSpeaking, warmUp
@@ -250,6 +250,23 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const isProcessingRef = useRef(false);
   const [isMobileMonitorOpen, setIsMobileMonitorOpen] = useState(false);
   const MAX_QUESTIONS = 5;
+
+  // ── Background Evaluation Queue ──
+  const MAX_PARALLEL_EVALS = 2;
+  const evalQueueRef = useRef<Array<{ promise: Promise<any>; index: number; entry: any }>>([]);
+  const activeEvalsRef = useRef(0);
+  const pendingEvalTasksRef = useRef<Array<() => Promise<void>>>([]);
+
+  const drainEvalQueue = () => {
+    while (activeEvalsRef.current < MAX_PARALLEL_EVALS && pendingEvalTasksRef.current.length > 0) {
+      const task = pendingEvalTasksRef.current.shift()!;
+      activeEvalsRef.current++;
+      task().finally(() => {
+        activeEvalsRef.current--;
+        drainEvalQueue();
+      });
+    }
+  };
 
   const synthRef = useRef<SpeechSynthesis | null>(typeof window !== 'undefined' ? window.speechSynthesis : null);
 
@@ -553,7 +570,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             const proctoringReport = compileReport();
             let evalReport = null;
             try {
-              evalReport = await AIService.evaluateInterview(history);
+              evalReport = await AIService.evaluateInterview(history, sessionIdRef.current, proctoringReport);
             } catch (e) {
               console.error("Evaluation failed during termination:", e);
             }
@@ -600,98 +617,162 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
     isProcessingRef.current = true;
     setIsProcessing(true);
-    setLoadingText("Evaluating your response...");
-    setLoading(true);
     stopListening();
 
     const currentQ = questions[currentIndex];
-    
-    let evaluationResult = null;
+    const capturedTranscript = transcript;
+    const capturedIndex = currentIndex;
+
+    setLoadingText("Analyzing response...");
+    setLoading(true);
+
+    let evaluationResult: any = null;
     try {
-        const result = await submitAnswer(candidate as any, currentQ as any, transcript, undefined, undefined);
-        evaluationResult = result.evaluation;
-        
-        // Retry logic for Supabase save
-        let retries = 3;
-        while (retries > 0) {
-            try {
-                console.log("Attempting to save response to Supabase...", {
-                    sessionId: sessionIdRef.current,
-                    currentIndex,
-                    questionText: evaluationResult?.questionText,
-                    userAnswer: evaluationResult?.userAnswer,
-                    idealAnswer: currentQ.ideal_answer
-                });
-                await SupabaseService.saveResponse(sessionIdRef.current, currentIndex, evaluationResult, currentQ.ideal_answer);
-                break; // success
-            } catch (err: any) {
-                console.error(`Supabase save attempt failed (${4 - retries}/3):`, err?.message || err, err?.details || "", err?.hint || "", err);
-                retries--;
-                if (retries === 0) throw err;
-                await new Promise(r => setTimeout(r, 1000));
-            }
-        }
+      const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
+      evaluationResult = result.evaluation;
     } catch (error: any) {
-        console.error("Failed to save response after retries:", error?.message || error, {
-            error,
-            message: error?.message,
-            details: error?.details,
-            hint: error?.hint
-        });
-        alert(`Failed to save your response: ${error?.message || "Unknown database error"}. Please check your connection and try again.`);
-        setLoading(false);
-        setIsProcessing(false);
-        isProcessingRef.current = false;
-        return; // Halt if save fails
+      console.error("Evaluation failed synchronously:", error);
+      const local = localEvaluate(capturedTranscript, currentQ as any);
+      evaluationResult = {
+        questionId: Number(currentQ.id),
+        questionText: currentQ.question,
+        userAnswer: capturedTranscript,
+        contentScore: local.score,
+        grammarScore: 0,
+        fluencyScore: 0,
+        communicationScore: 0,
+        matchedKeyPoints: local.matched,
+        missingKeyPoints: local.missed,
+        verdict: local.score >= 8 ? 'Excellent' : local.score >= 6 ? 'Good' : local.score >= 4 ? 'Borderline' : 'Fail',
+        feedback: `Evaluated locally (AI unavailable). Score based on keyword coverage and answer completeness.`,
+        confidenceScore: 0,
+        expressionAnalysis: "N/A",
+        timestamp: new Date().toISOString(),
+        evaluationPending: true,
+        evaluationConfidence: local.confidence,
+        analysis: {
+          technicalAccuracy: local.score,
+          problemSolving: local.score,
+          practicalExecution: local.score,
+          communication: 0,
+          coverage: local.score,
+          understanding: local.score,
+          reasoning: local.score,
+          depth: local.score,
+          clarity: 0,
+          structure: 0,
+          confidence: 0,
+          consistency: 0,
+          answerDirectnessScore: local.score,
+          tradeoffReasoningScore: undefined,
+          technicalErrors: []
+        }
+      };
+    }
+
+    // Reliability calculation if this was a follow-up
+    if (currentQ.isFollowUp) {
+      const parentEntry = history[history.length - 1]; // Previous item in history is parent
+      if (parentEntry && parentEntry.evaluation) {
+        const parentScore = parentEntry.evaluation.contentScore;
+        const followupScore = evaluationResult.contentScore;
+        const collapse = Math.max(0, parentScore - followupScore);
+        const reliability = Math.max(0, Math.min(100, Math.round(100 - (collapse * 15))));
+        evaluationResult.followupResult = { reliability };
+      }
     }
 
     const newEntry = { 
       question: currentQ.question, 
-      answer: transcript, 
-      ideal_answer: currentQ.ideal_answer,
+      answer: capturedTranscript, 
+      ideal_answer: currentQ.ideal_answer || "",
       evaluation: evaluationResult,
       difficulty: currentQ.difficulty,
-      category: currentQ.category
+      category: currentQ.category,
+      questionData: currentQ
     };
 
     const newHistory = [...history, newEntry];
     setHistory(newHistory);
 
-    if (currentIndex < MAX_QUESTIONS - 1) {
-      const nextIdx = currentIndex + 1;
-      
+    // Save to Supabase
+    try {
+      await SupabaseService.saveResponse(sessionIdRef.current, history.length, evaluationResult, currentQ.ideal_answer);
+    } catch (err) {
+      console.error("Failed to save response to Supabase:", err);
+    }
+
+    const primaryCount = newHistory.filter(h => !h.questionData?.isFollowUp).length;
+    const isTechnical = currentQ.type && !currentQ.type.startsWith("Behavioral");
+
+    // Check if we should trigger follow-up:
+    // Only on primary technical questions
+    let shouldTriggerFollowUp = false;
+    if (isTechnical && !currentQ.isFollowUp) {
+      const hashVal = hashString(sessionIdRef.current + currentQ.id) % 100;
+      const contentScore = evaluationResult.contentScore;
+      const reasoning = evaluationResult.analysis?.reasoning ?? 5;
+      const understanding = evaluationResult.analysis?.understanding ?? 5;
+      const coverage = evaluationResult.analysis?.coverage ?? 5;
+
+      const cond1 = contentScore > 8.0 && (reasoning < understanding || (coverage - understanding) > 2.0);
+      const cond2 = contentScore > 8.0 && hashVal < 20;
+
+      if (cond1 || cond2) {
+        shouldTriggerFollowUp = true;
+      }
+    }
+
+    if (shouldTriggerFollowUp) {
+      setLoadingText("Generating validation question...");
+      try {
+        const followUpQ = await AIService.generateFollowUpQuestion(currentQ, capturedTranscript);
+        const updatedQuestions = [...questions];
+        updatedQuestions.splice(capturedIndex + 1, 0, followUpQ);
+        setQuestions(updatedQuestions);
+
+        setCurrentIndex(capturedIndex + 1);
+        resetTranscript();
+        setIsEditing(false);
+        setLoading(false);
+        setIsProcessing(false);
+        isProcessingRef.current = false;
+        setTimeout(() => {
+          speakQuestion(followUpQ.question);
+        }, 300);
+        return;
+      } catch (err) {
+        console.error("Failed to generate follow-up:", err);
+      }
+    }
+
+    // Move to next primary question or complete interview
+    if (primaryCount < 5) {
+      const nextIdx = questions.length;
       let nextQ: any = null;
       if (branch) {
-          const evalScore = evaluationResult?.contentScore || 5; 
-          const techAcc = evaluationResult?.analysis?.technicalAccuracy ?? (evalScore * 10);
-          const probSolv = evaluationResult?.analysis?.problemSolving ?? (evalScore * 10);
-          const practExec = evaluationResult?.analysis?.practicalExecution ?? (evalScore * 10);
-          const comm = evaluationResult?.analysis?.communication ?? (evalScore * 10);
-          
-          const adaptiveScore = (techAcc * 0.40) + (probSolv * 0.30) + (practExec * 0.15) + (comm * 0.15);
-          const normalizedScore = adaptiveScore / 10; // 0-10 scale
-          
-          if (currentIndex === 0) {
-              if (normalizedScore >= 7.5) nextQ = branch.q2.hard;
-              else if (normalizedScore >= 5) nextQ = branch.q2.medium;
-              else nextQ = branch.q2.easy;
-          } else if (currentIndex === 1) {
-              const q1Eval = newHistory[0].evaluation;
-              const q1TechAcc = q1Eval?.analysis?.technicalAccuracy ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
-              const q1ProbSolv = q1Eval?.analysis?.problemSolving ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
-              const q1PractExec = q1Eval?.analysis?.practicalExecution ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
-              const q1Comm = q1Eval?.analysis?.communication ?? (q1Eval?.contentScore ? q1Eval.contentScore * 10 : 50);
-              const q1Score = ((q1TechAcc * 0.40) + (q1ProbSolv * 0.30) + (q1PractExec * 0.15) + (q1Comm * 0.15)) / 10;
-              
-              const avgScore = (normalizedScore * 0.7) + (q1Score * 0.3);
-              if (avgScore >= 7.5) nextQ = branch.q3.hard;
-              else if (avgScore >= 5) nextQ = branch.q3.medium;
-              else nextQ = branch.q3.easy;
-          } else if (currentIndex === 2) {
-              nextQ = branch.q4;
-          } else if (currentIndex === 3) {
-              nextQ = branch.q5;
-          }
+        if (primaryCount === 1) {
+          const primaryEntries = newHistory.filter(h => !h.questionData?.isFollowUp);
+          const q1Entry = primaryEntries[0];
+          const difficultySignal = localDifficultySignal(q1Entry.answer, q1Entry.questionData!);
+          if (difficultySignal >= 7.5) nextQ = branch.q2.hard;
+          else if (difficultySignal >= 5) nextQ = branch.q2.medium;
+          else nextQ = branch.q2.easy;
+        } else if (primaryCount === 2) {
+          const primaryEntries = newHistory.filter(h => !h.questionData?.isFollowUp);
+          const q1Entry = primaryEntries[0];
+          const q2Entry = primaryEntries[1];
+          const q1Signal = localDifficultySignal(q1Entry.answer, q1Entry.questionData!);
+          const q2Signal = localDifficultySignal(q2Entry.answer, q2Entry.questionData!);
+          const avgSignal = (q2Signal * 0.7) + (q1Signal * 0.3);
+          if (avgSignal >= 7.5) nextQ = branch.q3.hard;
+          else if (avgSignal >= 5) nextQ = branch.q3.medium;
+          else nextQ = branch.q3.easy;
+        } else if (primaryCount === 3) {
+          nextQ = branch.q4;
+        } else if (primaryCount === 4) {
+          nextQ = branch.q5;
+        }
       }
 
       const updatedQuestions = [...questions];
@@ -703,7 +784,6 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       setCurrentIndex(nextIdx);
       resetTranscript();
       setIsEditing(false);
-      
       setLoading(false);
       setIsProcessing(false);
       isProcessingRef.current = false;
@@ -711,11 +791,12 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         speakQuestion(updatedQuestions[nextIdx].question);
       }, 300);
     } else {
-      setLoadingText("Compiling your results...");
+      setLoadingText("Compiling final decision report...");
       const proctoringReport = compileReport();
+
       let evalReport = null;
       try {
-        evalReport = await AIService.evaluateInterview(newHistory);
+        evalReport = await AIService.evaluateInterview(newHistory, sessionIdRef.current, proctoringReport);
       } catch (e) {
         console.error("Evaluation failed:", e);
       }
@@ -812,6 +893,8 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
 
   const currentQ = questions[currentIndex];
+  const primaryCount = history.filter(h => !h.questionData?.isFollowUp).length;
+  const activePrimaryIndex = Math.min(5, primaryCount + (currentQ?.isFollowUp ? 0 : 1));
 
   return (
     <div className="flex-1 bg-[#F8FAFC] flex flex-col md:h-[100dvh] md:overflow-hidden font-sans relative">
@@ -827,7 +910,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       <div className="w-full h-1.5 bg-slate-100 z-50">
         <div 
           className="h-full bg-indigo-600 transition-all duration-700 ease-out"
-          style={{ width: `${((currentIndex + 1) / 5) * 100}%` }}
+          style={{ width: `${(activePrimaryIndex / 5) * 100}%` }}
         />
       </div>
 
@@ -850,7 +933,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           </button>
           <div className="flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-slate-50 rounded-xl border border-slate-200">
             <span className="hidden md:inline text-xs font-bold text-slate-500">QUESTION</span>
-            <span className="text-sm font-black text-indigo-600">{currentIndex + 1} / 5</span>
+            <span className="text-sm font-black text-indigo-600">{activePrimaryIndex} / 5</span>
           </div>
         </div>
       </header>

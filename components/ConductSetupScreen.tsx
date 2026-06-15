@@ -4,7 +4,7 @@ import {
     Building2, FileText, Target, Link as LinkIcon, CheckCircle, 
     Cpu, Plus, Trash2, Edit2, Play, Copy, ArrowRight, Settings
 } from 'lucide-react';
-import { AIService, GeneratedQuestion } from '../services/aiService';
+import { AIService } from '../services/aiService';
 import { AccessService } from '../services/accessService';
 
 interface ConductSetupScreenProps {
@@ -28,7 +28,7 @@ export const ConductSetupScreen: React.FC<ConductSetupScreenProps> = ({ onComple
     // 2. Question Setup
     const [questionMode, setQuestionMode] = useState<'AI' | 'Manual'>('AI');
     const [numberOfQuestions, setNumberOfQuestions] = useState(5);
-    const [questions, setQuestions] = useState<GeneratedQuestion[]>([]);
+    const [questions, setQuestions] = useState<{ question: string; ideal_answer: string }[]>([]);
     const [currentCustomQuestion, setCurrentCustomQuestion] = useState({ question: '', ideal_answer: '' });
     const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
@@ -61,14 +61,8 @@ export const ConductSetupScreen: React.FC<ConductSetupScreenProps> = ({ onComple
     const handleGenerateQuestions = async () => {
         setLoading(true);
         try {
-            const generated = await AIService.generateQuestions(
-                formData.role,
-                formData.experience_level,
-                formData.interview_type,
-                numberOfQuestions,
-                formData.skills
-            );
-            setQuestions(generated);
+            // TODO: Implement AI question generation for conduct mode
+            alert('AI question generation for custom interviews is coming soon. Please add questions manually for now.');
         } catch (error: any) {
             console.error("Failed to generate questions:", error);
             alert(error.message || "Failed to generate questions. Please try again.");

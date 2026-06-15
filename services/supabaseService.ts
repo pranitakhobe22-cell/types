@@ -245,9 +245,9 @@ export class SupabaseService {
         const allowedRecommendations = ['Strong Hire', 'Hire', 'Consider', 'Reject'];
         let sanitizedRecommendation = 'Consider';
         
-        if (report.hiringRecommendation) {
-            const normalized = report.hiringRecommendation.trim();
-            // Try to match case-insensitively first
+        const rec = report.executiveSummary?.recommendation || report.hiringRecommendation;
+        if (rec) {
+            const normalized = rec.trim();
             const match = allowedRecommendations.find(r => r.toLowerCase() === normalized.toLowerCase());
             if (match) {
                 sanitizedRecommendation = match;
@@ -260,32 +260,36 @@ export class SupabaseService {
             }
         }
 
+        const integrity = report.proctoringSummary?.integrityScore ?? 100;
+        const riskScore = 100 - integrity;
+        const riskLevel = riskScore > 60 ? 'Critical' : riskScore > 40 ? 'High' : riskScore > 15 ? 'Medium' : 'Low';
+        const riskReason = report.contradictions ? report.contradictions.map((c: any) => c.explanation) : [];
+
         const { error } = await supabase
             .from('evaluation_reports')
             .upsert({
                 session_id: sessionId,
-                total_score: report.totalScore,
-                // Automatically calculate missing metrics if the AI generated them inside 'detailedAnalysis.metrics'
-                technical_score: report.technicalScore ?? (report.detailedAnalysis?.metrics ? ((report.detailedAnalysis.metrics.accuracy || 0) + (report.detailedAnalysis.metrics.depth || 0)) / 2 * 10 : null),
-                communication_score: report.communicationScore ?? (report.detailedAnalysis?.metrics ? ((report.detailedAnalysis.metrics.clarity || 0) + (report.detailedAnalysis.metrics.vocabulary || 0)) / 2 * 10 : null),
-                confidence_score: report.confidenceScore ?? null,
-                proctoring_score: report.proctoringScore ?? null,
-                final_verdict: report.finalVerdict,
+                total_score: report.overallScores?.difficultyWeightedPerformance ?? report.totalScore ?? 50,
+                technical_score: report.executiveSummary?.technicalScore ?? null,
+                communication_score: report.overallScores?.communicationScore ?? null,
+                confidence_score: report.overallScores?.consistencyScore ?? null,
+                proctoring_score: integrity,
+                final_verdict: report.executiveSummary?.summary ?? report.finalVerdict ?? "",
                 hiring_recommendation: sanitizedRecommendation,
-                strengths: report.detailedAnalysis?.strengths || [],
-                failures: report.detailedAnalysis?.failures || [],
-                verdict_justification: report.verdictJustification,
-                evaluation_logic: report.evaluationLogic || {},
-                risk_score: report.riskScore ?? null,
-                risk_level: ['Low', 'Medium', 'High', 'Critical'].includes(report.riskLevel) ? report.riskLevel : null,
-                risk_reason: report.riskReason || [],
+                strengths: report.strengths || [],
+                failures: report.weaknesses || [],
+                verdict_justification: report.executiveSummary?.summary ?? report.verdictJustification ?? "",
+                evaluation_logic: report, // The full MasterEvaluationReport
+                risk_score: riskScore,
+                risk_level: riskLevel,
+                risk_reason: riskReason,
                 proctoring_summary: report.proctoringSummary || {},
-                evaluation_weights_snapshot: report.evaluationWeightsSnapshot || {},
-                evaluation_version: report.evaluationVersion,
-                evaluation_model: report.evaluationModel,
-                evaluation_prompt_version: report.evaluationPromptVersion,
-                evaluated_at: report.evaluatedAt || new Date().toISOString(),
-                candidate_outcome: ['Pending', 'Advanced', 'Rejected', 'Hired'].includes(report.candidateOutcome) ? report.candidateOutcome : null
+                evaluation_weights_snapshot: {},
+                evaluation_version: report.metadata?.evaluationVersion ?? "11.0",
+                evaluation_model: report.metadata?.modelUsed ?? "gemini-2.5-flash-lite",
+                evaluation_prompt_version: "11.0",
+                evaluated_at: new Date().toISOString(),
+                candidate_outcome: 'Pending'
             }, { onConflict: 'session_id' });
 
         if (error) {
