@@ -267,49 +267,6 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
           </div>
         </header>
 
-        {/* BOTTOM LINE HERO CARD: Highlight Overall Score and Recommendation */}
-        <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 text-white rounded-[32px] p-8 md:p-10 shadow-2xl relative overflow-hidden border border-indigo-500/20">
-          <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute bottom-0 left-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
-          
-          <div className="relative flex flex-col md:flex-row items-center justify-between gap-8 z-10">
-            <div className="space-y-4 text-center md:text-left flex-1">
-              <span className="px-3 py-1 rounded-full text-[10px] font-black tracking-widest bg-indigo-500/30 text-indigo-300 border border-indigo-500/20 uppercase">
-                Bottom Line Recruitment Recommendation
-              </span>
-              <div className="flex flex-col sm:flex-row items-center gap-4 justify-center md:justify-start">
-                <span className={`px-6 py-2.5 rounded-2xl font-black text-lg uppercase tracking-wider shadow-lg ${hiringColors[report.executiveSummary?.recommendation ?? 'Consider']}`}>
-                  {report.executiveSummary?.recommendation ?? 'Consider'}
-                </span>
-                <h2 className="text-2xl md:text-3xl font-black tracking-tight text-white">
-                  {report.executiveSummary?.recommendation === 'Strong Hire' && 'Highly Recommended Candidate'}
-                  {report.executiveSummary?.recommendation === 'Hire' && 'Recommended for Next Stages'}
-                  {report.executiveSummary?.recommendation === 'Consider' && 'Requires Panel Discussion'}
-                  {report.executiveSummary?.recommendation === 'Reject' && 'Does Not Meet Technical Thresholds'}
-                </h2>
-              </div>
-              <p className="text-slate-300 text-sm max-w-2xl font-medium leading-relaxed italic">
-                "{report.executiveSummary?.summary || 'No summary evaluation available.'}"
-              </p>
-            </div>
-            
-            <div className="flex items-center gap-6 bg-white/5 backdrop-blur-md p-6 rounded-3xl border border-white/10 shrink-0">
-              <div className="relative flex items-center justify-center">
-                <ScoreRing score={report.overallScores?.trustAdjustedScore ?? 0} size={110} />
-                <div className="absolute text-center">
-                  <p className="text-2xl font-black text-white">{report.overallScores?.trustAdjustedScore ?? 0}%</p>
-                  <p className="text-[8px] font-black text-indigo-300 uppercase tracking-widest mt-0.5">Final Score</p>
-                </div>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Overall Ranking</p>
-                <p className="text-xl font-black text-white mt-0.5">{report.benchmarkComparison?.percentile ?? 50}th Percentile</p>
-                <p className="text-[9px] text-slate-400 mt-1">Compared against {report.benchmarkComparison?.sampleSize ?? 1500} applicants</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* SECTION 1 & SECTION 2: Executive Summary & Overall Score Matrix */}
         <div className="grid md:grid-cols-12 gap-6">
           {/* Section 1: Executive Summary */}
@@ -337,11 +294,18 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-bold text-slate-400 uppercase">Hiring Verdict:</span>
-                  <span className={`px-4 py-1.5 rounded-2xl font-black text-xs uppercase ${hiringColors[report.executiveSummary?.recommendation ?? 'Consider']}`}>
-                    {report.executiveSummary?.recommendation ?? 'Consider'}
-                  </span>
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className={`px-4 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider ${hiringColors[report.executiveSummary?.recommendation ?? 'Consider']}`}>
+                      {report.executiveSummary?.recommendation ?? 'Consider'}
+                    </span>
+                    <span className="font-bold text-slate-800 text-sm">
+                      {report.executiveSummary?.recommendation === 'Strong Hire' && 'Highly Recommended Candidate'}
+                      {report.executiveSummary?.recommendation === 'Hire' && 'Recommended for Next Stages'}
+                      {report.executiveSummary?.recommendation === 'Consider' && 'Requires Panel Discussion'}
+                      {report.executiveSummary?.recommendation === 'Reject' && 'Does Not Meet Technical Thresholds'}
+                    </span>
+                  </div>
                 </div>
               )}
 
@@ -377,6 +341,27 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
                 <BarChart2 size={14} className="text-indigo-500" /> Section 2: Overall Score Matrix
               </h3>
               
+              {/* Highlighted Overall Score Card */}
+              <div className="bg-indigo-50/50 border border-indigo-100 rounded-3xl p-5 mb-6 flex items-center justify-between gap-4 shadow-sm">
+                <div className="space-y-1 flex-1 min-w-0">
+                  <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">Trust-Adjusted Final Score</p>
+                  <p className="text-3xl font-black text-slate-900">
+                    {report.overallScores?.trustAdjustedScore ?? 0}%
+                  </p>
+                  <p className="text-[10px] font-bold text-slate-500 leading-tight">
+                    {report.overallScores?.trustAdjustedScore >= 85 ? 'Strong recommendation to hire' :
+                     report.overallScores?.trustAdjustedScore >= 70 ? 'Recommended for hire' :
+                     report.overallScores?.trustAdjustedScore >= 50 ? 'Requires panel review' : 'Under technical threshold'}
+                  </p>
+                </div>
+                <div className="relative flex items-center justify-center shrink-0">
+                  <ScoreRing score={report.overallScores?.trustAdjustedScore ?? 0} size={80} />
+                  <div className="absolute text-center">
+                    <span className="text-xs font-black text-slate-800">{report.overallScores?.trustAdjustedScore ?? 0}%</span>
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-3">
                 <div className="flex justify-between items-center border-b border-slate-50 pb-2">
                   <span className="text-xs text-slate-500 font-medium">Knowledge Performance</span>
@@ -398,14 +383,10 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
                   <span className="text-xs text-slate-500 font-medium">Difficulty-Weighted Score</span>
                   <span className="text-sm font-black text-slate-800">{report.overallScores?.difficultyWeightedPerformance ?? 0}%</span>
                 </div>
-                <div className="flex justify-between items-center pt-2">
-                  <span className="text-xs text-slate-900 font-bold">Trust-Adjusted Final Score</span>
-                  <span className="text-base font-black text-indigo-600">{report.overallScores?.trustAdjustedScore ?? 0}%</span>
-                </div>
               </div>
             </div>
 
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between mt-4">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex items-center justify-between mt-6">
               <div className="flex items-center gap-2">
                 <Activity size={16} className="text-indigo-500" />
                 <span className="text-xs font-bold text-slate-600">Benchmark Percentile:</span>
