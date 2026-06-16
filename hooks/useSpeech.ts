@@ -42,6 +42,7 @@ export const useSpeech = () => {
   const accumulatedTranscriptRef = useRef('');
   const currentSessionFinalRef = useRef('');
   const latestTranscriptRef = useRef('');
+  const lastResultTranscriptRef = useRef('');
 
   // Restart loop protection
   const lastRestartTimeRef = useRef<number>(0);
@@ -51,6 +52,7 @@ export const useSpeech = () => {
   // Sync latest transcript ref whenever state changes
   useEffect(() => {
     latestTranscriptRef.current = transcript;
+    lastResultTranscriptRef.current = transcript;
   }, [transcript]);
 
   // Initialize Speech Recognition
@@ -87,6 +89,8 @@ export const useSpeech = () => {
         const fullTranscript = accumulatedTranscriptRef.current 
           ? (accumulatedTranscriptRef.current + ' ' + currentCombined).trim()
           : currentCombined;
+        
+        lastResultTranscriptRef.current = fullTranscript;
         setTranscriptState(fullTranscript);
       };
 
@@ -108,8 +112,8 @@ export const useSpeech = () => {
       };
 
       recognition.onend = () => {
-        // Safely commit latest transcript (preventing stale closures)
-        accumulatedTranscriptRef.current = latestTranscriptRef.current;
+        // Safely commit latest transcript synchronously (preventing state render delays / race conditions)
+        accumulatedTranscriptRef.current = lastResultTranscriptRef.current;
         currentSessionFinalRef.current = '';
 
         if (shouldKeepListeningRef.current) {
@@ -132,6 +136,8 @@ export const useSpeech = () => {
             return;
           }
 
+          // Use minimal delay (50ms) for natural restarts to prevent losing spoken words, 1000ms only during restart storms.
+          const restartDelay = timeSinceLastRestart < 1500 ? 1000 : 50;
           setMicStatus('reconnecting');
           setTimeout(() => {
             if (shouldKeepListeningRef.current) {
@@ -144,7 +150,7 @@ export const useSpeech = () => {
                 setIsListening(false);
               }
             }
-          }, 1000);
+          }, restartDelay);
         } else {
           setIsListening(false);
           setMicStatus('off');
@@ -219,6 +225,7 @@ export const useSpeech = () => {
     accumulatedTranscriptRef.current = newVal;
     currentSessionFinalRef.current = '';
     latestTranscriptRef.current = newVal;
+    lastResultTranscriptRef.current = newVal;
   }, []);
 
   const startListening = useCallback(() => {
@@ -248,6 +255,7 @@ export const useSpeech = () => {
     accumulatedTranscriptRef.current = '';
     currentSessionFinalRef.current = '';
     latestTranscriptRef.current = '';
+    lastResultTranscriptRef.current = '';
     setTranscriptState('');
     if (recognitionRef.current) {
         shouldKeepListeningRef.current = true;
