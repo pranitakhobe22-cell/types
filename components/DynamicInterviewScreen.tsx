@@ -237,7 +237,8 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [history, setHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any; difficulty?: string; category?: string; questionData?: any }[]>([]);
   const {
     isListening, transcript, setTranscript, resetTranscript,
-    startListening, stopListening, isSupported, speak, stopSpeaking, isSpeaking, warmUp
+    startListening, stopListening, isSupported, speak, stopSpeaking, isSpeaking, warmUp,
+    micStatus
   } = useSpeech();
   
   const [interimSpeech, setInterimSpeech] = useState('');
@@ -478,7 +479,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     };
   }, []);
 
-  // 3. Initialize Interview
+  // 3. Initialize Interview (Fallback/Sync Safety check on mount if somehow started)
   useEffect(() => {
     if (!hasStarted || questions.length > 0) return;
     if (proctoring.engineState === 'UNSUPPORTED_BROWSER' || proctoring.engineState === 'PERMISSION_DENIED') return;
@@ -499,7 +500,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
                   setTimeout(() => setTranscript(savedState.transcript), 100);
               }
               setLoading(false);
-              setTimeout(() => { if (mounted) speakQuestion(savedState.questions[savedState.currentIndex || 0].question); }, 800);
+              if (mounted) speakQuestion(savedState.questions[savedState.currentIndex || 0].question);
               return;
             }
           } catch (e) {
@@ -512,36 +513,59 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         setBranch(newBranch);
         setQuestions([newBranch.q1]);
         setLoading(false);
-        
-        // Wait for voices to be ready before speaking
-        const speakWhenReady = () => {
-           setTimeout(() => { if (mounted) speakQuestion(newBranch.q1.question); }, 800);
-        };
-        speakWhenReady();
+        if (mounted) speakQuestion(newBranch.q1.question);
       } catch (err) {
         console.error(err);
       }
     };
     initInterview();
-
-    return () => {
-      mounted = false;
-      synthRef.current?.cancel();
-    };
   }, [hasStarted, candidate.role, proctoring.engineState, questions.length]);
 
-  // Auto-save effect
+  // Cancel speech synthesis on component unmount
+  useEffect(() => {
+    return () => {
+      synthRef.current?.cancel();
+    };
+  }, []);
+
+  // Auto-save interview metadata immediately (discrete changes)
   useEffect(() => {
     if (hasStarted && questions.length > 0) {
+      const currentSave = localStorage.getItem('reicrew_autosave_' + sessionIdRef.current);
+      let currentSaveObj = {};
+      try {
+        if (currentSave) currentSaveObj = JSON.parse(currentSave);
+      } catch (e) {}
+      
       localStorage.setItem('reicrew_autosave_' + sessionIdRef.current, JSON.stringify({
+        ...currentSaveObj,
         sessionId: sessionIdRef.current,
         currentIndex,
-        transcript,
         questions,
         history
       }));
     }
-  }, [transcript, currentIndex, hasStarted, questions, history]);
+  }, [currentIndex, hasStarted, questions, history]);
+
+  // Debounced transcript auto-save (prevents rapid writing to disk on every spoken word/keystroke)
+  useEffect(() => {
+    if (!hasStarted || questions.length === 0) return;
+
+    const timer = setTimeout(() => {
+      const currentSave = localStorage.getItem('reicrew_autosave_' + sessionIdRef.current);
+      let currentSaveObj = {};
+      try {
+        if (currentSave) currentSaveObj = JSON.parse(currentSave);
+      } catch (e) {}
+
+      localStorage.setItem('reicrew_autosave_' + sessionIdRef.current, JSON.stringify({
+        ...currentSaveObj,
+        transcript
+      }));
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [transcript, hasStarted, questions.length]);
 
   // Handle offline sync warning
   useEffect(() => {
@@ -894,7 +918,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const activePrimaryIndex = Math.min(5, primaryCount + (currentQ?.isFollowUp ? 0 : 1));
 
   return (
-    <div className="flex-1 bg-[#F8FAFC] flex flex-col md:h-[100dvh] md:overflow-hidden font-sans relative">
+    <div className="w-full h-[100dvh] overflow-hidden bg-[#F8FAFC] flex flex-col font-sans relative">
       {/* Top Banner for Warnings */}
       {toastWarning && (
         <div className={`fixed top-0 left-0 w-full z-[100] text-center p-3 font-bold text-white shadow-lg flex items-center justify-center gap-2 animate-in slide-in-from-top-4 fade-in duration-300 ${toastWarning.type === 'danger' ? 'bg-red-600' : 'bg-orange-500'}`}>
@@ -936,7 +960,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       </header>
 
       {/* Two-Column Main Layout */}
-      <div className="flex-1 flex flex-col md:flex-row md:overflow-hidden relative">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         
         {/* Right Column: V8 Monitoring Sidebar */}
         <aside className={`
@@ -1031,7 +1055,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             </div>
 
             {/* V8 Dashboard UI Components */}
-            <div className="flex-1 hidden md:block">
+            <div className="flex-1 block">
               {telemetry && (
                 <MonitoringDashboard 
                     telemetry={telemetry} 
@@ -1044,19 +1068,52 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         </aside>
 
         {/* Left Column: Interview UI */}
-        <div className="flex-1 flex flex-col md:h-full relative md:overflow-hidden bg-[#F8FAFC]">
-          <main className="flex-1 w-full p-4 md:p-8 flex flex-col justify-start md:justify-center space-y-6 md:space-y-12 pb-8 md:pb-8 md:overflow-y-auto">
+        <div className="flex-1 flex flex-col h-full relative overflow-hidden bg-[#F8FAFC]">
+          <main className="flex-1 w-full p-4 md:p-8 flex flex-col justify-start md:justify-center space-y-6 md:space-y-12 pb-8 overflow-y-auto">
         {!hasStarted ? (
           <div className="text-center space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 mt-12 md:mt-0">
             <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900">Ready to begin?</h1>
             <p className="text-lg text-slate-500 max-w-lg mx-auto">Please ensure you are in a quiet room with good lighting. Your camera and microphone will be monitored during the interview.</p>
             <button 
               onClick={() => {
-                // Silent audio unlock to bypass Autoplay policies
-                const unlock = new SpeechSynthesisUtterance('');
-                unlock.volume = 0;
-                window.speechSynthesis.speak(unlock);
+                // Request fullscreen first
                 document.documentElement.requestFullscreen().catch(e => console.warn("Fullscreen error", e));
+
+                let firstQuestionText = '';
+                const savedStateStr = localStorage.getItem('reicrew_autosave_' + sessionIdRef.current);
+                if (savedStateStr) {
+                  try {
+                    const savedState = JSON.parse(savedStateStr);
+                    if (savedState.questions && savedState.questions.length > 0) {
+                      const savedQ = savedState.questions[savedState.currentIndex || 0];
+                      if (savedQ) {
+                        firstQuestionText = savedQ.question;
+                        setQuestions(savedState.questions);
+                        setCurrentIndex(savedState.currentIndex || 0);
+                        setHistory(savedState.history || []);
+                        if (savedState.transcript) {
+                          setTranscript(savedState.transcript);
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    console.warn("Failed to parse recovery state", e);
+                  }
+                }
+
+                if (!firstQuestionText) {
+                  const newBranch = AIService.selectInterviewBranch(candidate.role);
+                  setBranch(newBranch);
+                  setQuestions([newBranch.q1]);
+                  firstQuestionText = newBranch.q1.question;
+                }
+
+                // Speak the first question synchronously in this user gesture handler to bypass autoplay policies
+                if (firstQuestionText) {
+                  speak(firstQuestionText);
+                }
+
+                setLoading(false);
                 setHasStarted(true);
               }}
               disabled={!cameraReady || proctoring.engineState !== 'READY'}
@@ -1073,7 +1130,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         ) : (
           <>
             {/* AI Question Section */}
-            <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 pr-28 md:pr-48 mt-8 md:mt-0">
+            <div className="space-y-4 md:space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 pr-12 md:pr-16 mt-8 md:mt-0">
               <div className="flex items-center gap-3">
                 <div className={`w-3 h-3 rounded-full ${isSpeaking ? 'bg-indigo-500 animate-ping' : 'bg-slate-300'}`} />
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">AI Interviewer</span>
@@ -1096,9 +1153,17 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-rose-500 animate-pulse' : 'bg-slate-300'}`} />
+              <div className={`w-3 h-3 rounded-full ${
+                micStatus === 'listening' ? 'bg-rose-500 animate-pulse' :
+                micStatus === 'reconnecting' ? 'bg-amber-400 animate-ping' :
+                micStatus === 'error' ? 'bg-red-500' :
+                'bg-slate-300'
+              }`} />
               <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                {isListening ? 'Listening...' : isEditing ? 'Editing Response' : 'Your Response'}
+                {micStatus === 'listening' && 'Listening...'}
+                {micStatus === 'reconnecting' && 'Reconnecting Mic...'}
+                {micStatus === 'error' && 'Mic Error / Unavailable'}
+                {micStatus === 'off' && (isEditing ? 'Editing Response' : 'Your Response')}
               </span>
             </div>
             {!isListening && transcript && (
@@ -1146,11 +1211,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           <button
             onClick={toggleMic}
             disabled={!hasStarted || isSpeaking}
-            className={`w-16 h-16 md:w-20 md:h-20 shrink-0 rounded-full flex items-center justify-center transition-all ${
-              isListening ? 'bg-rose-500 text-white shadow-xl shadow-rose-200' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+            className={`w-16 h-16 md:w-20 md:h-20 shrink-0 rounded-full flex flex-col items-center justify-center transition-all ${
+              micStatus === 'listening' ? 'bg-rose-500 text-white shadow-xl shadow-rose-200' :
+              micStatus === 'reconnecting' ? 'bg-amber-500 text-white shadow-xl shadow-amber-200 animate-pulse' :
+              micStatus === 'error' ? 'bg-red-600 text-white shadow-xl shadow-red-200' :
+              'bg-slate-100 text-slate-900 hover:bg-slate-200'
             } disabled:opacity-50`}
           >
-            {isListening ? <MicOff size={28} /> : <Mic size={28} />}
+            {micStatus === 'listening' ? <MicOff size={28} /> : <Mic size={28} />}
           </button>
 
           <button

@@ -25,19 +25,33 @@ export interface SpeakOptions {
   onBoundary?: () => void;
 }
 
+export type MicStatus = 'off' | 'listening' | 'processing' | 'reconnecting' | 'error';
+
 export const useSpeech = () => {
   const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
+  const [transcript, setTranscriptState] = useState('');
   const [isSupported, setIsSupported] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-
-  // Store available voices to pick from randomly
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [micStatus, setMicStatus] = useState<MicStatus>('off');
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const shouldKeepListeningRef = useRef(false);
+  const accumulatedTranscriptRef = useRef('');
+  const currentSessionFinalRef = useRef('');
+  const latestTranscriptRef = useRef('');
+
+  // Restart loop protection
+  const lastRestartTimeRef = useRef<number>(0);
+  const restartRetryCountRef = useRef<number>(0);
+  const MAX_RESTARTS = 20;
+
+  // Sync latest transcript ref whenever state changes
+  useEffect(() => {
+    latestTranscriptRef.current = transcript;
+  }, [transcript]);
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -45,13 +59,16 @@ export const useSpeech = () => {
     if (SpeechRecognitionCtor) {
       setIsSupported(true);
       const recognition = new SpeechRecognitionCtor();
-      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      recognition.continuous = !isMobile;
+      recognition.continuous = true; // continuous is supported natively by Chrome; others will fall back
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
       recognition.lang = 'en-US';
 
       recognition.onresult = (event: any) => {
+        // Reset restart retry counts on successful speech results
+        restartRetryCountRef.current = 0;
+        setMicStatus('listening');
+
         let finalTranscript = '';
         let interimTranscript = '';
 
@@ -65,29 +82,72 @@ export const useSpeech = () => {
           }
         }
 
-        const combinedText = (finalTranscript + interimTranscript).trim();
-        setTranscript(combinedText);
-
+        currentSessionFinalRef.current = finalTranscript;
+        const currentCombined = (finalTranscript + interimTranscript).trim();
+        const fullTranscript = accumulatedTranscriptRef.current 
+          ? (accumulatedTranscriptRef.current + ' ' + currentCombined).trim()
+          : currentCombined;
+        setTranscriptState(fullTranscript);
       };
 
       recognition.onerror = (event: any) => {
         console.error("Speech Recognition Error:", event.error);
-        if (event.error === 'not-allowed' || event.error === 'aborted') {
+        if (event.error === 'not-allowed') {
           shouldKeepListeningRef.current = false;
           setIsListening(false);
+          setMicStatus('error');
+          return;
         }
+
+        if (event.error === 'aborted') {
+          // Handled manually or during tab blur. Keep status state.
+          return;
+        }
+
+        setMicStatus('error');
       };
 
       recognition.onend = () => {
+        // Safely commit latest transcript (preventing stale closures)
+        accumulatedTranscriptRef.current = latestTranscriptRef.current;
+        currentSessionFinalRef.current = '';
+
         if (shouldKeepListeningRef.current) {
-          try {
-            recognition.start();
-          } catch (e) {
-            console.error("Failed to restart speech recognition:", e);
-            setIsListening(false);
+          const now = Date.now();
+          const timeSinceLastRestart = now - lastRestartTimeRef.current;
+
+          if (timeSinceLastRestart < 1500) {
+            restartRetryCountRef.current += 1;
+          } else {
+            restartRetryCountRef.current = 1;
           }
+
+          lastRestartTimeRef.current = now;
+
+          if (restartRetryCountRef.current > MAX_RESTARTS) {
+            console.error("Speech Recognition restart storm blocked. Stopping microphone.");
+            shouldKeepListeningRef.current = false;
+            setIsListening(false);
+            setMicStatus('error');
+            return;
+          }
+
+          setMicStatus('reconnecting');
+          setTimeout(() => {
+            if (shouldKeepListeningRef.current) {
+              try {
+                recognition.start();
+                setMicStatus('listening');
+              } catch (e) {
+                console.error("Failed to restart speech recognition:", e);
+                setMicStatus('error');
+                setIsListening(false);
+              }
+            }
+          }, 1000);
         } else {
           setIsListening(false);
+          setMicStatus('off');
         }
       };
 
@@ -101,7 +161,6 @@ export const useSpeech = () => {
       if (typeof window === 'undefined' || !window.speechSynthesis) return;
 
       const allVoices = window.speechSynthesis.getVoices();
-      // Filter for English to ensure correct pronunciation of interview questions
       const englishVoices = allVoices.filter(v => v.lang.startsWith('en'));
 
       setAvailableVoices(englishVoices.length > 0 ? englishVoices : allVoices);
@@ -113,6 +172,38 @@ export const useSpeech = () => {
     }
   }, []);
 
+  // Visibility Change recovery listener
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && shouldKeepListeningRef.current && recognitionRef.current) {
+        if (micStatus === 'reconnecting' || micStatus === 'off' || micStatus === 'error') {
+          console.log("Visibility recovered: attempting to restart microphone recognition");
+          try {
+            recognitionRef.current.abort(); // Clean abort first
+            setTimeout(() => {
+              if (shouldKeepListeningRef.current) {
+                try {
+                  recognitionRef.current?.start();
+                  setMicStatus('listening');
+                  setIsListening(true);
+                } catch (e) {
+                  // Already running
+                }
+              }
+            }, 300);
+          } catch (e) {
+            // Ignore abort error
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [micStatus]);
+
   // Cleanup TTS on unmount
   useEffect(() => {
     return () => {
@@ -122,12 +213,22 @@ export const useSpeech = () => {
     };
   }, []);
 
+  // Expose a custom setTranscript that synchronizes internal refs for manual edits
+  const setTranscript = useCallback((newVal: string) => {
+    setTranscriptState(newVal);
+    accumulatedTranscriptRef.current = newVal;
+    currentSessionFinalRef.current = '';
+    latestTranscriptRef.current = newVal;
+  }, []);
+
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening) {
       try {
         shouldKeepListeningRef.current = true;
+        restartRetryCountRef.current = 0;
         recognitionRef.current.start();
         setIsListening(true);
+        setMicStatus('listening');
       } catch (e) {
         // Ignore if already started
       }
@@ -139,14 +240,16 @@ export const useSpeech = () => {
       shouldKeepListeningRef.current = false;
       recognitionRef.current.stop();
       setIsListening(false);
+      setMicStatus('off');
     }
   }, []);
 
   const resetTranscript = useCallback(() => {
-    setTranscript('');
+    accumulatedTranscriptRef.current = '';
+    currentSessionFinalRef.current = '';
+    latestTranscriptRef.current = '';
+    setTranscriptState('');
     if (recognitionRef.current) {
-        // Force the browser to naturally flush its internal buffer (event.results)
-        // by explicitly stopping it. Our onend handler will immediately restart it!
         shouldKeepListeningRef.current = true;
         try {
             recognitionRef.current.stop();
@@ -158,46 +261,36 @@ export const useSpeech = () => {
 
   const speak = useCallback((text: string, options?: SpeakOptions | (() => void)) => {
     if ('speechSynthesis' in window) {
-      // Cancel any ongoing speech to prevent queue backup
       window.speechSynthesis.cancel();
 
       const utterance = new SpeechSynthesisUtterance(text);
       currentUtteranceRef.current = utterance;
 
-      // Handle overloaded argument for backward compatibility (if simplified call is used)
       const onEnd = typeof options === 'function' ? options : options?.onEnd;
       const onBoundary = typeof options === 'object' ? options?.onBoundary : undefined;
 
-        let selectedVoice: SpeechSynthesisVoice | undefined;
+      let selectedVoice: SpeechSynthesisVoice | undefined;
 
-        // Force Google's highly realistic native voices if in Chrome
-        const googleVoices = availableVoices.filter(v => v.name.includes('Google'));
-        if (googleVoices.length > 0) {
-            selectedVoice = googleVoices.find(v => v.name === 'Google US English') || googleVoices[0];
-        } else {
-            // Fallback to other premium/neural voices
-            const premiumVoices = availableVoices.filter(v => 
-                ['Natural', 'Premium', 'Online', 'Neural'].some(k => v.name.includes(k))
-            );
-            selectedVoice = premiumVoices.length > 0 ? premiumVoices[0] : availableVoices.filter(v => !v.name.includes('Desktop'))[0] || availableVoices[0];
-        }
+      const googleVoices = availableVoices.filter(v => v.name.includes('Google'));
+      if (googleVoices.length > 0) {
+          selectedVoice = googleVoices.find(v => v.name === 'Google US English') || googleVoices[0];
+      } else {
+          const premiumVoices = availableVoices.filter(v => 
+              ['Natural', 'Premium', 'Online', 'Neural'].some(k => v.name.includes(k))
+          );
+          selectedVoice = premiumVoices.length > 0 ? premiumVoices[0] : availableVoices.filter(v => !v.name.includes('Desktop'))[0] || availableVoices[0];
+      }
 
-        if (selectedVoice) {
-          utterance.voice = selectedVoice;
-          // Keep pitch and rate extremely close to 1 for human naturalness
-          utterance.pitch = 1.0;
-          utterance.rate = 1.0;
-        }
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.pitch = 1.0;
+        utterance.rate = 1.0;
+      }
 
       utterance.onstart = () => setIsSpeaking(true);
-
-      // Word boundary event for visualizer sync
-      utterance.onboundary = (event) => {
-        if (onBoundary) onBoundary();
-      };
+      utterance.onboundary = () => { if (onBoundary) onBoundary(); };
 
       const handleEnd = () => {
-        // Verify this is the current utterance ending (prevent race conditions)
         if (currentUtteranceRef.current === utterance) {
           setIsSpeaking(false);
           currentUtteranceRef.current = null;
@@ -206,9 +299,7 @@ export const useSpeech = () => {
       };
 
       utterance.onend = handleEnd;
-
       utterance.onerror = (event: any) => {
-        // Ignore cancel/interrupt as they are usually manual
         if (event.error !== 'canceled' && event.error !== 'interrupted') {
           console.error(`TTS Error: ${event.error}`);
         }
@@ -217,9 +308,6 @@ export const useSpeech = () => {
 
       window.speechSynthesis.speak(utterance);
 
-      // 6. Safety Timeout (Browser Bug Fix)
-      // Force end if event doesn't fire within reasonable time
-      // Calculation: avg 200ms per char + 3s buffer
       const timeoutDuration = (text.length * 200) + 3000;
       setTimeout(() => {
         if (currentUtteranceRef.current === utterance && window.speechSynthesis.speaking) {
@@ -248,17 +336,16 @@ export const useSpeech = () => {
       shouldKeepListeningRef.current = false;
       recognitionRef.current.abort();
       setIsListening(false);
+      setMicStatus('off');
     }
   }, []);
 
   const warmUp = useCallback(() => {
-    // 1. Unlock Speech Synthesis
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance('');
       utterance.volume = 0;
       window.speechSynthesis.speak(utterance);
     }
-    // We removed the aggressively hacked Mic start/stop here as it can permanently brick the recognition session on Chrome.
   }, []);
 
   return {
@@ -273,6 +360,7 @@ export const useSpeech = () => {
     speak,
     stopSpeaking,
     isSpeaking,
-    warmUp
+    warmUp,
+    micStatus
   };
 };
