@@ -376,6 +376,17 @@ export class SupabaseService {
             throw error;
         }
 
+        // Sync the overall_score back to the main interview_sessions table
+        const finalScore = report.overallScores?.difficultyWeightedPerformance ?? report.totalScore ?? 50;
+        const { error: sessionUpdateError } = await supabase
+            .from('interview_sessions')
+            .update({ overall_score: finalScore })
+            .eq('id', sessionId);
+
+        if (sessionUpdateError) {
+            console.error("Error updating overall_score in interview_sessions:", sessionUpdateError.message);
+        }
+
         // Save contradictions
         if (report.contradictions && report.contradictions.length > 0) {
             try {

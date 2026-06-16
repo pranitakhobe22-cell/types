@@ -9,6 +9,7 @@ import {
 
 import { SystemHealth } from '../services/healthService';
 import { SupabaseService } from '../services/supabaseService';
+import { SessionReportView } from './SessionReportView';
 
 interface AdminDashboardProps {
     onLogout: () => void;
@@ -584,132 +585,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
 
                     {activeTab === 'candidates' && selectedSession && (
                         <div className="space-y-6 animate-fade-in pb-10">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                                    <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg">
-                                        {Math.round(selectedSession.overallScore)}
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Overall Score</p>
-                                        <p className="text-sm font-bold text-slate-700">Performance Index</p>
-                                    </div>
+                            {selectedSession.evaluationReport?.evaluation_logic ? (
+                                <SessionReportView
+                                    candidate={{
+                                        name: selectedSession.candidate.name,
+                                        email: selectedSession.candidate.email,
+                                        role: selectedSession.candidate.role
+                                    }}
+                                    evalReport={selectedSession.evaluationReport.evaluation_logic}
+                                    sessionId={selectedSession.id}
+                                    mode="admin"
+                                />
+                            ) : (
+                                <div className="bg-white p-8 border border-slate-200 rounded-2xl text-center">
+                                    <p className="text-slate-500 font-medium">No evaluation report found for this session.</p>
                                 </div>
-
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${(selectedSession.proctoringReport?.violations?.length || 0) === 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                                        }`}>
-                                        {selectedSession.proctoringReport?.violations?.length || 0}
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Integrity Issues</p>
-                                        <p className="text-sm font-bold text-slate-700">Total Violations</p>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
-                                    <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg">
-                                        {Math.round(selectedSession.results?.reduce((acc, r) => acc + (r.confidenceScore || 0), 0) / (selectedSession.results?.length || 1)) || 0}%
-                                    </div>
-                                    <div>
-                                        <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Eye Contact</p>
-                                        <p className="text-sm font-bold text-slate-700">Consistency Avg</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                                <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 flex items-center gap-2">
-                                    <Activity size={18} className="text-indigo-500" />
-                                    Proctoring Log
-                                </div>
-                                <div className="p-4">
-                                    {(selectedSession.proctoringReport?.violations?.length || 0) > 0 ? (
-                                        <div className="space-y-4">
-                                            {selectedSession.proctoringReport?.violations?.map((w: any, idx: number) => (
-                                                <div key={idx} className="flex flex-col gap-3 p-4 bg-amber-50 border border-amber-100 rounded-lg">
-                                                    <div className="flex items-center gap-3 text-xs">
-                                                        <Shield size={16} className="text-amber-600" />
-                                                        <span className="font-mono text-slate-500">{new Date(w.timestamp).toLocaleTimeString()}</span>
-                                                        <span className="font-bold text-amber-800 uppercase tracking-wide">{w.type.replace(/_/g, ' ')}</span>
-                                                        <span className="text-amber-700 ml-2">- {w.message}</span>
-                                                    </div>
-                                                    
-                                                    {/* Media Display */}
-                                                    {(w.snapshot_url || w.clip_url) && (
-                                                        <div className="flex gap-4 mt-2">
-                                                            {w.snapshot_url && (
-                                                                <div className="flex-1 max-w-xs">
-                                                                    <p className="text-[10px] font-bold text-amber-600 mb-1 uppercase tracking-widest">Violation Snapshot</p>
-                                                                    <img src={w.snapshot_url} alt="Violation Snapshot" className="w-full h-auto rounded border border-amber-200 shadow-sm" />
-                                                                </div>
-                                                            )}
-                                                            {w.clip_url && (
-                                                                <div className="flex-1 max-w-xs">
-                                                                    <p className="text-[10px] font-bold text-amber-600 mb-1 uppercase tracking-widest">Surrounding 10s Clip</p>
-                                                                    <video src={w.clip_url} controls className="w-full h-auto rounded border border-amber-200 shadow-sm bg-black" />
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="text-center py-6 text-slate-400 text-sm italic">
-                                            No integrity violations detected for this session.
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                                <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-slate-700">Question-by-Question Breakdown</div>
-                                <div className="divide-y divide-slate-100">
-                                    {selectedSession.results.map((r, i) => (
-                                        <div key={i} className="p-6">
-                                            <div className="flex justify-between mb-2">
-                                                <h4 className="font-bold text-slate-800">Q{i + 1}: {r.questionText}</h4>
-                                                <span className={`text-xs font-bold px-2 py-1 rounded border ${r.verdict === 'Pass' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{r.verdict}</span>
-                                            </div>
-                                            <p className="text-slate-600 italic mb-4 bg-slate-50 p-3 rounded text-sm">"{r.userAnswer}"</p>
-                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs mb-4">
-                                                <div className="bg-slate-50 p-2 rounded">
-                                                    <span className="block text-slate-400 font-bold uppercase tracking-tighter mb-1">Concept</span>
-                                                    <div className="flex items-end gap-1">
-                                                        <span className="text-indigo-600 font-bold text-lg leading-none">{r.contentScore}</span>
-                                                        <span className="text-slate-300 mb-0.5">/10</span>
-                                                    </div>
-                                                </div>
-                                                <div className="bg-slate-50 p-2 rounded">
-                                                    <span className="block text-slate-400 font-bold uppercase tracking-tighter mb-1">Grammar</span>
-                                                    <div className="flex items-end gap-1">
-                                                        <span className="text-indigo-600 font-bold text-lg leading-none">{r.grammarScore}</span>
-                                                        <span className="text-slate-300 mb-0.5">/10</span>
-                                                    </div>
-                                                </div>
-                                                <div className="bg-slate-50 p-2 rounded">
-                                                    <span className="block text-slate-400 font-bold uppercase tracking-tighter mb-1">Fluency</span>
-                                                    <div className="flex items-end gap-1">
-                                                        <span className="text-indigo-600 font-bold text-lg leading-none">{r.fluencyScore}</span>
-                                                        <span className="text-slate-300 mb-0.5">/10</span>
-                                                    </div>
-                                                </div>
-                                                <div className="bg-slate-50 p-2 rounded">
-                                                    <span className="block text-slate-400 font-bold uppercase tracking-tighter mb-1">Visual</span>
-                                                    <div className="flex items-end gap-1">
-                                                        <span className="text-indigo-600 font-bold text-lg leading-none">{r.confidenceScore}</span>
-                                                        <span className="text-slate-300 mb-0.5">%</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="flex flex-col gap-2">
-                                                <p className="text-sm text-slate-700"><span className="font-bold">Evaluation:</span> {r.feedback}</p>
-                                                <p className="text-[10px] text-slate-400 font-mono tracking-tight bg-slate-50 px-2 py-1 rounded inline-block w-fit">Vision Analysis: {r.expressionAnalysis}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                            )}
                         </div>
                     )}
 

@@ -53,7 +53,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ onSuccess, onC
     e.preventDefault();
     if (isLocked) return;
 
-    const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD || 'reicrew2025';
+    const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD || 'Reincrew2026';
 
     if (password === adminPassword) {
       // Store session token (tab-scoped only via sessionStorage)
