@@ -86,10 +86,11 @@ export class SupabaseService {
     }
 
     static async getAllSessions() {
-        // 1. Fetch from vw_candidate_master
+        // 1. Fetch from vw_candidate_master (excluding non-completed sessions that are just 'CREATED')
         const { data: masterRecords, error } = await supabase
             .from('vw_candidate_master')
-            .select('*');
+            .select('*')
+            .neq('session_status', 'CREATED');
 
         if (error) {
             console.error("Supabase getAllSessions error:", error);
