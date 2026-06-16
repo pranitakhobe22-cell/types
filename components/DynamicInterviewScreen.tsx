@@ -114,7 +114,6 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
     case 'NETWORK_RECOVERED': return { ...state, networkHealthy: true };
 
     case 'DETECTION_FRAME': {
-      console.log("REDUCER RECEIVED FRAME", action.frame);
       let newState = { ...state };
       if (action.frame.faceCount > state.maxConcurrentFaces) newState.maxConcurrentFaces = action.frame.faceCount;
 
@@ -270,9 +269,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
   const synthRef = useRef<SpeechSynthesis | null>(typeof window !== 'undefined' ? window.speechSynthesis : null);
 
-  useEffect(() => {
-    console.log('TRANSCRIPT UPDATED', Date.now(), transcript);
-  }, [transcript]);
+
 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
   const [toastWarning, setToastWarning] = useState<{ message: string, type: 'warning' | 'danger' } | null>(null);

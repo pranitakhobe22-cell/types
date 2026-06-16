@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Logo } from './Logo';
-import { User, Mail, Briefcase, ArrowRight, ChevronDown } from 'lucide-react';
+import { User, Mail, Briefcase, ArrowRight, ChevronDown, ShieldCheck } from 'lucide-react';
 import { mediaPipeService } from '../services/mediaPipeService';
 
 interface LandingScreenProps {
   onStart: (data: { name: string; email: string; role: string }) => void;
+  onAdminAccess: () => void;
 }
 
-export const LandingScreen: React.FC<LandingScreenProps> = ({ onStart }) => {
+export const LandingScreen: React.FC<LandingScreenProps> = ({ onStart, onAdminAccess }) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -45,6 +46,17 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onStart }) => {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+      {/* Top-right Admin Access button */}
+      <div className="fixed top-4 right-5 z-20">
+        <button
+          id="admin-access-btn"
+          onClick={onAdminAccess}
+          className="flex items-center gap-2 text-slate-400 hover:text-slate-700 text-xs font-medium transition-all py-2 px-3.5 rounded-xl border border-transparent hover:border-slate-200 hover:bg-white hover:shadow-sm group"
+        >
+          <ShieldCheck size={14} className="group-hover:text-indigo-500 transition-colors" />
+          Admin
+        </button>
+      </div>
       {/* Subtle Background Elements */}
       <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:20px_20px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-40"></div>
       

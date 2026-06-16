@@ -251,7 +251,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
             new Date(s.date).toLocaleDateString(),
             s.status,
             `${s.overallScore}%`,
-            s.warnings.length
+            s.proctoringReport?.violations?.length ?? 0
         ]);
 
         const csvContent = [
@@ -276,7 +276,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, onCrea
             ? Math.round(sessions.reduce((acc, s) => acc + s.overallScore, 0) / totalCandidates) 
             : 0;
         const activeJobs = jobs.filter(j => j.status === 'ACTIVE').length;
-        const totalWarnings = sessions.reduce((acc, s) => acc + s.warnings.length, 0);
+        const totalWarnings = sessions.reduce((acc, s) => acc + (s.proctoringReport?.violations?.length ?? 0), 0);
 
         return { totalCandidates, avgScore, activeJobs, totalWarnings };
     };

@@ -66,8 +66,8 @@ export const useSpeech = () => {
         }
 
         const combinedText = (finalTranscript + interimTranscript).trim();
-        console.log('RESULT EVENT', event.results.length, Date.now(), combinedText);
         setTranscript(combinedText);
+
       };
 
       recognition.onerror = (event: any) => {

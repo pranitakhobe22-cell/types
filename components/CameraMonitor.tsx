@@ -11,7 +11,7 @@ interface CameraMonitorProps {
   onHeartbeat?: (metrics: HeartbeatMetrics) => void;
   devOverlay?: boolean;
   
-  // Legacy compat props for InterviewScreen.tsx
+  // Props forwarded for optional external control
   onWarning?: (count: number, type?: any, msg?: string) => void;
   isLocked?: boolean;
   onVideoReady?: (video: HTMLVideoElement) => void;
@@ -223,9 +223,6 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
 
     const faceCount = result.faceLandmarks ? result.faceLandmarks.length : 0;
     const hasFace = faceCount > 0;
-    
-    // As requested: Console log to verify sensor output
-    console.log("SENSOR FRAME", { faceCount, faceDetected: hasFace });
     
     let trackingConfidence = 0;
     let gazeDirection: RawDetectionFrame['gazeDirection'] = 'center';
@@ -445,7 +442,6 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
       facePosition
     };
 
-    console.log("FRAME EMITTED", { hasFace, headPitch, headYaw, gazeDirection });
     onDetectionFrame?.(frameData);
   };
 

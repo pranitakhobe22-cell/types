@@ -3,6 +3,7 @@ import { LandingScreen } from './components/LandingScreen';
 import { DynamicInterviewScreen } from './components/DynamicInterviewScreen';
 import { EndScreen } from './components/EndScreen';
 import { AdminDashboard } from './components/AdminDashboard';
+import { AdminLoginModal, isAdminSessionActive, clearAdminSession } from './components/AdminLoginModal';
 
 import { HealthService, SystemHealth } from './services/healthService';
 import { SupabaseService } from './services/supabaseService';
@@ -18,12 +19,20 @@ function App() {
   
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(true);
-  const [isAdminRoute, setIsAdminRoute] = useState(false);
 
-  // Check URL for Admin route on load
+  // Admin state
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [showAdminLoginModal, setShowAdminLoginModal] = useState(false);
+
+  // On load: check URL for admin route AND check for existing session
   useEffect(() => {
+    // If navigated directly to /admin, auto-show the login modal (or bypass if session exists)
     if (window.location.pathname.startsWith('/admin')) {
-      setIsAdminRoute(true);
+      if (isAdminSessionActive()) {
+        setIsAdminAuthenticated(true);
+      } else {
+        setShowAdminLoginModal(true);
+      }
     }
 
     // Run health check
@@ -45,6 +54,19 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.remove('dark');
   }, []);
+
+  const handleAdminLoginSuccess = () => {
+    setShowAdminLoginModal(false);
+    setIsAdminAuthenticated(true);
+    // Push /admin to URL so refresh keeps the admin view
+    window.history.pushState({}, '', '/admin');
+  };
+
+  const handleAdminLogout = () => {
+    clearAdminSession();
+    setIsAdminAuthenticated(false);
+    window.history.pushState({}, '', '/');
+  };
 
   const handleStart = async (data: { name: string; email: string; role: string }) => {
     // Clear old invalid session IDs
@@ -95,14 +117,12 @@ function App() {
                 ).catch(e => console.error("Session complete save failed", e))
             );
 
-            // Wait for all saves to either resolve or reject
             await Promise.allSettled(savePromises);
         }
     } catch (e) {
         console.error("Failed to complete session gracefully:", e);
     }
     
-    // Always navigate to completed screen so the candidate sees their results
     setFlowState('completed');
   };
 
@@ -113,14 +133,21 @@ function App() {
   };
 
   const isSystemHealthy = health?.database && health?.storage && health?.auth;
-  
-  // Is this the very first health check on load?
   const isInitialLoad = isCheckingHealth && health === null;
 
-  // Blocking System Configuration Screen
-  if (isInitialLoad || (!isCheckingHealth && !isSystemHealthy && !isAdminRoute)) {
+  // ── Render: Admin Login Modal (floating over any screen) ──
+  const adminModal = showAdminLoginModal && !isAdminAuthenticated ? (
+    <AdminLoginModal
+      onSuccess={handleAdminLoginSuccess}
+      onClose={() => setShowAdminLoginModal(false)}
+    />
+  ) : null;
+
+  // ── Render: Blocking System Health Screen ──
+  if (isInitialLoad || (!isCheckingHealth && !isSystemHealthy && !isAdminAuthenticated)) {
     return (
       <div className="min-h-screen w-screen bg-[#F8FAFC] flex items-center justify-center p-4 text-slate-900">
+        {adminModal}
         <div className="bg-white max-w-md w-full p-8 rounded-2xl shadow-xl border border-slate-200">
           
           <div className="flex flex-col items-center mb-8">
@@ -192,27 +219,35 @@ function App() {
     );
   }
 
-  // Admin Route
-  if (isAdminRoute) {
+  // ── Render: Admin Dashboard (authenticated) ──
+  if (isAdminAuthenticated) {
     return (
       <div className="min-h-screen bg-[#F8FAFC] text-slate-900 selection:bg-indigo-500/10 transition-colors duration-500">
-        <AdminDashboard health={health} onLogout={() => { window.location.pathname = '/'; }} />
+        <AdminDashboard
+          health={health}
+          onLogout={handleAdminLogout}
+        />
       </div>
     );
   }
 
-  // Main App Flow
+  // ── Render: Main Candidate Flow ──
   return (
     <div className="min-h-[100dvh] overflow-x-hidden w-screen bg-[#F8FAFC] text-slate-900 selection:bg-indigo-500/10 transition-colors duration-500 flex flex-col">
+      {/* Admin login modal can float over any screen */}
+      {adminModal}
+
       {flowState === 'landing' && (
-        <LandingScreen onStart={handleStart} />
+        <LandingScreen
+          onStart={handleStart}
+          onAdminAccess={() => setShowAdminLoginModal(true)}
+        />
       )}
 
       {flowState === 'interview' && candidate && (
         <DynamicInterviewScreen 
           candidate={candidate} 
           onComplete={(history, proctoringReport, evalReport) => {
-            console.log("Proctoring Report:", proctoringReport);
             handleInterviewComplete(history, proctoringReport, evalReport);
           }} 
         />
