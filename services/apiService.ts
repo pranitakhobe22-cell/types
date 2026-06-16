@@ -565,6 +565,16 @@ INTERNAL RUBRICS:
   6-8 = substantial detail and nuance
   9-10 = excellent depth with comprehensive details
 
+CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
+If the candidate's answer simply lists the names of the key concepts, terms, or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
+In this case, you MUST penalize the scores strictly:
+- "conceptUnderstanding" MUST NOT exceed 2/10 (since they only gave superficial mentions or recited terms without explaining).
+- "depth" MUST NOT exceed 1/10 (since there is no elaboration or detail).
+- "reasoning" MUST NOT exceed 2/10.
+- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10 (since reciting terms is only a superficial identification and lacks full coverage or accuracy of the required knowledge).
+- Make sure to list these terms under "matchedKeyPoints" if they are present, but the scores must reflect the severe lack of understanding and explanation.
+- State in the "feedback" that the candidate only listed the concepts without explaining them.
+
 Evaluate the candidate's answer against the key concepts and rubrics.
 Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
 Provide score for answerDirectnessScore (0-10) which measures how directly they answered the question without keyword stuffing or bluffing.
@@ -716,6 +726,16 @@ INTERNAL RUBRICS:
   3-5 = basic details provided
   6-8 = substantial detail and nuance
   9-10 = excellent depth with comprehensive details
+
+CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
+If the candidate's answer simply lists the names of the key concepts, terms, or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
+In this case, you MUST penalize the scores strictly:
+- "conceptUnderstanding" MUST NOT exceed 2/10 (since they only gave superficial mentions or recited terms without explaining).
+- "depth" MUST NOT exceed 1/10 (since there is no elaboration or detail).
+- "reasoning" MUST NOT exceed 2/10.
+- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10 (since reciting terms is only a superficial identification and lacks full coverage or accuracy of the required knowledge).
+- Make sure to list these terms under "matchedKeyPoints" if they are present, but the scores must reflect the severe lack of understanding and explanation.
+- State in the "feedback" that the candidate only listed the concepts without explaining them.
 
 Evaluate the candidate's answer against the key concepts and rubrics.
 Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
