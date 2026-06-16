@@ -460,22 +460,69 @@ Return strictly the following JSON structure:
       else if (avgFirst - avgSecond >= 10) trend = 'declining';
     }
 
-    // ── PHASE 9: Executive Summary AI Paragraph ──
-    const summaryPrompt = `Provide a factual technical recruiter summary for candidate report.
-Scores:
+    // ── PHASE 9: Executive Summary, Strengths, and Weaknesses AI Evaluation ──
+    const evaluationPrompt = `You are an expert technical recruiter evaluating a candidate's full performance.
+Below is the candidate's activity history during the interview:
+${resolvedAnswers.map((item, idx) => `
+Activity ${idx + 1} - Question: "${item.question}"
+Candidate's Spoken Answer: "${item.answer}"
+Assessed Question Score: ${item.evaluation?.contentScore ?? 5}/10
+Key Concepts Covered: ${item.evaluation?.matchedKeyPoints?.join(", ") || "None"}
+Key Concepts Missed: ${item.evaluation?.missingKeyPoints?.join(", ") || "None"}
+Specific Question Feedback: "${item.evaluation?.feedback || ""}"
+`).join("\n")}
+
+Overall Interview Performance Metrics:
 - Technical Score: ${technicalScore}/100
 - Trust Score: ${trustAdjustedScore}/100 (Integrity: ${integrityScore}/100)
 - Topic Coverage: ${topicCoverage}%
 - Knowledge Stability: ${knowledgeStabilityScore}%
-- Recommendation: ${recommendationStatus === 'insufficient_evidence' ? 'Insufficient Evidence' : recommendation}
-Write a concise, exactly 3-sentence summary paragraph explaining their general performance, technical gaps, and why this recommendation is appropriate. DO NOT use placeholders.`;
+- Communication Score: ${communicationScore}%
+- Reasoning Score: ${reasoningScore}%
+- Cross-Question Technical Contradictions: ${processedContradictions.length > 0 ? processedContradictions.map(c => c.explanation).join("; ") : "None"}
+
+Please evaluate the candidate's strengths and weaknesses comprehensively based on all activities (answers, logic, depth, consistency, communication, and proctoring).
+Generate:
+1. An executive summary paragraph explaining their general performance, technical gaps, and why this recommendation is appropriate (exactly 3 sentences).
+2. A list of 3 to 4 overall strengths. Each strength must be a specific, professional, and actionable observation based on their actual answers, logic, communication, and behavior (e.g., "Demonstrated strong knowledge of data structures when explaining trees", "Communicated technical ideas clearly with low use of filler words"). Do not just list simple technical keywords.
+3. A list of 3 to 4 overall weaknesses/gaps. Each weakness must be a specific, professional, and actionable observation based on their actual gaps, communication issues, or inconsistencies.
+
+Return strictly the following JSON structure (do not include markdown code block backticks):
+{
+  "summary": "<summary text>",
+  "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
+  "weaknesses": ["<weakness 1>", "<weakness 2>", "<weakness 3>"]
+}`;
 
     let summaryText = "";
+    let finalStrengths: string[] = [];
+    let finalWeaknesses: string[] = [];
+
     try {
-      summaryText = await resilientGenerate(summaryPrompt, 1, 'eval');
-      summaryText = summaryText.trim();
+      let rawEvalJson = await resilientGenerate(evaluationPrompt, 1, 'eval');
+      rawEvalJson = rawEvalJson.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+      const jsonMatch = rawEvalJson.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        summaryText = parsed.summary || "";
+        finalStrengths = parsed.strengths || [];
+        finalWeaknesses = parsed.weaknesses || [];
+      }
     } catch (e) {
+      console.error("AI overall evaluation prompt failed:", e);
+    }
+
+    // Fallbacks if empty or failed
+    if (!summaryText) {
       summaryText = `The candidate achieved a technical performance score of ${technicalScore}/100 with topic coverage of ${topicCoverage}%. Their integrity checks scored ${integrityScore}/100, leading to a trust-adjusted score of ${trustAdjustedScore}/100. Overall, they are recommended as a ${recommendation}.`;
+    }
+    if (finalStrengths.length === 0) {
+      finalStrengths = resolvedAnswers.flatMap(a => a.evaluation?.matchedKeyPoints || []).slice(0, 4).map(s => `Demonstrated understanding of ${s}.`);
+      if (finalStrengths.length === 0) finalStrengths = ["Showed satisfactory fundamental understanding."];
+    }
+    if (finalWeaknesses.length === 0) {
+      finalWeaknesses = resolvedAnswers.flatMap(a => a.evaluation?.missingKeyPoints || []).slice(0, 4).map(w => `Could improve understanding of ${w}.`);
+      if (finalWeaknesses.length === 0) finalWeaknesses = ["Demonstrated minor area-specific technical gaps."];
     }
 
     // Question Breakdown
@@ -525,13 +572,17 @@ Write a concise, exactly 3-sentence summary paragraph explaining their general p
       multiplePersonEvents: proctoring.multipleFaceEvents ?? 0,
       tabSwitches: proctoring.tabSwitchEvents ?? 0,
       warningsIssued: proctoring.violations?.length ?? 0,
-      integrityScore: proctoring.integrityScore ?? 100
+      integrityScore: proctoring.integrityScore ?? 100,
+      totalGazeAwayDurationMs: proctoring.totalGazeAwayDurationMs ?? 0,
+      longestGazeAwayDurationMs: proctoring.healthSummary?.longestGazeAwayDurationMs ?? 0
     } : {
       faceAwayEvents: 0,
       multiplePersonEvents: 0,
       tabSwitches: 0,
       warningsIssued: 0,
-      integrityScore: 100
+      integrityScore: 100,
+      totalGazeAwayDurationMs: 0,
+      longestGazeAwayDurationMs: 0
     };
 
     // Benchmark comparison deterministic mapping
@@ -556,8 +607,8 @@ Write a concise, exactly 3-sentence summary paragraph explaining their general p
         difficultyWeightedPerformance,
         trustAdjustedScore
       },
-      strengths: resolvedAnswers.flatMap(a => a.evaluation?.matchedKeyPoints || []).slice(0, 4),
-      weaknesses: resolvedAnswers.flatMap(a => a.evaluation?.missingKeyPoints || []).slice(0, 4),
+      strengths: finalStrengths,
+      weaknesses: finalWeaknesses,
       validationResults,
       contradictions: processedContradictions,
       performanceTrend: {

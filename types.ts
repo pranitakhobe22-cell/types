@@ -417,6 +417,8 @@ export interface MasterEvaluationReport {
     tabSwitches: number;
     warningsIssued: number;
     integrityScore: number;
+    totalGazeAwayDurationMs?: number;
+    longestGazeAwayDurationMs?: number;
   };
   questionBreakdown: {
     questionText: string;

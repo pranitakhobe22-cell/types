@@ -224,10 +224,10 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
   const report = evalReport;
 
   const hiringColors: Record<string, string> = {
-    'Strong Hire': 'bg-emerald-600 text-white shadow-emerald-100/50',
-    'Hire': 'bg-indigo-600 text-white shadow-indigo-100/50',
-    'Consider': 'bg-amber-500 text-white shadow-amber-100/50',
-    'Reject': 'bg-rose-600 text-white shadow-rose-100/50',
+    'Strong Hire': 'bg-emerald-600 text-white shadow-emerald-100/50 border border-emerald-400',
+    'Hire': 'bg-indigo-600 text-white shadow-indigo-100/50 border border-indigo-400',
+    'Consider': 'bg-amber-500 text-white shadow-amber-100/50 border border-amber-400',
+    'Reject': 'bg-rose-600 text-white shadow-rose-100/50 border border-rose-400',
   };
 
   const integrityScore = report.proctoringSummary?.integrityScore ?? 100;
@@ -243,7 +243,7 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
   }
 
   return (
-    <div className="w-full text-slate-900 font-sans">
+    <div className="w-full text-slate-900 font-sans animate-in fade-in duration-500">
       <div className="max-w-6xl mx-auto space-y-10">
         
         {/* Recruiter Header */}
@@ -266,6 +266,49 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
             <Logo className="w-10 h-10 opacity-70" />
           </div>
         </header>
+
+        {/* BOTTOM LINE HERO CARD: Highlight Overall Score and Recommendation */}
+        <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 text-white rounded-[32px] p-8 md:p-10 shadow-2xl relative overflow-hidden border border-indigo-500/20">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="relative flex flex-col md:flex-row items-center justify-between gap-8 z-10">
+            <div className="space-y-4 text-center md:text-left flex-1">
+              <span className="px-3 py-1 rounded-full text-[10px] font-black tracking-widest bg-indigo-500/30 text-indigo-300 border border-indigo-500/20 uppercase">
+                Bottom Line Recruitment Recommendation
+              </span>
+              <div className="flex flex-col sm:flex-row items-center gap-4 justify-center md:justify-start">
+                <span className={`px-6 py-2.5 rounded-2xl font-black text-lg uppercase tracking-wider shadow-lg ${hiringColors[report.executiveSummary?.recommendation ?? 'Consider']}`}>
+                  {report.executiveSummary?.recommendation ?? 'Consider'}
+                </span>
+                <h2 className="text-2xl md:text-3xl font-black tracking-tight text-white">
+                  {report.executiveSummary?.recommendation === 'Strong Hire' && 'Highly Recommended Candidate'}
+                  {report.executiveSummary?.recommendation === 'Hire' && 'Recommended for Next Stages'}
+                  {report.executiveSummary?.recommendation === 'Consider' && 'Requires Panel Discussion'}
+                  {report.executiveSummary?.recommendation === 'Reject' && 'Does Not Meet Technical Thresholds'}
+                </h2>
+              </div>
+              <p className="text-slate-300 text-sm max-w-2xl font-medium leading-relaxed italic">
+                "{report.executiveSummary?.summary || 'No summary evaluation available.'}"
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-6 bg-white/5 backdrop-blur-md p-6 rounded-3xl border border-white/10 shrink-0">
+              <div className="relative flex items-center justify-center">
+                <ScoreRing score={report.overallScores?.trustAdjustedScore ?? 0} size={110} />
+                <div className="absolute text-center">
+                  <p className="text-2xl font-black text-white">{report.overallScores?.trustAdjustedScore ?? 0}%</p>
+                  <p className="text-[8px] font-black text-indigo-300 uppercase tracking-widest mt-0.5">Final Score</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Overall Ranking</p>
+                <p className="text-xl font-black text-white mt-0.5">{report.benchmarkComparison?.percentile ?? 50}th Percentile</p>
+                <p className="text-[9px] text-slate-400 mt-1">Compared against {report.benchmarkComparison?.sampleSize ?? 1500} applicants</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* SECTION 1 & SECTION 2: Executive Summary & Overall Score Matrix */}
         <div className="grid md:grid-cols-12 gap-6">
@@ -413,24 +456,35 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
           </div>
         </div>
 
-        {/* SECTION 5 & SECTION 6: Knowledge Stability & Validation Results */}
+        {/* SECTION 5 & SECTION 6: Subject Matter Adaptability & Depth & Real-time Problem Solving */}
         <div className="grid md:grid-cols-12 gap-6">
-          {/* Section 5: Knowledge Stability details */}
+          {/* Section 5: Subject Matter Adaptability & Depth */}
           <div className="md:col-span-5 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm flex flex-col justify-between">
             <div>
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-5">
-                <Scale size={14} className="text-indigo-500" /> Section 5: Knowledge Stability
+                <Scale size={14} className="text-indigo-500" /> Section 5: Subject Matter Adaptability & Depth
               </h3>
               
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
                   <div className="text-center bg-indigo-50 border border-indigo-100 p-4 rounded-2xl shrink-0 w-24">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase">Stability %</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">Mastery %</p>
                     <p className="text-2xl font-black text-indigo-600">{report.executiveSummary?.knowledgeStability ?? 100}%</p>
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-slate-800">Domain Consistency</h4>
+                    <h4 className="text-sm font-bold text-slate-800">Domain Performance Stability</h4>
                     <p className="text-xs text-slate-500 mt-1 leading-relaxed">{stabilityDescription}</p>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-100 pt-4 space-y-2">
+                  <div className="text-xs">
+                    <span className="font-bold text-slate-700">Recruiter Benefit:</span>
+                    <p className="text-slate-500 mt-0.5 leading-relaxed">Identifies if the candidate has standard knowledge consistency across fundamental vs scenario questions, highlighting domain gaps.</p>
+                  </div>
+                  <div className="text-xs">
+                    <span className="font-bold text-slate-700">Candidate Benefit:</span>
+                    <p className="text-slate-500 mt-0.5 leading-relaxed">Demonstrates your ability to maintain consistent reasoning quality under varying difficulty levels.</p>
                   </div>
                 </div>
               </div>
@@ -438,25 +492,34 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
             
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mt-6 flex items-start gap-2.5">
               <Info size={14} className="text-slate-400 shrink-0 mt-0.5" />
-              <p className="text-[10px] text-slate-500 leading-normal">Stability measures the statistical standard deviation across technical answers. High values indicate reliable skills; low scores indicate localized knowledge voids.</p>
+              <p className="text-[10px] text-slate-500 leading-normal">Adaptability measures consistency in logic when moving from easy technical terms to hard scenario-based prompts.</p>
             </div>
           </div>
 
-          {/* Section 6: Validation Results */}
+          {/* Section 6: Real-time Problem Solving & Conceptual Integrity */}
           <div className="md:col-span-7 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-5">
-              <HelpCircle size={14} className="text-indigo-500" /> Section 6: Follow-up Validation Trials
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+              <HelpCircle size={14} className="text-indigo-500" /> Section 6: Real-time Problem Solving & Conceptual Integrity
             </h3>
+
+            <div className="mb-4 space-y-1 bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+              <div className="text-[10px] leading-relaxed text-slate-500">
+                <span className="font-bold text-slate-700">Recruiter Benefit:</span> Detects rote learning vs deep comprehension by probing on initial high scores.
+              </div>
+              <div className="text-[10px] leading-relaxed text-slate-500">
+                <span className="font-bold text-slate-700">Candidate Benefit:</span> Allows you to elaborate and clarify your core knowledge, reducing initial penalties.
+              </div>
+            </div>
 
             {report.validationResults && report.validationResults.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-100">
-                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider">Concept / Parent</th>
-                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-center">Parent</th>
-                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-center">Follow-up</th>
-                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-right">Reliability Index</th>
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider">Core Technical Topic</th>
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-center">Initial Assessment</th>
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-center">Depth Probe Response</th>
+                      <th className="py-2 text-[10px] font-black text-slate-400 uppercase tracking-wider text-right">Validation Confidence</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -484,19 +547,28 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
             ) : (
               <div className="flex flex-col items-center justify-center p-8 text-center bg-slate-50 rounded-2xl border border-slate-100">
                 <Info className="text-slate-400 mb-2" size={20} />
-                <p className="text-xs text-slate-500 font-medium">No validation trials triggered. (Trials are only triggered when initial technical question scores exceed 8.0).</p>
+                <p className="text-xs text-slate-500 font-medium">No validation trials triggered. (Trials are automatically triggered when initial technical question scores exceed 8.0).</p>
               </div>
             )}
           </div>
         </div>
 
-        {/* SECTION 7 & SECTION 8: Contradictions & Performance Timeline */}
+        {/* SECTION 7 & SECTION 8: Logical Reasoning & Technical Consistency */}
         <div className="grid md:grid-cols-12 gap-6">
-          {/* Section 7: Contradictions */}
+          {/* Section 7: Logical Reasoning & Technical Consistency */}
           <div className="md:col-span-7 bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-5">
-              <AlertTriangle size={14} className="text-rose-500" /> Section 7: Cross-Question Contradictions
+            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+              <AlertTriangle size={14} className="text-rose-500" /> Section 7: Logical Reasoning & Technical Consistency
             </h3>
+
+            <div className="mb-4 space-y-1 bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+              <div className="text-[10px] leading-relaxed text-slate-500">
+                <span className="font-bold text-slate-700">Recruiter Benefit:</span> Ensures candidates explain tech stacks with logical rigor, flagging guesses or contradictions.
+              </div>
+              <div className="text-[10px] leading-relaxed text-slate-500">
+                <span className="font-bold text-slate-700">Candidate Benefit:</span> Highlights conceptual areas where you may need to align your technical understanding.
+              </div>
+            </div>
 
             {report.contradictions && report.contradictions.length > 0 ? (
               <div className="space-y-3">
@@ -507,7 +579,7 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
                     <AlertTriangle className="shrink-0 mt-0.5" size={16} />
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold uppercase">Contradiction between Answer {c.qIndex1} and Answer {c.qIndex2}</span>
+                        <span className="text-xs font-bold uppercase">Alignment Check: Question {c.qIndex1} vs Question {c.qIndex2}</span>
                         <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
                           c.status === 'confirmed' ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800'
                         }`}>
@@ -522,7 +594,7 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
             ) : (
               <div className="flex items-center gap-3 bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/50 text-emerald-800 text-xs">
                 <CheckCircle className="text-emerald-500 shrink-0" size={16} />
-                <p className="font-semibold">No direct technical contradictions detected across responses.</p>
+                <p className="font-semibold">No conceptual logical contradictions detected. The candidate demonstrated a coherent mental model.</p>
               </div>
             )}
           </div>
@@ -583,7 +655,7 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
         <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-              <ShieldAlert size={14} className="text-rose-500" /> Section 9: Integrity Verification Summary
+              <ShieldAlert size={14} className="text-rose-500" /> Section 9: Integrity Verification & Gaze Summary
             </h3>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-500 font-medium">Session Integrity Score:</span>
@@ -597,22 +669,38 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
               <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Tab Switches</span>
               <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary?.tabSwitches ?? 0}</span>
             </div>
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Camera Away Events</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Camera Away</span>
               <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary?.faceAwayEvents ?? 0}</span>
             </div>
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Multiple Person Detected</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Multiple Person</span>
               <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary?.multiplePersonEvents ?? 0}</span>
             </div>
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Total Warnings Issued</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Warnings Issued</span>
               <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary?.warningsIssued ?? 0}</span>
+            </div>
+            
+            {/* Eye Tracking Additions */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Gaze Deviations</span>
+              <span className="text-xl font-black text-slate-700 mt-1 block">
+                {report.proctoringSummary?.gazeAwayEvents ?? report.proctoringSummary?.faceAwayEvents ?? 0}
+              </span>
+            </div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Gaze Away Time</span>
+              <span className="text-xl font-black text-slate-700 mt-1 block">
+                {report.proctoringSummary?.totalGazeAwayDurationMs !== undefined 
+                  ? `${(report.proctoringSummary.totalGazeAwayDurationMs / 1000).toFixed(1)}s` 
+                  : "0.0s"}
+              </span>
             </div>
           </div>
         </section>
