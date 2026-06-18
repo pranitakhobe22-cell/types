@@ -1,5 +1,3 @@
-
-import { GoogleGenAI, Type } from "@google/genai";
 import { Candidate, EvaluationResult, Question, RoleSettings, VisualMetrics } from "../types";
 import { StorageService } from "./storageService";
 
@@ -15,13 +13,57 @@ export const DEFAULT_SETTINGS: RoleSettings = {
 };
 
 // ============================================================================
-// API KEY MANAGEMENT — Session-hashed allocation
+// API KEY MANAGEMENT - OpenRouter DeepSeek Exclusive
 // ============================================================================
 
-const getGeminiKeys = () => {
-  const keysStr = import.meta.env.VITE_GEMINI_API_KEYS || import.meta.env.VITE_GEMINI_EVAL_API_KEY || import.meta.env.VITE_GEMINI_API_KEY || "";
-  return keysStr.split(',').map((k: string) => k.trim()).filter(Boolean);
+const getOpenRouterKey = () => {
+  return (import.meta.env?.VITE_OPENROUTER_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_OPENROUTER_API_KEY : "") || "";
 };
+
+async function generateWithOpenRouter(prompt: string, maxRetries = 2): Promise<string> {
+  const apiKey = getOpenRouterKey();
+  if (!apiKey) {
+    throw new Error("OpenRouter API key not configured. Please set VITE_OPENROUTER_API_KEY.");
+  }
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "HTTP-Referer": "http://localhost:5173",
+          "X-Title": "Reincrew AI"
+        },
+        body: JSON.stringify({
+          model: "deepseek/deepseek-chat",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          response_format: { type: "json_object" }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenRouter API Error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      if (!data.choices || data.choices.length === 0) {
+        throw new Error("OpenRouter API returned no choices.");
+      }
+      return data.choices[0].message.content;
+    } catch (err: any) {
+      console.warn(`OpenRouter DeepSeek attempt ${attempt + 1} failed:`, err);
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Failed to generate content with OpenRouter DeepSeek.");
+}
 
 // Simple string hash → consistent key per session
 export const hashString = (str: string): number => {
@@ -34,38 +76,14 @@ export const hashString = (str: string): number => {
   return Math.abs(hash);
 };
 
-// Session-specific key: same session always uses the same key
-const getSessionKey = (sessionId?: string): string => {
-  const keys = getGeminiKeys();
-  if (keys.length === 0) return "";
-  if (!sessionId) return keys[0];
-  const idx = hashString(sessionId) % keys.length;
-  return keys[idx];
-};
-
-// Dedicated key for live interview (question generation) — always uses key[0]
-const getDedicatedKey = (): string => {
-  const keys = getGeminiKeys();
-  return keys[0] || "";
-};
-
-// Models: Flash for question gen, Flash Lite for evaluation
-const MODEL_QUESTION_GEN = "gemini-2.5-flash";
-const MODEL_EVAL = "gemini-2.5-flash-lite";
-
 const ai = {
   models: {
     generateContent: async (args: any) => {
       // Used by startInterview for dynamic question generation (Live Interview)
-      const instance = new GoogleGenAI({ apiKey: getDedicatedKey() });
-      return instance.models.generateContent(args);
+      const text = await generateWithOpenRouter(args.contents);
+      return { text };
     }
   }
-};
-
-const getEvalAi = (sessionId?: string) => {
-  // Used by submitAnswer for question-level evaluation — session-hashed key
-  return new GoogleGenAI({ apiKey: getSessionKey(sessionId) });
 };
 
 // ============================================================================
@@ -291,11 +309,7 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
       `;
 
       const result = await ai.models.generateContent({
-        model: MODEL_QUESTION_GEN,
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json"
-        }
+        contents: prompt
       });
 
       let cleanText = result.text || "[]";
@@ -319,35 +333,7 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
       };
 
     } catch (err) {
-      console.warn("Gemini generation failed, attempting NVIDIA fallback...");
-      try {
-        const topic = candidate.customTopic;
-        const prompt = `
-          Generate 5 distinct interview questions for a candidate interested in "${topic}".
-          Questions should range from easy to medium difficulty.
-          Return strictly a JSON array of objects:
-          [{ "id": 1, "question": "Question text", "difficulty": "Easy", "maxScore": 10, "keyPoints": ["key1", "key2"] }]
-        `;
-        const text = await fallbackToNvidia(prompt);
-        let cleanText = text || "[]";
-        if (cleanText.startsWith('\`\`\`json')) cleanText = cleanText.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '');
-        else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '');
-        
-        const genQuestions = JSON.parse(cleanText);
-        questions = genQuestions.map((q: any, i: number) => ({
-          ...q,
-          id: i + 1,
-          maxScore: 10
-        }));
-        settings = {
-          ...DEFAULT_SETTINGS,
-          difficulty: 'Medium',
-          preset: 'Normal',
-          proctoring: { ...DEFAULT_SETTINGS.proctoring, includeInScore: false }
-        };
-      } catch (nvidiaErr) {
-        console.error("NVIDIA fallback also failed:", nvidiaErr);
-        // Fallback if AI fails completely
+      console.error("OpenRouter Question generation failed, using static fallback question:", err);
       questions = [{
         id: 1,
         question: `Tell me about your interest in ${candidate.customTopic} and what you hope to achieve.`,
@@ -356,7 +342,12 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
         maxScore: 10,
         keyPoints: ["Interest", "Goals"]
       }];
-      }
+      settings = {
+        ...DEFAULT_SETTINGS,
+        difficulty: 'Medium',
+        preset: 'Normal',
+        proctoring: { ...DEFAULT_SETTINGS.proctoring, includeInScore: false }
+      };
     }
   } else if (candidate.jobPostId) {
     const job = await StorageService.getJobById(candidate.jobPostId);
@@ -601,84 +592,65 @@ Return strictly the following JSON structure:
   "feedback": "2-sentence specific feedback. State what was good and what was missing. NO generic praise."
 }`;
 
-  const generateEval = async (prompt: string, useFallback = false): Promise<EvaluationResult> => {
-    let cleanText = "";
-    if (!useFallback) {
-      const evalAi = getEvalAi(sessionId);
-      const evalResponse = await evalAi.models.generateContent({
-        model: MODEL_EVAL,
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
-      });
-      cleanText = evalResponse.text || "{}";
-    } else {
-      cleanText = await fallbackToNvidia(prompt);
-    }
-
+  const generateEval = async (prompt: string): Promise<EvaluationResult> => {
+    let cleanText = await generateWithOpenRouter(prompt);
     cleanText = cleanText.trim();
-    if (cleanText.startsWith('\`\`\`json')) cleanText = cleanText.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '');
-    else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '');
+    if (cleanText.startsWith('```json')) cleanText = cleanText.replace(/^```json/, '').replace(/```$/, '');
+    else if (cleanText.startsWith('```')) cleanText = cleanText.replace(/^```/, '').replace(/```$/, '');
 
     const evalJson = JSON.parse(cleanText);
     return buildEvaluationResult(currentQuestion, answer, evalJson, visualMetrics, isBehavioral);
   };
 
   try {
-    const evaluation = await generateEval(evalPrompt, false);
+    const evaluation = await generateEval(evalPrompt);
     return { evaluation, nextQuestion: null };
   } catch (error) {
-    console.warn("Gemini Evaluation Failed, attempting NVIDIA fallback...", error);
-    try {
-      const evaluation = await generateEval(evalPrompt, true);
-      return { evaluation, nextQuestion: null };
-    } catch (nvidiaErr) {
-      console.error("NVIDIA Evaluation Fallback also failed:", nvidiaErr);
-      
-      const local = localEvaluate(answer, currentQuestion);
+    console.error("OpenRouter Evaluation Failed, falling back to local evaluation:", error);
+    const local = localEvaluate(answer, currentQuestion);
 
-      let verdict: 'Excellent' | 'Good' | 'Borderline' | 'Fail';
-      if (local.score >= 8) verdict = 'Excellent';
-      else if (local.score >= 6) verdict = 'Good';
-      else if (local.score >= 4) verdict = 'Borderline';
-      else verdict = 'Fail';
+    let verdict: 'Excellent' | 'Good' | 'Borderline' | 'Fail';
+    if (local.score >= 8) verdict = 'Excellent';
+    else if (local.score >= 6) verdict = 'Good';
+    else if (local.score >= 4) verdict = 'Borderline';
+    else verdict = 'Fail';
 
-      const fallbackEval: EvaluationResult = {
-        questionId: Number(currentQuestion.id),
-        questionText: currentQuestion.question,
-        userAnswer: answer,
-        contentScore: local.score,
-        grammarScore: 0,
-        fluencyScore: 0,
-        communicationScore: 0,
-        matchedKeyPoints: local.matched,
-        missingKeyPoints: local.missed,
-        verdict,
-        feedback: `Evaluated locally (AI unavailable). Score based on keyword coverage and answer completeness.`,
-        confidenceScore: visualMetrics?.confidenceLevel ?? 0,
-        expressionAnalysis: "N/A",
-        timestamp: new Date().toISOString(),
-        evaluationPending: true,
-        evaluationConfidence: local.confidence,
-        analysis: {
-          technicalAccuracy: local.score,
-          problemSolving: local.score,
-          practicalExecution: local.score,
-          communication: 0,
-          coverage: local.score,
-          understanding: local.score,
-          reasoning: local.score,
-          depth: local.score,
-          clarity: 0,
-          structure: 0,
-          confidence: 0,
-          consistency: 0,
-          answerDirectnessScore: local.score,
-          tradeoffReasoningScore: undefined,
-          technicalErrors: []
-        }
-      };
-      return { evaluation: fallbackEval, nextQuestion: null };
-    }
+    const fallbackEval: EvaluationResult = {
+      questionId: Number(currentQuestion.id),
+      questionText: currentQuestion.question,
+      userAnswer: answer,
+      contentScore: local.score,
+      grammarScore: 0,
+      fluencyScore: 0,
+      communicationScore: 0,
+      matchedKeyPoints: local.matched,
+      missingKeyPoints: local.missed,
+      verdict,
+      feedback: `Evaluated locally (AI unavailable). Score based on keyword coverage and answer completeness.`,
+      confidenceScore: visualMetrics?.confidenceLevel ?? 0,
+      expressionAnalysis: "N/A",
+      timestamp: new Date().toISOString(),
+      evaluationPending: true,
+      evaluationConfidence: local.confidence,
+      analysis: {
+        technicalAccuracy: local.score,
+        problemSolving: local.score,
+        practicalExecution: local.score,
+        communication: 0,
+        coverage: local.score,
+        understanding: local.score,
+        reasoning: local.score,
+        depth: local.score,
+        clarity: 0,
+        structure: 0,
+        confidence: 0,
+        consistency: 0,
+        answerDirectnessScore: local.score,
+        tradeoffReasoningScore: undefined,
+        technicalErrors: []
+      }
+    };
+    return { evaluation: fallbackEval, nextQuestion: null };
   }
 };
 
@@ -764,16 +736,10 @@ Return strictly the following JSON structure:
 }`;
 
   try {
-    const evalAi = getEvalAi(sessionId);
-    const evalResponse = await evalAi.models.generateContent({
-      model: MODEL_EVAL,
-      contents: prompt,
-      config: { responseMimeType: "application/json" }
-    });
-
-    let cleanText = (evalResponse.text || "{}").trim();
-    if (cleanText.startsWith('\`\`\`json')) cleanText = cleanText.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '');
-    else if (cleanText.startsWith('\`\`\`')) cleanText = cleanText.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '');
+    let cleanText = await generateWithOpenRouter(prompt);
+    cleanText = cleanText.trim();
+    if (cleanText.startsWith('```json')) cleanText = cleanText.replace(/^```json/, '').replace(/```$/, '');
+    else if (cleanText.startsWith('```')) cleanText = cleanText.replace(/^```/, '').replace(/```$/, '');
 
     const evalJson = JSON.parse(cleanText);
     return buildEvaluationResult(question, answer, evalJson, undefined, isBehavioral);
@@ -824,37 +790,3 @@ Return strictly the following JSON structure:
     };
   }
 };
-
-// ============================================================================
-// NVIDIA FALLBACK
-// ============================================================================
-
-const getNvidiaApiKey = () => {
-  return (import.meta.env?.VITE_NVIDIA_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_NVIDIA_API_KEY : "") || "";
-};
-
-async function fallbackToNvidia(prompt: string): Promise<string> {
-  const apiKey = getNvidiaApiKey();
-  if (!apiKey) throw new Error("NVIDIA API key not configured.");
-  
-  const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: "meta/llama-3.1-70b-instruct",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 2000
-    })
-  });
-  
-  if (!response.ok) {
-    throw new Error(`NVIDIA API Error: ${response.status} ${response.statusText}`);
-  }
-  
-  const data = await response.json();
-  return data.choices[0].message.content;
-}

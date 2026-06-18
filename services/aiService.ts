@@ -1,106 +1,54 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { CSE_QUESTION_BANK, ECE_QUESTION_BANK } from "./questionBank";
 import { retryEvaluation, localEvaluate } from "./apiService";
 
-let currentKeyIndex = 0;
-const getGeminiKeys = () => {
-  const keysStr = (import.meta.env?.VITE_GEMINI_API_KEYS) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_API_KEYS : "") || (import.meta.env?.VITE_GEMINI_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_GEMINI_API_KEY : "") || "";
-  const keys = keysStr.split(',').map((k: string) => k.trim()).filter(Boolean);
-  if (keys.length === 0) {
-    console.warn("Gemini API Key not found in environment variables.");
-  }
-  return keys;
+const getOpenRouterKey = () => {
+  return (import.meta.env?.VITE_OPENROUTER_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_OPENROUTER_API_KEY : "") || "";
 };
-
-const getDedicatedKey = () => getGeminiKeys()[0] || "";
-
-const getNextPoolKey = () => {
-  const keys = getGeminiKeys();
-  if (keys.length === 0) return "";
-  const key = keys[currentKeyIndex];
-  currentKeyIndex = (currentKeyIndex + 1) % keys.length;
-  return key;
-};
-
-const getGenAI = (purpose: 'live' | 'eval' | 'report' = 'eval') => {
-  const key = purpose === 'live' ? getDedicatedKey() : getNextPoolKey();
-  return new GoogleGenerativeAI(key);
-};
-
-// Model: Flash Lite for summary (simple task)
-const MODEL_SUMMARY = "gemini-2.5-flash-lite";
-
-// Model priority chain for resilient generation
-const MODEL_CHAIN = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
 
 async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live' | 'eval' | 'report' = 'eval'): Promise<string> {
-  for (const modelName of MODEL_CHAIN) {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const model = getGenAI(purpose).getGenerativeModel({ model: modelName });
-        const result = await model.generateContent(prompt);
-        return result.response.text();
-      } catch (err: any) {
-        const status = err?.status || 0;
-        // 503 = overloaded, 429 = rate limit — retry or try next model
-        if (status === 503 || status === 429) {
-          if (attempt < maxRetries) {
-            // Wait briefly before retry (exponential backoff)
-            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-            continue;
-          }
-          // Exhausted retries for this model, try next
-          console.warn(`Model ${modelName} failed after ${maxRetries + 1} attempts (${status}), trying next...`);
-          break;
-        }
-        // 404 = model not found — skip immediately to next model
-        if (status === 404) {
-          console.warn(`Model ${modelName} not found (404), trying next...`);
-          break;
-        }
-        // Any other error — throw immediately
-        throw err;
+  const apiKey = getOpenRouterKey();
+  if (!apiKey) {
+    throw new Error("OpenRouter API key not configured. Please set VITE_OPENROUTER_API_KEY.");
+  }
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "HTTP-Referer": "http://localhost:5173",
+          "X-Title": "Reincrew AI"
+        },
+        body: JSON.stringify({
+          model: "deepseek/deepseek-chat",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          response_format: { type: "json_object" }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenRouter API Error: ${response.status} ${response.statusText}`);
       }
+
+      const data = await response.json();
+      if (!data.choices || data.choices.length === 0) {
+        throw new Error("OpenRouter API returned no choices.");
+      }
+      return data.choices[0].message.content;
+    } catch (err: any) {
+      console.warn(`OpenRouter DeepSeek attempt ${attempt + 1} failed:`, err);
+      if (attempt < maxRetries) {
+        // Wait briefly before retry (exponential backoff)
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      throw new Error(`AI service is currently unavailable. details: ${err?.message || err}`);
     }
   }
-  
-  console.warn("All Gemini models failed, falling back to NVIDIA NIM...");
-  try {
-    return await fallbackToNvidia(prompt);
-  } catch (nvidiaErr: any) {
-    console.error("NVIDIA fallback failed:", nvidiaErr);
-    throw new Error("All AI models (Gemini & NVIDIA) are currently unavailable. Please try again later.");
-  }
-}
-
-const getNvidiaApiKey = () => {
-  return (import.meta.env?.VITE_NVIDIA_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_NVIDIA_API_KEY : "") || "";
-};
-
-async function fallbackToNvidia(prompt: string): Promise<string> {
-  const apiKey = getNvidiaApiKey();
-  if (!apiKey) throw new Error("NVIDIA API key not configured.");
-  
-  const response = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: "meta/llama-3.1-70b-instruct",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 2000
-    })
-  });
-  
-  if (!response.ok) {
-    throw new Error(`NVIDIA API Error: ${response.status} ${response.statusText}`);
-  }
-  
-  const data = await response.json();
-  return data.choices[0].message.content;
+  throw new Error("Failed to generate content with OpenRouter DeepSeek.");
 }
 
 import { Question } from "../types";
@@ -681,12 +629,12 @@ Return strictly the following JSON structure (do not include markdown code block
 
   async listModels(): Promise<string[]> {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${getDedicatedKey()}`);
+      const response = await fetch("https://openrouter.ai/api/v1/models");
       const data = await response.json();
-      return data.models?.map((m: any) => m.name) || [];
+      return data.data?.map((m: any) => m.id) || ["deepseek/deepseek-chat"];
     } catch (error) {
       console.error("Error listing models:", error);
-      return [];
+      return ["deepseek/deepseek-chat"];
     }
   }
 };

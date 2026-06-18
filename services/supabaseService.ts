@@ -69,7 +69,11 @@ export class SupabaseService {
     static async createSession(candidateId: string, jobPostId: string, deviceInfo: any, metadata: any, candidateName?: string) {
         const payload: any = {
             candidate_id: candidateId,
-            status: 'CREATED'
+            status: 'CREATED',
+            interview_metadata: {
+                device_info: deviceInfo || {},
+                ...metadata
+            }
         };
         if (jobPostId) payload.job_post_id = jobPostId;
         if (candidateName) payload.candidate_name = candidateName;
