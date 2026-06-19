@@ -598,7 +598,7 @@ Return strictly the following JSON structure:
   ],
   "matchedKeyPoints": ["concepts the candidate covered"],
   "missingKeyPoints": ["concepts the candidate missed"],
-  "feedback": "2-sentence specific feedback. State what was good and what was missing. NO generic praise."
+  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what core concepts they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
 }`;
 
   const generateEval = async (prompt: string): Promise<EvaluationResult> => {
@@ -729,7 +729,7 @@ Return strictly the following JSON structure:
   ],
   "matchedKeyPoints": [],
   "missingKeyPoints": [],
-  "feedback": "2-sentence feedback"
+  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what core concepts they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
 }`;
 
   try {
