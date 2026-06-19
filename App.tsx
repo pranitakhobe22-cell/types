@@ -40,6 +40,13 @@ function App() {
       setIsCheckingHealth(true);
       const h = await HealthService.checkSystemHealth();
       setHealth(h);
+      if (h.database) {
+        try {
+          await SupabaseService.seedDefaultJobsIfMissing();
+        } catch (seedErr) {
+          console.error("Auto-seeding CSE/ECE job posts failed:", seedErr);
+        }
+      }
       setIsCheckingHealth(false);
     };
 
@@ -71,15 +78,30 @@ function App() {
   const handleStart = async (data: { name: string; email: string; role: string }) => {
     // Clear old invalid session IDs
     localStorage.removeItem('current_session_id');
-    setCandidate(data);
     
     try {
         const candidateRecord = await SupabaseService.upsertCandidate({ name: data.name, email: data.email, role: data.role } as any);
         const fp = await getDeviceFingerprint();
         
-        const session = await SupabaseService.createSession(candidateRecord.id, undefined as any, fp, {}, candidateRecord.name);
+        let jobPostId = undefined;
+        try {
+          const jobs = await SupabaseService.getAllJobs();
+          const matchedJob = jobs.find(j => 
+            j.title.toLowerCase().includes(data.role.toLowerCase()) || 
+            (data.role === 'CSE' && j.title.toLowerCase().includes('computer')) ||
+            (data.role === 'ECE' && j.title.toLowerCase().includes('electron'))
+          );
+          if (matchedJob) {
+            jobPostId = matchedJob.id;
+          }
+        } catch (jobErr) {
+          console.warn("Failed to find job post in Supabase for role:", data.role, jobErr);
+        }
+
+        const session = await SupabaseService.createSession(candidateRecord.id, jobPostId as any, fp, {}, candidateRecord.name);
         localStorage.setItem('current_session_id', session.id);
         
+        setCandidate({ ...data, jobPostId });
         setFlowState('interview');
     } catch (e: any) {
         console.error("Failed to start session in Supabase:", e);

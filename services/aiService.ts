@@ -94,9 +94,22 @@ export interface EvaluationReport {
   averageConfidence: number;
 }
 
+export const getQuestionsForRole = (role: string): Question[] => {
+  const custom = localStorage.getItem(`reicrew_questions_${role.toLowerCase()}`);
+  if (custom) {
+    try {
+      return JSON.parse(custom);
+    } catch (e) {
+      console.error("Failed to parse custom questions from localStorage", e);
+    }
+  }
+  return role === "CSE" ? CSE_QUESTION_BANK : ECE_QUESTION_BANK;
+};
+
 export const AIService = {
   selectInterviewBranch(role: string): InterviewBranch {
-    const bank = role === "CSE" ? CSE_QUESTION_BANK : ECE_QUESTION_BANK;
+    const bank = getQuestionsForRole(role);
+
 
     // Helper to get questions of specific type and difficulty
     const getQ = (type: string, difficulty?: string, excludeCategories: string[] = []) => {
@@ -139,6 +152,53 @@ export const AIService = {
       q5
     };
   },
+
+  selectInterviewBranchFromList(questionsList: Question[]): InterviewBranch {
+    // Helper to get questions of specific type and difficulty
+    const getQ = (type: string, difficulty?: string, excludeCategories: string[] = []) => {
+      let filtered = questionsList.filter(q => q.type === type);
+      if (difficulty) filtered = filtered.filter(q => q.difficulty === difficulty);
+      if (excludeCategories.length > 0) {
+        filtered = filtered.filter(q => !excludeCategories.includes(q.category || ""));
+      }
+      
+      // Fallback if strict filtering fails
+      if (filtered.length === 0) {
+        filtered = questionsList.filter(q => q.type === type);
+        if (filtered.length === 0) {
+          filtered = questionsList.filter(q => q.difficulty === difficulty);
+          if (filtered.length === 0) return questionsList[0];
+        }
+      }
+      
+      return this._pick(filtered, 1)[0] || questionsList[0];
+    };
+
+    const q1 = getQ('Fundamentals', Math.random() > 0.5 ? 'easy' : 'medium');
+    const usedCategories = [q1?.category || ""];
+
+    // Ensure diverse categories for Q2
+    const q2_easy = getQ('Core', 'easy', usedCategories);
+    const q2_medium = getQ('Core', 'medium', usedCategories);
+    const q2_hard = getQ('Core', 'hard', usedCategories);
+
+    // Ensure diverse categories for Q3
+    const q3_easy = getQ('Scenario', 'easy', usedCategories);
+    const q3_medium = getQ('Scenario', 'medium', usedCategories);
+    const q3_hard = getQ('Scenario', 'hard', usedCategories);
+
+    const q4 = getQ('Behavioral Experience');
+    const q5 = getQ('Behavioral Situation');
+
+    return {
+      q1,
+      q2: { easy: q2_easy, medium: q2_medium, hard: q2_hard },
+      q3: { easy: q3_easy, medium: q3_medium, hard: q3_hard },
+      q4,
+      q5
+    };
+  },
+
 
   _pick(arr: any[], n: number) {
     return [...arr].sort(() => 0.5 - Math.random()).slice(0, n);

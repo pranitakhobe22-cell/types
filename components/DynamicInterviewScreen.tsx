@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useReducer } from 'react';
 import { Mic, MicOff, Volume2, Send, Loader2, Edit3, CheckCircle, ArrowRight, AlertTriangle } from 'lucide-react';
-import { AIService, InterviewBranch } from '../services/aiService';
+import { AIService, InterviewBranch, getQuestionsForRole } from '../services/aiService';
 import { submitAnswer, localDifficultySignal, localEvaluate, hashString } from '../services/apiService';
 import { useSpeech } from '../hooks/useSpeech';
 import { CameraMonitor } from './CameraMonitor';
@@ -9,9 +9,11 @@ import { SupabaseService } from '../services/supabaseService';
 import { MediaCaptureService, RollingRecorder } from '../services/mediaCaptureService';
 import { 
   InterviewMediaResources, RawDetectionFrame, ProctorViolation, TimelineEvent, 
-  HeartbeatMetrics, ProctoringEngineState, ProctoringReport, DashboardTelemetry 
+  HeartbeatMetrics, ProctoringEngineState, ProctoringReport, DashboardTelemetry,
+  Question
 } from '../types';
 import { getDeviceFingerprint } from '../services/deviceFingerprint';
+import { ErrorLogService } from '../services/errorLogService';
 
 // Speech Recognition Types removed, using useSpeech hook
 import { ProctoringState, ProctoringAction } from '../types';
@@ -373,16 +375,30 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
         const audioTrack = stream.getAudioTracks()[0];
         if (audioTrack) {
-          audioTrack.addEventListener('ended', () => dispatch({ type: 'MICROPHONE_LOST' }));
-          audioTrack.addEventListener('mute', () => { setTimeout(() => { if (audioTrack.muted) dispatch({ type: 'MICROPHONE_LOST' }) }, 3000) });
+          audioTrack.addEventListener('ended', () => {
+            ErrorLogService.logError('proctoring', "Microphone track ended unexpectedly", undefined, sessionIdRef.current, candidate.name);
+            dispatch({ type: 'MICROPHONE_LOST' });
+          });
+          audioTrack.addEventListener('mute', () => {
+            setTimeout(() => {
+              if (audioTrack.muted) {
+                ErrorLogService.logError('proctoring', "Microphone muted by user/system", undefined, sessionIdRef.current, candidate.name);
+                dispatch({ type: 'MICROPHONE_LOST' });
+              }
+            }, 3000);
+          });
           audioTrack.addEventListener('unmute', () => dispatch({ type: 'MICROPHONE_RECOVERED' }));
         }
 
         const videoTrack = stream.getVideoTracks()[0];
-        videoTrack.addEventListener('ended', () => dispatch({ type: 'CAMERA_LOST' }));
+        videoTrack.addEventListener('ended', () => {
+          ErrorLogService.logError('proctoring', "Camera track ended unexpectedly", undefined, sessionIdRef.current, candidate.name);
+          dispatch({ type: 'CAMERA_LOST' });
+        });
 
-      } catch (err) {
+      } catch (err: any) {
         console.error("Camera access denied:", err);
+        ErrorLogService.logError('proctoring', `Media initialization failed (camera/mic permissions): ${err.message || err}`, err, sessionIdRef.current, candidate.name);
         dispatch({ type: 'SET_PERMISSION_DENIED' });
       }
     };
@@ -434,15 +450,40 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
   // 2. Setup System Event Listeners
   useEffect(() => {
-    const handleVis = () => { if (document.hidden) dispatch({ type: 'TAB_HIDDEN' }) };
-    const handleBlur = () => { dispatch({ type: 'TAB_HIDDEN' }) };
-    const handleFullscreen = () => { 
-        if (!document.fullscreenElement) dispatch({ type: 'FULLSCREEN_EXIT' });
+    const handleVis = () => {
+      if (document.hidden) {
+        ErrorLogService.logError('proctoring', "Browser tab hidden/switch detected", undefined, sessionIdRef.current, candidate.name);
+        dispatch({ type: 'TAB_HIDDEN' });
+      }
     };
-    const handleClipboard = (e: any) => { dispatch({ type: 'COPY_PASTE' }) };
-    const handleUnload = (e: any) => { dispatch({ type: 'REFRESH_ATTEMPT' }); e.preventDefault(); e.returnValue = ''; };
-    const handleOffline = () => dispatch({ type: 'NETWORK_LOST' });
-    const handleOnline = () => dispatch({ type: 'NETWORK_RECOVERED' });
+    const handleBlur = () => {
+      ErrorLogService.logError('proctoring', "Window focus lost (blurred)", undefined, sessionIdRef.current, candidate.name);
+      dispatch({ type: 'TAB_HIDDEN' });
+    };
+    const handleFullscreen = () => { 
+      if (!document.fullscreenElement) {
+        ErrorLogService.logError('proctoring', "Fullscreen mode exited", undefined, sessionIdRef.current, candidate.name);
+        dispatch({ type: 'FULLSCREEN_EXIT' });
+      }
+    };
+    const handleClipboard = (e: any) => {
+      ErrorLogService.logError('proctoring', `Clipboard activity: candidate attempted to ${e.type}`, undefined, sessionIdRef.current, candidate.name);
+      dispatch({ type: 'COPY_PASTE' });
+    };
+    const handleUnload = (e: any) => {
+      ErrorLogService.logError('proctoring', "Page unload/refresh attempted", undefined, sessionIdRef.current, candidate.name);
+      dispatch({ type: 'REFRESH_ATTEMPT' });
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    const handleOffline = () => {
+      ErrorLogService.logError('system', "Network connectivity lost", undefined, sessionIdRef.current, candidate.name);
+      dispatch({ type: 'NETWORK_LOST' });
+    };
+    const handleOnline = () => {
+      ErrorLogService.logError('system', "Network connectivity restored", undefined, sessionIdRef.current, candidate.name);
+      dispatch({ type: 'NETWORK_RECOVERED' });
+    };
     
     document.addEventListener('visibilitychange', handleVis);
     window.addEventListener('blur', handleBlur);
@@ -499,14 +540,34 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           }
         }
 
-        const newBranch = AIService.selectInterviewBranch(candidate.role);
+        let interviewQuestions: Question[] = [];
+        if (candidate.jobPostId) {
+          try {
+            const job = await SupabaseService.getJobById(candidate.jobPostId);
+            if (job && job.questions) {
+              interviewQuestions = typeof job.questions === 'string' ? JSON.parse(job.questions) : job.questions;
+              console.log("Loaded questions from database job post:", job.title, interviewQuestions.length);
+            }
+          } catch (dbErr: any) {
+            console.error("Failed to load questions from database job post:", dbErr);
+            ErrorLogService.logError('interview', `Failed to load questions for job post ${candidate.jobPostId}: ${dbErr.message || dbErr}`, dbErr, sessionIdRef.current, candidate.name);
+          }
+        }
+
+        // Fallback to local storage or static question bank
+        if (interviewQuestions.length === 0) {
+          interviewQuestions = getQuestionsForRole(candidate.role);
+        }
+
+        const newBranch = AIService.selectInterviewBranchFromList(interviewQuestions);
         if (!mounted) return;
         setBranch(newBranch);
         setQuestions([newBranch.q1]);
         setLoading(false);
         if (mounted) speakQuestion(newBranch.q1.question);
-      } catch (err) {
-        console.error(err);
+      } catch (err: any) {
+        console.error("Interview initialization failed:", err);
+        ErrorLogService.logError('interview', `Interview initialization failed: ${err.message || err}`, err, sessionIdRef.current, candidate.name);
       }
     };
     initInterview();
@@ -805,8 +866,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           speakQuestion(followUpQ.question);
         }, 300);
         return;
-      } catch (err) {
+      } catch (err: any) {
         console.error("Failed to generate follow-up:", err);
+        ErrorLogService.logError('interview', `Failed to generate follow-up question for parent ${currentQ.id}: ${err.message || err}`, err, sessionIdRef.current, candidate.name);
       }
     }
 

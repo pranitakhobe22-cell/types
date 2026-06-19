@@ -1,5 +1,6 @@
 import { Candidate, EvaluationResult, Question, RoleSettings, VisualMetrics } from "../types";
 import { StorageService } from "./storageService";
+import { ErrorLogService } from "./errorLogService";
 
 export const DEFAULT_SETTINGS: RoleSettings = {
   difficulty: 'Medium',
@@ -59,6 +60,7 @@ async function generateWithOpenRouter(prompt: string, maxRetries = 2): Promise<s
         await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
+      ErrorLogService.logError('api', `OpenRouter DeepSeek API call failed: ${err.message || err}`, err);
       throw err;
     }
   }
@@ -614,8 +616,9 @@ Return strictly the following JSON structure:
   try {
     const evaluation = await generateEval(evalPrompt);
     return { evaluation, nextQuestion: null };
-  } catch (error) {
+  } catch (error: any) {
     console.error("OpenRouter Evaluation Failed:", error);
+    ErrorLogService.logError('evaluation', `Answer evaluation failed for question "${currentQuestion.question.substring(0, 30)}...": ${error.message || error}`, error, sessionId, candidate.name);
     throw error;
   }
 };
@@ -740,8 +743,9 @@ Return strictly the following JSON structure:
 
     const evalJson = JSON.parse(cleanText);
     return buildEvaluationResult(question, answer, evalJson, undefined, isBehavioral);
-  } catch (err) {
+  } catch (err: any) {
     console.error("Retry evaluation failed:", err);
+    ErrorLogService.logError('evaluation', `Retry evaluation failed: ${err.message || err}`, err, sessionId);
     throw err;
   }
 };

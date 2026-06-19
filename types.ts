@@ -464,3 +464,13 @@ export interface MasterEvaluationReport {
     roleLevel: 'intern' | 'junior' | 'mid' | 'senior';
   };
 }
+
+export interface ErrorLog {
+  id: string;
+  timestamp: string;
+  category: 'interview' | 'evaluation' | 'database' | 'system' | 'api' | 'proctoring';
+  message: string;
+  details?: string;
+  sessionId?: string;
+  candidateName?: string;
+}

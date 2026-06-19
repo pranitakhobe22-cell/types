@@ -4,9 +4,62 @@ import {
     EvaluationResult, InterviewSession, ProctoringReport, 
     ProctorViolation, TimelineEvent, DashboardTelemetry
 } from '../types';
+import { ErrorLogService } from './errorLogService';
+import { CSE_QUESTION_BANK, ECE_QUESTION_BANK } from './questionBank';
 
 export class SupabaseService {
     static logStatusChange: any;
+
+    static async seedDefaultJobsIfMissing() {
+        try {
+            const { data: existingJobs, error } = await supabase.from('job_posts').select('id, title');
+            if (error) throw error;
+
+            const existingTitles = existingJobs ? existingJobs.map(j => j.title.toLowerCase()) : [];
+            
+            const seedRoles = [
+                {
+                    title: 'Computer Science (CSE)',
+                    description: 'Core evaluation for Computer Science fundamentals, DBMS, OS, Networking, and DSA.',
+                    questions: CSE_QUESTION_BANK
+                },
+                {
+                    title: 'Electronics (ECE)',
+                    description: 'Core evaluation for Electronics, Embedded Systems, Signal Processing, and Circuits.',
+                    questions: ECE_QUESTION_BANK
+                }
+            ];
+
+            for (const role of seedRoles) {
+                if (!existingTitles.includes(role.title.toLowerCase())) {
+                    console.log(`Seeding default job post: ${role.title}`);
+                    const { error: insertError } = await supabase.from('job_posts').insert({
+                        title: role.title,
+                        description: role.description,
+                        mode: 'AI',
+                        status: 'ACTIVE',
+                        difficulty: 'Medium',
+                        company: 'Reicrew AI',
+                        access_key: role.title.includes('CSE') ? 'CS123' : 'ECE123',
+                        questions: role.questions,
+                        settings: {
+                            difficulty: 'Medium',
+                            preset: 'Normal',
+                            weights: { concept: 50, grammar: 20, fluency: 20, camera: 10 },
+                            proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
+                        }
+                    });
+                    if (insertError) {
+                        console.error(`Failed to seed ${role.title}:`, insertError.message);
+                        ErrorLogService.logError('database', `Failed to seed default job post ${role.title}: ${insertError.message}`, insertError);
+                    }
+                }
+            }
+        } catch (e: any) {
+            console.error("Database seeding check failed:", e);
+            ErrorLogService.logError('system', `Database seeding check failed: ${e.message || e}`, e);
+        }
+    }
 
 
     // ==========================================
@@ -23,7 +76,10 @@ export class SupabaseService {
             .select('*')
             .single();
             
-        if (error) throw error;
+        if (error) {
+            ErrorLogService.logError('database', `Upsert candidate failed for email ${candidate.email}: ${error.message}`, error);
+            throw error;
+        }
         return data;
     }
 
@@ -84,7 +140,10 @@ export class SupabaseService {
             .select('*')
             .single();
 
-        if (error) throw error;
+        if (error) {
+            ErrorLogService.logError('database', `Create session failed: ${error.message}`, error, undefined, candidateName);
+            throw error;
+        }
         
         return data;
     }
@@ -94,10 +153,12 @@ export class SupabaseService {
         const { data: masterRecords, error } = await supabase
             .from('vw_candidate_master')
             .select('*')
-            .neq('session_status', 'CREATED');
+            .neq('session_status', 'CREATED')
+            .order('interview_date', { ascending: false });
 
         if (error) {
             console.error("Supabase getAllSessions error:", error);
+            ErrorLogService.logError('database', `Get all sessions failed: ${error.message}`, error);
             throw error;
         }
 
@@ -256,6 +317,7 @@ export class SupabaseService {
 
         if (error) {
             console.error("Supabase Save Response Error:", error);
+            ErrorLogService.logError('database', `Save response failed for index ${questionIndex}: ${error.message}`, error, sessionId, candidateName);
             throw error;
         }
     }
@@ -378,6 +440,7 @@ export class SupabaseService {
 
         if (error) {
             console.error("Supabase Evaluation Report Error Details:", error.message, error.details, error.hint);
+            ErrorLogService.logError('database', `Save evaluation report failed: ${error.message}`, error, sessionId, candidateName);
             throw error;
         }
 
@@ -447,7 +510,10 @@ export class SupabaseService {
                 upsert: true
             });
 
-        if (error) throw error;
+        if (error) {
+            ErrorLogService.logError('database', `Upload file to bucket "${bucket}" failed: ${error.message}`, error);
+            throw error;
+        }
         
         const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path);
         return urlData.publicUrl;
