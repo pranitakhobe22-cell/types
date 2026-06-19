@@ -12,6 +12,8 @@ export interface Question {
   maxScore?: number;
   isFollowUp?: boolean;
   discriminationWeight?: number;
+  version?: number;
+  updatedAt?: string;
 }
 
 export interface Candidate {

@@ -541,12 +541,16 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         }
 
         let interviewQuestions: Question[] = [];
+        let jobSettings: any = null;
         if (candidate.jobPostId) {
           try {
             const job = await SupabaseService.getJobById(candidate.jobPostId);
-            if (job && job.questions) {
-              interviewQuestions = typeof job.questions === 'string' ? JSON.parse(job.questions) : job.questions;
-              console.log("Loaded questions from database job post:", job.title, interviewQuestions.length);
+            if (job) {
+              jobSettings = job.settings;
+              if (job.questions) {
+                interviewQuestions = typeof job.questions === 'string' ? JSON.parse(job.questions) : job.questions;
+                console.log("Loaded questions from database job post:", job.title, interviewQuestions.length);
+              }
             }
           } catch (dbErr: any) {
             console.error("Failed to load questions from database job post:", dbErr);
@@ -559,7 +563,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           interviewQuestions = getQuestionsForRole(candidate.role);
         }
 
-        const newBranch = AIService.selectInterviewBranchFromList(interviewQuestions);
+        const newBranch = AIService.selectInterviewBranchFromList(interviewQuestions, jobSettings);
         if (!mounted) return;
         setBranch(newBranch);
         setQuestions([newBranch.q1]);

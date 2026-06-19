@@ -107,9 +107,21 @@ export const getQuestionsForRole = (role: string): Question[] => {
 };
 
 export const AIService = {
-  selectInterviewBranch(role: string): InterviewBranch {
+  selectInterviewBranch(role: string, settings?: any): InterviewBranch {
     const bank = getQuestionsForRole(role);
 
+    // Resolve difficulty based on precedence: Stage Override > Global Strategy > Default Adaptive
+    const resolveDifficulty = (stageName: string, defaultDiff?: string) => {
+      const stageOverride = settings?.stageOverrides?.[stageName];
+      if (stageOverride && stageOverride !== 'Adaptive') {
+        return stageOverride === 'Easy Only' ? 'easy' : stageOverride === 'Medium Only' ? 'medium' : 'hard';
+      }
+      const globalStrategy = settings?.difficultyStrategy;
+      if (globalStrategy && globalStrategy !== 'Adaptive') {
+        return globalStrategy === 'Easy Only' ? 'easy' : globalStrategy === 'Medium Only' ? 'medium' : 'hard';
+      }
+      return defaultDiff;
+    };
 
     // Helper to get questions of specific type and difficulty
     const getQ = (type: string, difficulty?: string, excludeCategories: string[] = []) => {
@@ -128,18 +140,21 @@ export const AIService = {
       return this._pick(filtered, 1)[0];
     };
 
-    const q1 = getQ('Fundamentals', Math.random() > 0.5 ? 'easy' : 'medium');
+    const q1Diff = resolveDifficulty('Fundamentals', Math.random() > 0.5 ? 'easy' : 'medium');
+    const q1 = getQ('Fundamentals', q1Diff);
     const usedCategories = [q1.category || ""];
 
-    // Ensure diverse categories for Q2
-    const q2_easy = getQ('Core', 'easy', usedCategories);
-    const q2_medium = getQ('Core', 'medium', usedCategories);
-    const q2_hard = getQ('Core', 'hard', usedCategories);
+    // Ensure diverse categories for Q2, respecting stage/global difficulty override
+    const coreDiff = resolveDifficulty('Core');
+    const q2_easy = getQ('Core', coreDiff || 'easy', usedCategories);
+    const q2_medium = getQ('Core', coreDiff || 'medium', usedCategories);
+    const q2_hard = getQ('Core', coreDiff || 'hard', usedCategories);
 
-    // Ensure diverse categories for Q3 (just avoid Q1 for now, Q2 is dynamic so avoiding Q2 is trickier here without pre-picking all combinations, but we can avoid Q1 category at least)
-    const q3_easy = getQ('Scenario', 'easy', usedCategories);
-    const q3_medium = getQ('Scenario', 'medium', usedCategories);
-    const q3_hard = getQ('Scenario', 'hard', usedCategories);
+    // Ensure diverse categories for Q3
+    const scenarioDiff = resolveDifficulty('Scenario');
+    const q3_easy = getQ('Scenario', scenarioDiff || 'easy', usedCategories);
+    const q3_medium = getQ('Scenario', scenarioDiff || 'medium', usedCategories);
+    const q3_hard = getQ('Scenario', scenarioDiff || 'hard', usedCategories);
 
     const q4 = getQ('Behavioral Experience');
     const q5 = getQ('Behavioral Situation');
@@ -153,7 +168,20 @@ export const AIService = {
     };
   },
 
-  selectInterviewBranchFromList(questionsList: Question[]): InterviewBranch {
+  selectInterviewBranchFromList(questionsList: Question[], settings?: any): InterviewBranch {
+    // Resolve difficulty based on precedence: Stage Override > Global Strategy > Default Adaptive
+    const resolveDifficulty = (stageName: string, defaultDiff?: string) => {
+      const stageOverride = settings?.stageOverrides?.[stageName];
+      if (stageOverride && stageOverride !== 'Adaptive') {
+        return stageOverride === 'Easy Only' ? 'easy' : stageOverride === 'Medium Only' ? 'medium' : 'hard';
+      }
+      const globalStrategy = settings?.difficultyStrategy;
+      if (globalStrategy && globalStrategy !== 'Adaptive') {
+        return globalStrategy === 'Easy Only' ? 'easy' : globalStrategy === 'Medium Only' ? 'medium' : 'hard';
+      }
+      return defaultDiff;
+    };
+
     // Helper to get questions of specific type and difficulty
     const getQ = (type: string, difficulty?: string, excludeCategories: string[] = []) => {
       let filtered = questionsList.filter(q => q.type === type);
@@ -174,18 +202,21 @@ export const AIService = {
       return this._pick(filtered, 1)[0] || questionsList[0];
     };
 
-    const q1 = getQ('Fundamentals', Math.random() > 0.5 ? 'easy' : 'medium');
+    const q1Diff = resolveDifficulty('Fundamentals', Math.random() > 0.5 ? 'easy' : 'medium');
+    const q1 = getQ('Fundamentals', q1Diff);
     const usedCategories = [q1?.category || ""];
 
     // Ensure diverse categories for Q2
-    const q2_easy = getQ('Core', 'easy', usedCategories);
-    const q2_medium = getQ('Core', 'medium', usedCategories);
-    const q2_hard = getQ('Core', 'hard', usedCategories);
+    const coreDiff = resolveDifficulty('Core');
+    const q2_easy = getQ('Core', coreDiff || 'easy', usedCategories);
+    const q2_medium = getQ('Core', coreDiff || 'medium', usedCategories);
+    const q2_hard = getQ('Core', coreDiff || 'hard', usedCategories);
 
     // Ensure diverse categories for Q3
-    const q3_easy = getQ('Scenario', 'easy', usedCategories);
-    const q3_medium = getQ('Scenario', 'medium', usedCategories);
-    const q3_hard = getQ('Scenario', 'hard', usedCategories);
+    const scenarioDiff = resolveDifficulty('Scenario');
+    const q3_easy = getQ('Scenario', scenarioDiff || 'easy', usedCategories);
+    const q3_medium = getQ('Scenario', scenarioDiff || 'medium', usedCategories);
+    const q3_hard = getQ('Scenario', scenarioDiff || 'hard', usedCategories);
 
     const q4 = getQ('Behavioral Experience');
     const q5 = getQ('Behavioral Situation');
