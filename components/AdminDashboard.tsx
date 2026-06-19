@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StorageService } from '../services/storageService';
 import { InterviewSession, Question, ErrorLog, JobPost } from '../types';
 import {
-    Users, LogOut, Search, Shield, Edit, Plus, Save, X, Trash2,
+    Users, LogOut, Search, Shield, Edit, Plus, Save, X, Trash2, Play,
     Activity, ToggleLeft, ToggleRight, ChevronRight, Link, Copy, CheckCircle,
     Server, Database, AlertTriangle, Terminal, CheckCircle2, BookOpen, RefreshCw, FileText,
     Download, Sliders, Upload
@@ -13,6 +13,7 @@ import { SupabaseService } from '../services/supabaseService';
 import { SessionReportView } from './SessionReportView';
 import { ErrorLogService } from '../services/errorLogService';
 import { getQuestionsForRole } from '../services/aiService';
+import { submitAnswer } from '../services/apiService';
 
 interface AdminDashboardProps {
     onLogout: () => void;
@@ -79,6 +80,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
     const [errorLogs, setErrorLogs] = useState<ErrorLog[]>([]);
     const [errorsFilter, setErrorsFilter] = useState<string>('all');
     const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
+
+    // Test AI Grading Simulator state
+    const [testAnswer, setTestAnswer] = useState('');
+    const [testResult, setTestResult] = useState<any | null>(null);
+    const [isTesting, setIsTesting] = useState(false);
+
+    useEffect(() => {
+        setTestAnswer('');
+        setTestResult(null);
+        setIsTesting(false);
+    }, [editingQuestion]);
+
+    const handleTestGrading = async () => {
+        if (!editingQuestion || !testAnswer.trim()) return;
+        setIsTesting(true);
+        setTestResult(null);
+        try {
+            const mockCandidate = { name: "Test Admin", isDemo: true };
+            const result = await submitAnswer(
+                mockCandidate as any,
+                editingQuestion,
+                testAnswer,
+                undefined,
+                undefined,
+                "test-session-id"
+            );
+            setTestResult(result.evaluation);
+        } catch (err: any) {
+            console.error("Test grading failed:", err);
+            setTestResult({
+                error: err.message || "Failed to contact AI evaluator. Please check your network and try again."
+            });
+        } finally {
+            setIsTesting(false);
+        }
+    };
 
     // Loading indicator
     const [isLoading, setIsLoading] = useState(true);
@@ -279,13 +316,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
         const updated = questionsList.map(q => {
             if (q.id === qId) {
                 const updatedQ = { ...q, [field]: value };
-                // Keep keyConcepts in sync if keyPoints is modified
-                if (field === 'keyPoints' && Array.isArray(value)) {
-                    updatedQ.keyConcepts = value.map(pt => ({
-                        concept: pt,
-                        importance: 'medium'
-                    }));
-                }
                 return updatedQ;
             }
             return q;
@@ -300,14 +330,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
             question: "Enter question text here...",
             difficulty: 'medium',
             type: questionsFilter !== 'all' ? (questionsFilter as any) : 'Core',
-            topic: "General",
             category: "Technical",
-            ideal_answer: "Provide the reference answer model for the grading AI.",
-            keyPoints: ["Point 1", "Point 2"],
-            keyConcepts: [
-                { concept: "Point 1", importance: "medium" },
-                { concept: "Point 2", importance: "medium" }
-            ],
+            evaluationGuide: ["Explain the core concept or answer the question directly."],
             maxScore: 10
         };
         setQuestionsList([...questionsList, newQ]);
@@ -315,8 +339,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
 
     // Question bank action: Delete question from array
     const handleDeleteQuestion = (qId: number | string) => {
-        if (window.confirm("Delete this question? Remember to click 'Save Changes' to apply.")) {
+        if (window.confirm("Are you sure you want to delete this question? Remember to click 'Save Changes' to apply the deletion to the database.")) {
             setQuestionsList(questionsList.filter(q => q.id !== qId));
+            if (editingQuestion && editingQuestion.id === qId) {
+                setEditingQuestion(null);
+                setIsAddModalOpen(false);
+            }
         }
     };
 
@@ -373,9 +401,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
         if (questionSearchQuery) {
             const query = questionSearchQuery.toLowerCase();
             const textMatch = q.question.toLowerCase().includes(query);
-            const topicMatch = q.topic?.toLowerCase().includes(query) || false;
             const categoryMatch = q.category?.toLowerCase().includes(query) || false;
-            if (!textMatch && !topicMatch && !categoryMatch) return false;
+            if (!textMatch && !categoryMatch) return false;
         }
         // Difficulty filter
         if (selectedDifficultyFilter !== 'all' && q.difficulty !== selectedDifficultyFilter) return false;
@@ -482,11 +509,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
             downloadAnchor.click();
             downloadAnchor.remove();
         } else {
-            // CSV Format (excluding ideal_answer)
-            const headers = ['id', 'question', 'difficulty', 'type', 'category', 'topic', 'keyConcepts', 'version', 'updatedAt'];
+            // CSV Format (excluding ideal_answer and topic)
+            const headers = ['id', 'question', 'difficulty', 'type', 'category', 'evaluationGuide', 'version', 'updatedAt'];
             const rows = questionsList.map(q => {
-                const keyConceptsStr = q.keyConcepts 
-                    ? q.keyConcepts.map(c => `${c.concept}:${c.importance}`).join(';') 
+                const evaluationGuideStr = q.evaluationGuide 
+                    ? q.evaluationGuide.join(';') 
                     : '';
                 return [
                     q.id,
@@ -494,8 +521,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                     q.difficulty || 'medium',
                     q.type || 'Core',
                     q.category || 'Technical',
-                    q.topic || 'General',
-                    `"${keyConceptsStr.replace(/"/g, '""')}"`,
+                    `"${evaluationGuideStr.replace(/"/g, '""')}"`,
                     q.version || 1,
                     q.updatedAt || new Date().toISOString()
                 ];
@@ -617,26 +643,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                 }
             }
 
-            const topic = item.topic || 'General';
             const category = item.category || (type.startsWith('Behavioral') ? 'Behavioral' : 'Technical');
 
-            let keyConcepts: any[] = [];
-            if (item.keyConcepts) {
+            let evaluationGuide: string[] = [];
+            if (item.evaluationGuide) {
+                evaluationGuide = String(item.evaluationGuide).split(';').map(part => part.trim()).filter(Boolean);
+            } else if (item.keyConcepts) {
+                // Backward compatibility: Convert imported keyConcepts
                 if (typeof item.keyConcepts === 'string') {
-                    keyConcepts = item.keyConcepts.split(';').map(part => {
-                        const [concept, importance] = part.split(':');
-                        return {
-                            concept: (concept || '').trim(),
-                            importance: (importance || 'medium').trim().toLowerCase() as any
-                        };
-                    }).filter(c => c.concept);
+                    evaluationGuide = item.keyConcepts.split(';').map(part => {
+                        const [concept] = part.split(':');
+                        return (concept || '').trim();
+                    }).filter(Boolean);
                 } else if (Array.isArray(item.keyConcepts)) {
-                    keyConcepts = item.keyConcepts;
+                    evaluationGuide = item.keyConcepts.map(c => typeof c === 'string' ? c : c.concept || '').filter(Boolean);
+                }
+            } else if (item.keyPoints) {
+                if (typeof item.keyPoints === 'string') {
+                    evaluationGuide = item.keyPoints.split(';').map(part => part.trim()).filter(Boolean);
+                } else if (Array.isArray(item.keyPoints)) {
+                    evaluationGuide = item.keyPoints.filter(Boolean);
                 }
             }
 
-            if (keyConcepts.length === 0) {
-                rowWarnings.push("No key grading concepts specified.");
+            if (evaluationGuide.length === 0) {
+                rowWarnings.push("No expected evaluation areas specified.");
+                evaluationGuide.push("Explain the core concept or answer the question directly.");
             }
 
             const isDuplicate = questionsList.some(q => 
@@ -668,9 +700,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                 difficulty,
                 type,
                 category,
-                topic,
-                keyConcepts,
-                keyPoints: keyConcepts.map(c => c.concept),
+                evaluationGuide,
                 maxScore: item.maxScore ? parseFloat(item.maxScore) : 10,
                 version: isNaN(version) ? 1 : version,
                 updatedAt,
@@ -727,8 +757,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
             return;
         }
 
-        const updatedQ = {
+        const validAreas = (editingQuestion.evaluationGuide || []).map(a => a.trim()).filter(Boolean);
+        if (validAreas.length === 0) {
+            alert("At least one non-empty evaluation checklist area is required.");
+            return;
+        }
+
+        const updatedQ: Question = {
             ...editingQuestion,
+            evaluationGuide: validAreas,
             version: isAddModalOpen ? 1 : (editingQuestion.version || 1) + 1,
             updatedAt: new Date().toISOString()
         };
@@ -1247,10 +1284,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                             question: "",
                                                             difficulty: 'medium',
                                                             type: questionsFilter !== 'all' ? (questionsFilter as any) : 'Core',
-                                                            topic: "General",
                                                             category: "Technical",
-                                                            keyConcepts: [{ concept: "Core Concept", importance: "medium" }],
-                                                            keyPoints: ["Core Concept"],
+                                                            evaluationGuide: ["Core Concept"],
                                                             maxScore: 10,
                                                             version: 1,
                                                             updatedAt: new Date().toISOString()
@@ -1348,7 +1383,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                                                 {q.question}
                                                                             </span>
                                                                             <span className="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 rounded-md shrink-0">
-                                                                                {q.keyConcepts?.length || 0} Concepts
+                                                                                {q.evaluationGuide?.length || 0} Areas
                                                                             </span>
                                                                         </div>
                                                                     </td>
@@ -1751,7 +1786,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                             /* UPLOAD STATE */
                                             <div className="space-y-4">
                                                 <p className="text-xs text-slate-500">
-                                                    Upload a JSON or CSV file containing question bank data. CSV header keys should include: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">question</code>, <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">difficulty</code>, <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">type</code>, <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">category</code>, <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">topic</code>, and <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">keyConcepts</code> (semicolon separated).
+                                                    Upload a JSON or CSV file containing question bank data. CSV header keys should include: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">question</code>, <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">difficulty</code>, <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">type</code>, <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">category</code>, and <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[10px]">evaluationGuide</code> (semicolon separated).
                                                 </p>
                                                 <div className="border-2 border-dashed border-slate-200 hover:border-indigo-400 bg-slate-50/50 hover:bg-slate-50 rounded-2xl p-10 text-center transition-colors relative cursor-pointer">
                                                     <input 
@@ -1917,7 +1952,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                             <div>
                                                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Question Text</label>
                                                 <textarea 
-                                                    className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-3 text-sm outline-none transition-all resize-y h-24 text-slate-800" 
+                                                    className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-3 text-sm outline-none transition-all resize-y h-24 text-slate-800 font-medium" 
                                                     value={editingQuestion.question} 
                                                     onChange={(e) => setEditingQuestion({ ...editingQuestion, question: e.target.value })} 
                                                 />
@@ -1954,22 +1989,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                     </select>
                                                 </div>
 
-                                                {/* Topic */}
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Topic / Sub-area</label>
-                                                    <input 
-                                                        className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800" 
-                                                        value={editingQuestion.topic || ''} 
-                                                        onChange={(e) => setEditingQuestion({ ...editingQuestion, topic: e.target.value })} 
-                                                        placeholder="e.g. Data Structures"
-                                                    />
-                                                </div>
-
                                                 {/* Category */}
-                                                <div>
+                                                <div className="md:col-span-2">
                                                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Category</label>
                                                     <input 
-                                                        className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800" 
+                                                        className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800 font-semibold" 
                                                         value={editingQuestion.category || ''} 
                                                         onChange={(e) => setEditingQuestion({ ...editingQuestion, category: e.target.value })} 
                                                         placeholder="e.g. Technical"
@@ -1977,64 +2001,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                 </div>
                                             </div>
 
-                                            {/* Key Concepts Checklist Manager */}
+                                            {/* Evaluation Areas Checklist Manager */}
                                             <div className="space-y-3 pt-2">
                                                 <div className="flex justify-between items-center">
-                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Key Concepts & Importance Weights (AI Evaluation)</label>
+                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Evaluation Checklist Areas (AI Grading Standard)</label>
                                                     <button 
                                                         onClick={() => {
-                                                            const currentConcepts = editingQuestion.keyConcepts || [];
+                                                            const currentGuide = editingQuestion.evaluationGuide || [];
                                                             setEditingQuestion({
                                                                 ...editingQuestion,
-                                                                keyConcepts: [...currentConcepts, { concept: "", importance: "medium" }]
+                                                                evaluationGuide: [...currentGuide, ""]
                                                             });
                                                         }}
                                                         className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline"
                                                     >
-                                                        + Add Concept
+                                                        + Add Area
                                                     </button>
                                                 </div>
                                                 
                                                 <div className="space-y-2">
-                                                    {(editingQuestion.keyConcepts || []).length === 0 ? (
-                                                        <p className="text-xs text-slate-400 italic">No concepts added. Add concepts to guide AI grading weights.</p>
+                                                    {(editingQuestion.evaluationGuide || []).length === 0 ? (
+                                                        <p className="text-xs text-rose-500 font-semibold italic">No evaluation areas added. At least one area is required.</p>
                                                     ) : (
-                                                        (editingQuestion.keyConcepts || []).map((c, idx) => (
+                                                        (editingQuestion.evaluationGuide || []).map((area, idx) => (
                                                             <div key={idx} className="flex gap-3 items-center">
                                                                 <input 
-                                                                    className="flex-1 border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800"
-                                                                    value={c.concept}
+                                                                    className="flex-1 border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800 font-medium"
+                                                                    value={area}
                                                                     onChange={(e) => {
-                                                                        const updated = [...(editingQuestion.keyConcepts || [])];
-                                                                        updated[idx] = { ...c, concept: e.target.value };
+                                                                        const updated = [...(editingQuestion.evaluationGuide || [])];
+                                                                        updated[idx] = e.target.value;
                                                                         setEditingQuestion({
                                                                             ...editingQuestion,
-                                                                            keyConcepts: updated,
-                                                                            keyPoints: updated.map(uc => uc.concept)
+                                                                            evaluationGuide: updated
                                                                         });
                                                                     }}
-                                                                    placeholder="Concept / expected point keyword"
+                                                                    placeholder="Describe the expected candidate answer point or checklist item..."
                                                                 />
-                                                                <select
-                                                                    value={c.importance}
-                                                                    onChange={(e) => {
-                                                                        const updated = [...(editingQuestion.keyConcepts || [])];
-                                                                        updated[idx] = { ...c, importance: e.target.value as any };
-                                                                        setEditingQuestion({ ...editingQuestion, keyConcepts: updated });
-                                                                    }}
-                                                                    className="border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
-                                                                >
-                                                                    <option value="high">High Weight</option>
-                                                                    <option value="medium">Medium Weight</option>
-                                                                    <option value="low">Low Weight</option>
-                                                                </select>
                                                                 <button 
                                                                     onClick={() => {
-                                                                        const updated = (editingQuestion.keyConcepts || []).filter((_, i) => i !== idx);
+                                                                        const updated = (editingQuestion.evaluationGuide || []).filter((_, i) => i !== idx);
                                                                         setEditingQuestion({
                                                                             ...editingQuestion,
-                                                                            keyConcepts: updated,
-                                                                            keyPoints: updated.map(uc => uc.concept)
+                                                                            evaluationGuide: updated
                                                                         });
                                                                     }}
                                                                     className="p-2 text-slate-400 hover:text-red-500 hover:bg-slate-50 rounded-lg transition-colors"
@@ -2046,21 +2055,124 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                     )}
                                                 </div>
                                             </div>
+
+                                            {/* Preview & Test Evaluation Simulator */}
+                                            <div className="border-t border-slate-100 pt-4 space-y-3">
+                                                <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                                                    <Terminal size={14} className="text-indigo-500" /> Preview/Test AI Grading
+                                                </h4>
+                                                <p className="text-[10px] text-slate-400 leading-normal">
+                                                    Verify your evaluation guide by grading a mock candidate response before saving.
+                                                </p>
+                                                
+                                                <div className="space-y-3 bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                    <div>
+                                                        <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Sample Answer</label>
+                                                        <textarea 
+                                                            className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all resize-y h-16 text-slate-800 bg-white" 
+                                                            placeholder="Type a sample answer to test..." 
+                                                            value={testAnswer}
+                                                            onChange={(e) => setTestAnswer(e.target.value)}
+                                                        />
+                                                    </div>
+                                                    
+                                                    <div className="flex justify-between items-center">
+                                                        <button 
+                                                            onClick={handleTestGrading}
+                                                            disabled={isTesting || !testAnswer.trim()}
+                                                            className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-600 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5"
+                                                        >
+                                                            {isTesting ? (
+                                                                <>
+                                                                    <RefreshCw size={12} className="animate-spin" /> Testing...
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <Play size={12} /> Run Test Grading
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                        
+                                                        {testResult && !testResult.error && (
+                                                            <div className="text-[10px] font-bold text-slate-600 flex items-center gap-2">
+                                                                Expected Score: 
+                                                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider ${
+                                                                    testResult.contentScore >= 8 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
+                                                                    testResult.contentScore >= 6 ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' :
+                                                                    testResult.contentScore >= 4 ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                                                                    'bg-rose-50 text-rose-700 border border-rose-100'
+                                                                }`}>
+                                                                    {testResult.contentScore}/10 ({testResult.verdict})
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    
+                                                    {testResult && (
+                                                        <div className="border-t border-slate-200/60 pt-3 space-y-2 mt-2">
+                                                            {testResult.error ? (
+                                                                <p className="text-xs text-rose-500 font-medium">{testResult.error}</p>
+                                                            ) : (
+                                                                <div className="text-[11px] space-y-2.5">
+                                                                    <div>
+                                                                        <span className="font-bold text-slate-600 block mb-0.5">AI Feedback:</span>
+                                                                        <p className="text-slate-500 italic bg-white p-2.5 rounded-xl border border-slate-100 leading-relaxed font-sans">{testResult.feedback}</p>
+                                                                    </div>
+                                                                    <div className="grid grid-cols-2 gap-2">
+                                                                        <div>
+                                                                            <span className="font-bold text-emerald-700 block mb-1">✓ Areas Met:</span>
+                                                                            {testResult.matchedKeyPoints?.length > 0 ? (
+                                                                                <ul className="list-disc list-inside text-emerald-600 space-y-0.5 pl-1">
+                                                                                    {testResult.matchedKeyPoints.map((p: string, i: number) => <li key={i}>{p}</li>)}
+                                                                                </ul>
+                                                                            ) : (
+                                                                                <span className="text-slate-400 italic text-[10px]">None</span>
+                                                                            )}
+                                                                        </div>
+                                                                        <div>
+                                                                            <span className="font-bold text-rose-700 block mb-1">✕ Areas Missed:</span>
+                                                                            {testResult.missingKeyPoints?.length > 0 ? (
+                                                                                <ul className="list-disc list-inside text-rose-600 space-y-0.5 pl-1">
+                                                                                    {testResult.missingKeyPoints.map((p: string, i: number) => <li key={i}>{p}</li>)}
+                                                                                </ul>
+                                                                            ) : (
+                                                                                <span className="text-slate-400 italic text-[10px]">None</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
                                         </div>
 
-                                        <div className="p-6 border-t border-slate-100 flex justify-end gap-3 shrink-0">
-                                            <button 
-                                                onClick={() => { setEditingQuestion(null); setIsAddModalOpen(false); }} 
-                                                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
-                                            >
-                                                Cancel
-                                            </button>
-                                            <button 
-                                                onClick={handleSaveModal}
-                                                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-[0.98]"
-                                            >
-                                                {isAddModalOpen ? 'Add Question' : 'Save Changes'}
-                                            </button>
+                                        <div className="p-6 border-t border-slate-100 flex justify-between gap-3 shrink-0">
+                                            {!isAddModalOpen ? (
+                                                <button
+                                                    onClick={() => handleDeleteQuestion(editingQuestion.id)}
+                                                    className="px-4 py-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-600 text-xs font-bold rounded-xl transition-all active:scale-[0.98]"
+                                                >
+                                                    Delete Question
+                                                </button>
+                                            ) : (
+                                                <div></div>
+                                            )}
+                                            <div className="flex gap-3">
+                                                <button 
+                                                    onClick={() => { setEditingQuestion(null); setIsAddModalOpen(false); }} 
+                                                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
+                                                >
+                                                    Cancel
+                                                </button>
+                                                <button 
+                                                    onClick={handleSaveModal}
+                                                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-[0.98]"
+                                                >
+                                                    {isAddModalOpen ? 'Add Question' : 'Save Changes'}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

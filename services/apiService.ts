@@ -92,81 +92,18 @@ const ai = {
 // LOCAL SCORING — Keyword match + answer length + concept density
 // ============================================================================
 
-/**
- * Compute a local evaluation score when AI is unavailable.
- * Formula: 0.6 * keywordMatch + 0.2 * answerLength + 0.2 * conceptDensity
- */
 export function localEvaluate(
   answer: string,
   question: Question
-): { score: number; matched: string[]; missed: string[]; confidence: number } {
-  const answerLower = answer.toLowerCase().trim();
-  const words = answerLower.split(/\s+/).filter(Boolean);
-
-  // 1. Keyword matching against keyConcepts
-  const keyConcepts = question.keyConcepts || [];
-  const keyPoints = question.keyPoints || [];
-
-  const allConcepts = keyConcepts.length > 0
-    ? keyConcepts
-    : keyPoints.map(kp => ({ concept: kp, importance: 'medium' as const }));
-
-  let matchedScore = 0;
-  let totalPossible = 0;
-  const matched: string[] = [];
-  const missed: string[] = [];
-
-  for (const kc of allConcepts) {
-    const weight = kc.importance === 'high' ? 2 : kc.importance === 'low' ? 0.5 : 1;
-    totalPossible += weight;
-
-    // Check if any significant word from the concept appears in the answer
-    const conceptWords = kc.concept.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    const matchCount = conceptWords.filter(cw => answerLower.includes(cw)).length;
-    const matchRatio = conceptWords.length > 0 ? matchCount / conceptWords.length : 0;
-
-    if (matchRatio >= 0.4) {
-      matchedScore += weight;
-      matched.push(kc.concept);
-    } else {
-      missed.push(kc.concept);
-    }
-  }
-
-  const keywordMatchScore = totalPossible > 0 ? (matchedScore / totalPossible) * 10 : 5;
-
-  // 2. Answer length score (0-10)
-  // Short answers (<20 words) score low, medium (20-80) score mid, long (80+) score high
-  let lengthScore: number;
-  if (words.length < 10) lengthScore = 1;
-  else if (words.length < 20) lengthScore = 3;
-  else if (words.length < 40) lengthScore = 5;
-  else if (words.length < 80) lengthScore = 7;
-  else if (words.length < 150) lengthScore = 8;
-  else lengthScore = 9;
-
-  // 3. Concept density = unique concept-related words / total words
-  const conceptRelatedWords = new Set<string>();
-  for (const kc of allConcepts) {
-    kc.concept.toLowerCase().split(/\s+/).filter(w => w.length > 3).forEach(w => {
-      if (answerLower.includes(w)) conceptRelatedWords.add(w);
-    });
-  }
-  const densityRatio = words.length > 0 ? conceptRelatedWords.size / Math.min(words.length, 50) : 0;
-  const densityScore = Math.min(10, densityRatio * 30); // Scale up
-
-  // Final local score
-  const rawScore = keywordMatchScore * 0.6 + lengthScore * 0.2 + densityScore * 0.2;
-  const score = Math.round(Math.max(0, Math.min(10, rawScore)) * 10) / 10;
-
-  // Confidence is low for local evaluation
-  const confidence = Math.round(
-    (matched.length / Math.max(allConcepts.length, 1)) * 40 + // Up to 40% from keyword coverage
-    Math.min(20, words.length / 4) + // Up to 20% from answer length
-    10 // Base 10%
-  );
-
-  return { score, matched, missed, confidence: Math.min(70, confidence) }; // Cap at 70% for local eval
+): { score: number; matched: string[]; missed: string[]; confidence: number; evaluationAvailable: boolean; reason: string } {
+  return {
+    score: 0,
+    matched: [],
+    missed: question.evaluationGuide || [],
+    confidence: 0,
+    evaluationAvailable: false,
+    reason: "AI evaluator unavailable"
+  };
 }
 
 /**
@@ -178,33 +115,10 @@ export function localDifficultySignal(answer: string, question: Question): numbe
   const answerLower = answer.toLowerCase().trim();
   const words = answerLower.split(/\s+/).filter(Boolean);
 
-  // Keyword coverage (0-10)
-  const keyConcepts = question.keyConcepts || [];
-  const keyPoints = question.keyPoints || [];
-  const allConcepts = keyConcepts.length > 0
-    ? keyConcepts
-    : keyPoints.map(kp => ({ concept: kp, importance: 'medium' as const }));
-
-  let matchedCount = 0;
-  for (const kc of allConcepts) {
-    const conceptWords = kc.concept.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    const matchCount = conceptWords.filter(cw => answerLower.includes(cw)).length;
-    if (conceptWords.length > 0 && matchCount / conceptWords.length >= 0.4) {
-      matchedCount++;
-    }
-  }
-  const keywordCoverage = allConcepts.length > 0 ? (matchedCount / allConcepts.length) * 10 : 5;
-
-  // Answer completeness (0-10) — based on length and structure
-  let completeness: number;
-  if (words.length < 10) completeness = 2;
-  else if (words.length < 25) completeness = 4;
-  else if (words.length < 50) completeness = 6;
-  else if (words.length < 100) completeness = 8;
-  else completeness = 9;
-
-  // Formula: keywordCoverage * 0.7 + answerCompleteness * 0.3
-  return Math.round((keywordCoverage * 0.7 + completeness * 0.3) * 10) / 10;
+  // Simple length-based heuristic instead of keyword fallback grading
+  if (words.length < 15) return 3;
+  if (words.length < 40) return 6;
+  return 8;
 }
 
 // ============================================================================
@@ -217,7 +131,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "Tell me about your professional background and what you are looking for in your next role.",
     difficulty: "easy" as const,
     ideal_answer: "Candidate should clearly state their current role, years of experience, and key skills.",
-    keyPoints: ["Current Role", "Experience", "Skills"],
+    evaluationGuide: ["Current Role", "Experience", "Skills"],
     maxScore: 10
   },
   {
@@ -225,7 +139,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "Describe a challenging project you worked on. What was your role and how did you overcome the obstacles?",
     difficulty: "medium" as const,
     ideal_answer: "Candidate defines problem, their specific action, and a positive result.",
-    keyPoints: ["Problem definition", "Action taken", "Result"],
+    evaluationGuide: ["Problem definition", "Action taken", "Result"],
     maxScore: 10
   },
   {
@@ -233,7 +147,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "How do you handle disagreements with colleagues or managers?",
     difficulty: "medium" as const,
     ideal_answer: "Seeks to understand, communicates respectfully, finds compromise.",
-    keyPoints: ["Communication", "Respect", "Compromise"],
+    evaluationGuide: ["Communication", "Respect", "Compromise"],
     maxScore: 10
   },
   {
@@ -241,7 +155,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "Where do you see yourself professionally in five years?",
     difficulty: "easy" as const,
     ideal_answer: "Presents clear career progression goals aligned with the role.",
-    keyPoints: ["Career goals", "Ambition", "Alignment"],
+    evaluationGuide: ["Career goals", "Ambition", "Alignment"],
     maxScore: 10
   },
   {
@@ -249,7 +163,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "What do you consider your greatest professional strength?",
     difficulty: "easy" as const,
     ideal_answer: "Identifies a relevant strength and provides a quick example.",
-    keyPoints: ["Relevance", "Self-awareness", "Example"],
+    evaluationGuide: ["Relevance", "Self-awareness", "Example"],
     maxScore: 10
   },
   {
@@ -257,7 +171,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "Describe a time when you had to learn a new technology or skill quickly.",
     difficulty: "medium" as const,
     ideal_answer: "Shows adaptability, resourcefulness, and successfully applying the new skill.",
-    keyPoints: ["Adaptability", "Learning process", "Application"],
+    evaluationGuide: ["Adaptability", "Learning process", "Application"],
     maxScore: 10
   },
   {
@@ -265,7 +179,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "How do you prioritize your work when dealing with multiple tight deadlines?",
     difficulty: "medium" as const,
     ideal_answer: "Uses a framework (like Eisenhower matrix), communicates with stakeholders, stays organized.",
-    keyPoints: ["Time management", "Communication", "Organization"],
+    evaluationGuide: ["Time management", "Communication", "Organization"],
     maxScore: 10
   },
   {
@@ -273,7 +187,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "Tell me about a time you made a mistake. How did you handle it?",
     difficulty: "medium" as const,
     ideal_answer: "Takes accountability, fixes the issue, and learns from it.",
-    keyPoints: ["Accountability", "Resolution", "Learning"],
+    evaluationGuide: ["Accountability", "Resolution", "Learning"],
     maxScore: 10
   },
   {
@@ -281,7 +195,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "What is your approach to giving and receiving constructive feedback?",
     difficulty: "medium" as const,
     ideal_answer: "Views it as an opportunity for growth; gives it specifically and kindly.",
-    keyPoints: ["Open-mindedness", "Growth mindset", "Tact"],
+    evaluationGuide: ["Open-mindedness", "Growth mindset", "Tact"],
     maxScore: 10
   },
   {
@@ -289,7 +203,7 @@ const DIRECT_INTERVIEW_FALLBACK = [
     question: "Why are you interested in joining our company specifically?",
     difficulty: "easy" as const,
     ideal_answer: "Shows research about the company and aligns personal goals with company mission.",
-    keyPoints: ["Research", "Alignment", "Enthusiasm"],
+    evaluationGuide: ["Research", "Alignment", "Enthusiasm"],
     maxScore: 10
   }
 ];
@@ -342,7 +256,7 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
         difficulty: "easy",
         ideal_answer: "The candidate should relate their skills and goals clearly.",
         maxScore: 10,
-        keyPoints: ["Interest", "Goals"]
+        evaluationGuide: ["Interest", "Goals"]
       }];
       settings = {
         ...DEFAULT_SETTINGS,
@@ -497,9 +411,9 @@ export const submitAnswer = async (
 ): Promise<{ evaluation: EvaluationResult; nextQuestion: Question | null }> => {
 
   const isBehavioral = currentQuestion.type?.startsWith("Behavioral");
-  const keyConceptsStr = currentQuestion.keyConcepts 
-    ? currentQuestion.keyConcepts.map(kc => `[${kc.importance.toUpperCase()}] ${kc.concept}`).join("\n")
-    : (currentQuestion.keyPoints?.join(", ") || "Analyze based on general knowledge.");
+  const guideStr = currentQuestion.evaluationGuide
+    ? currentQuestion.evaluationGuide.map(area => `- ${area}`).join("\n")
+    : "- Explain the core concepts of the question.";
 
   const difficulty = settings?.difficulty ?? "Medium";
   const scoringGuidelines = `SCORING GUIDELINES (IMPORTANT):
@@ -534,8 +448,8 @@ QUESTION: "${currentQuestion.question}"
 ${currentQuestion.ideal_answer ? `IDEAL/REFERENCE ANSWER: "${currentQuestion.ideal_answer}"` : ''}
 TYPE: ${currentQuestion.type || 'Technical'}
 
-KEY CONCEPTS TO CHECK:
-${keyConceptsStr}
+EVALUATION GUIDE CHECKLIST AREAS TO CHECK:
+${guideStr}
 
 CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
@@ -543,11 +457,11 @@ ${scoringGuidelines}
 
 INTERNAL RUBRICS (Aligned with Scoring Calibration):
 - Coverage:
-  8-10 = Explains almost all expected concepts correctly, showing clear conceptual coverage.
-  6-8 = Explains most expected concepts, with minor gaps or omission of non-critical details.
-  4-6 = Explains some expected concepts correctly (partial credit), showing partial coverage.
-  2-4 = Only mentions or superficially covers concepts without explaining them (limited coverage).
-  0-2 = No relevant concepts mentioned or answered.
+  8-10 = Explains almost all expected checklist areas correctly, showing clear coverage.
+  6-8 = Explains most expected checklist areas, with minor gaps or omission of non-critical details.
+  4-6 = Explains some expected checklist areas correctly (partial credit), showing partial coverage.
+  2-4 = Only mentions or superficially covers areas without explaining them (limited coverage).
+  0-2 = No relevant areas mentioned or answered.
 - Understanding:
   8-10 = Explains core ideas in their own words clearly with examples, showing excellent understanding.
   6-8 = Demonstrates good understanding, can explain key details but has minor gaps.
@@ -568,7 +482,7 @@ INTERNAL RUBRICS (Aligned with Scoring Calibration):
   0-2 = No depth, incorrect assertions, or empty answer.
 
 CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
-If the candidate's answer simply lists the names of the key concepts, terms, or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
+If the candidate's answer simply lists the names of the expected areas or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
 In this case, you MUST penalize the scores strictly:
 - "conceptUnderstanding" MUST NOT exceed 2/10 (since they only gave superficial mentions or recited terms without explaining).
 - "depth" MUST NOT exceed 1/10 (since there is no elaboration or detail).
@@ -577,7 +491,7 @@ In this case, you MUST penalize the scores strictly:
 - Make sure to list these terms under "matchedKeyPoints" if they are present, but the scores must reflect the severe lack of understanding and explanation.
 - State in the "feedback" that the candidate only listed the concepts without explaining them.
 
-Evaluate the candidate's answer against the key concepts and rubrics.
+Evaluate the candidate's answer against the expected checklist areas and rubrics.
 Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
 Provide score for answerDirectnessScore (0-10) which measures how directly they answered the question without keyword stuffing or bluffing.
 Provide tradeoffReasoningScore (0-10 or null) which evaluates how well they discuss design tradeoffs, pros/cons, or alternative approaches (return null if not applicable to this question).
@@ -598,9 +512,9 @@ Return strictly the following JSON structure:
   "technicalErrors": [
     { "error": "description of incorrect or hallucinated statement", "severity": "low" | "medium" | "high" }
   ],
-  "matchedKeyPoints": ["concepts the candidate covered"],
-  "missingKeyPoints": ["concepts the candidate missed"],
-  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what core concepts they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
+  "matchedKeyPoints": ["areas from the evaluation guide checklist that the candidate covered"],
+  "missingKeyPoints": ["areas from the evaluation guide checklist that the candidate missed"],
+  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what expected areas they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
 }`;
 
   const generateEval = async (prompt: string): Promise<EvaluationResult> => {
@@ -628,9 +542,9 @@ export const retryEvaluation = async (
   answer: string,
   sessionId?: string
 ): Promise<EvaluationResult> => {
-  const keyConceptsStr = question.keyConcepts 
-    ? question.keyConcepts.map(kc => `[${kc.importance.toUpperCase()}] ${kc.concept}`).join("\n")
-    : (question.keyPoints?.join(", ") || "Analyze based on general knowledge.");
+  const guideStr = question.evaluationGuide
+    ? question.evaluationGuide.map(area => `- ${area}`).join("\n")
+    : "- Explain the core concepts of the question.";
 
   const isBehavioral = question.type?.startsWith("Behavioral");
 
@@ -666,8 +580,8 @@ QUESTION: "${question.question}"
 ${question.ideal_answer ? `IDEAL/REFERENCE ANSWER: "${question.ideal_answer}"` : ''}
 TYPE: ${question.type || 'Technical'}
 
-KEY CONCEPTS TO CHECK:
-${keyConceptsStr}
+EVALUATION GUIDE CHECKLIST AREAS TO CHECK:
+${guideStr}
 
 ANSWER: "${answer}"
 
@@ -675,11 +589,11 @@ ${scoringGuidelines}
 
 INTERNAL RUBRICS (Aligned with Scoring Calibration):
 - Coverage:
-  8-10 = Explains almost all expected concepts correctly, showing clear conceptual coverage.
-  6-8 = Explains most expected concepts, with minor gaps or omission of non-critical details.
-  4-6 = Explains some expected concepts correctly (partial credit), showing partial coverage.
-  2-4 = Only mentions or superficially covers concepts without explaining them (limited coverage).
-  0-2 = No relevant concepts mentioned or answered.
+  8-10 = Explains almost all expected checklist areas correctly, showing clear coverage.
+  6-8 = Explains most expected checklist areas, with minor gaps or omission of non-critical details.
+  4-6 = Explains some expected checklist areas correctly (partial credit), showing partial coverage.
+  2-4 = Only mentions or superficially covers areas without explaining them (limited coverage).
+  0-2 = No relevant areas mentioned or answered.
 - Understanding:
   8-10 = Explains core ideas in their own words clearly with examples, showing excellent understanding.
   6-8 = Demonstrates good understanding, can explain key details but has minor gaps.
@@ -700,7 +614,7 @@ INTERNAL RUBRICS (Aligned with Scoring Calibration):
   0-2 = No depth, incorrect assertions, or empty answer.
 
 CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
-If the candidate's answer simply lists the names of the key concepts, terms, or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
+If the candidate's answer simply lists the names of the expected areas or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
 In this case, you MUST penalize the scores strictly:
 - "conceptUnderstanding" MUST NOT exceed 2/10 (since they only gave superficial mentions or recited terms without explaining).
 - "depth" MUST NOT exceed 1/10 (since there is no elaboration or detail).
@@ -709,7 +623,7 @@ In this case, you MUST penalize the scores strictly:
 - Make sure to list these terms under "matchedKeyPoints" if they are present, but the scores must reflect the severe lack of understanding and explanation.
 - State in the "feedback" that the candidate only listed the concepts without explaining them.
 
-Evaluate the candidate's answer against the key concepts and rubrics.
+Evaluate the candidate's answer against the expected checklist areas and rubrics.
 Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
 Provide score for answerDirectnessScore (0-10) which measures how directly they answered the question without keyword stuffing or bluffing.
 Provide tradeoffReasoningScore (0-10 or null) which evaluates how well they discuss design tradeoffs, pros/cons, or alternative approaches (return null if not applicable to this question).
@@ -732,7 +646,7 @@ Return strictly the following JSON structure:
   ],
   "matchedKeyPoints": [],
   "missingKeyPoints": [],
-  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what core concepts they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
+  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what expected areas they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
 }`;
 
   try {

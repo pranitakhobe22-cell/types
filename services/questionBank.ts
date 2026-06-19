@@ -1,6 +1,6 @@
 import { Question } from "../types";
 
-export const CSE_QUESTION_BANK: Question[] = [
+export const CSE_QUESTION_BANK: any[] = [
   {
     id: "cse_f_1",
     question: "What is an Array?",
@@ -2104,7 +2104,7 @@ export const CSE_QUESTION_BANK: Question[] = [
   },
 ];
 
-export const ECE_QUESTION_BANK: Question[] = [
+export const ECE_QUESTION_BANK: any[] = [
   {
     id: "ece_f_1",
     question: "What is Ohm's Law?",

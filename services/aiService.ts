@@ -94,16 +94,60 @@ export interface EvaluationReport {
   averageConfidence: number;
 }
 
+export const ensureEvaluationGuide = (q: any): Question => {
+  if (!q) {
+    return {
+      id: "unknown",
+      question: "",
+      category: "General",
+      type: "Core",
+      difficulty: "medium",
+      evaluationGuide: ["General explanation"]
+    };
+  }
+
+  const evaluationGuide: string[] = [];
+  if (q.evaluationGuide && Array.isArray(q.evaluationGuide)) {
+    evaluationGuide.push(...q.evaluationGuide);
+  } else if (q.keyConcepts && Array.isArray(q.keyConcepts)) {
+    q.keyConcepts.forEach((c: any) => {
+      if (c && typeof c.concept === 'string') {
+        evaluationGuide.push(c.concept);
+      } else if (typeof c === 'string') {
+        evaluationGuide.push(c);
+      }
+    });
+  } else if (q.keyPoints && Array.isArray(q.keyPoints)) {
+    q.keyPoints.forEach((p: any) => {
+      if (typeof p === 'string') evaluationGuide.push(p);
+    });
+  }
+
+  // Fallback to avoid empty checklist
+  if (evaluationGuide.length === 0) {
+    evaluationGuide.push("Explain the core concept or answer the question directly.");
+  }
+
+  const { topic, keyConcepts, keyPoints, ...rest } = q;
+  
+  return {
+    ...rest,
+    evaluationGuide
+  };
+};
+
 export const getQuestionsForRole = (role: string): Question[] => {
   const custom = localStorage.getItem(`reicrew_questions_${role.toLowerCase()}`);
   if (custom) {
     try {
-      return JSON.parse(custom);
+      const parsed = JSON.parse(custom);
+      return parsed.map((q: any) => ensureEvaluationGuide(q));
     } catch (e) {
       console.error("Failed to parse custom questions from localStorage", e);
     }
   }
-  return role === "CSE" ? CSE_QUESTION_BANK : ECE_QUESTION_BANK;
+  const bank = role === "CSE" ? CSE_QUESTION_BANK : ECE_QUESTION_BANK;
+  return bank.map((q: any) => ensureEvaluationGuide(q));
 };
 
 export const AIService = {
@@ -247,13 +291,12 @@ Return strictly the following JSON structure:
 {
   "id": "followup_${parentQuestion.id}",
   "question": "<follow-up question text>",
-  "topic": "${parentQuestion.topic ?? ''}",
   "category": "${parentQuestion.category ?? ''}",
   "type": "${parentQuestion.type ?? 'Core'}",
   "difficulty": "${parentQuestion.difficulty ?? 'medium'}",
-  "keyConcepts": [
-    { "concept": "<specific key concept 1>", "importance": "high" },
-    { "concept": "<specific key concept 2>", "importance": "medium" }
+  "evaluationGuide": [
+    "<specific expected evaluation area 1>",
+    "<specific expected evaluation area 2>"
   ]
 }`;
 
@@ -266,11 +309,10 @@ Return strictly the following JSON structure:
       return {
         id: parsed.id || `followup_${parentQuestion.id}_${Date.now()}`,
         question: parsed.question,
-        topic: parsed.topic || parentQuestion.topic,
         category: parsed.category || parentQuestion.category,
         type: parsed.type || parentQuestion.type,
         difficulty: parsed.difficulty || parentQuestion.difficulty,
-        keyConcepts: parsed.keyConcepts || parentQuestion.keyConcepts,
+        evaluationGuide: parsed.evaluationGuide || parentQuestion.evaluationGuide || ["Detail explanation"],
         isFollowUp: true
       };
     } catch (e) {
@@ -278,11 +320,10 @@ Return strictly the following JSON structure:
       return {
         id: `followup_${parentQuestion.id}_fallback`,
         question: `Could you elaborate on the core concepts you just mentioned, particularly how they are implemented?`,
-        topic: parentQuestion.topic,
         category: parentQuestion.category,
         type: parentQuestion.type,
         difficulty: parentQuestion.difficulty,
-        keyConcepts: parentQuestion.keyConcepts,
+        evaluationGuide: parentQuestion.evaluationGuide || ["Detail explanation"],
         isFollowUp: true
       };
     }
@@ -300,15 +341,16 @@ Return strictly the following JSON structure:
         if (item.evaluation?.evaluationPending) {
           console.log(`[Report] Re-evaluating pending answer for: ${item.question.substring(0, 50)}...`);
           try {
-            const questionObj: Question = {
+            const questionObj = ensureEvaluationGuide({
               id: item.evaluation?.questionId || 0,
               question: item.question,
               ideal_answer: item.ideal_answer,
               keyConcepts: item.questionData?.keyConcepts,
               keyPoints: item.questionData?.keyPoints,
+              evaluationGuide: item.questionData?.evaluationGuide,
               type: item.questionData?.type,
               difficulty: item.questionData?.difficulty,
-            };
+            });
             const retried = await retryEvaluation(questionObj, item.answer, sessionId);
             return { ...item, evaluation: retried };
           } catch (err: any) {

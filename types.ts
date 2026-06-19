@@ -3,12 +3,10 @@ export interface Question {
   id: number | string;
   question: string; // Renamed from text to match spec
   ideal_answer?: string; // Kept optional for backward compatibility during transition
-  topic?: string;
   category?: string;
   type?: 'Fundamentals' | 'Core' | 'Scenario' | 'Behavioral Experience' | 'Behavioral Situation';
   difficulty?: 'easy' | 'medium' | 'hard';
-  keyConcepts?: { concept: string; importance: 'high' | 'medium' | 'low' }[];
-  keyPoints?: string[];
+  evaluationGuide: string[];
   maxScore?: number;
   isFollowUp?: boolean;
   discriminationWeight?: number;
