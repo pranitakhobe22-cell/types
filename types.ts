@@ -113,6 +113,10 @@ export interface EvaluationResult {
   transcriptQuality?: number;
   evaluationPending?: boolean;
   evaluationConfidence?: number; // 0-100: how confident is the evaluation (low for local fallback, high for AI)
+  evaluationError?: string; // Captured error message if evaluation failed
+  followupResult?: {
+    reliability: number; // 0-100
+  };
   strengths?: string[];
   improvements?: string[];
   recommendedFocusAreas?: string[];
@@ -440,6 +444,7 @@ export interface MasterEvaluationReport {
     followupResult?: {
       reliability: number; // 0-100
     };
+    evaluationError?: string;
   }[];
   benchmarkComparison: {
     percentile: number;

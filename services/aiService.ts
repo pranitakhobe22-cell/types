@@ -220,9 +220,18 @@ Return strictly the following JSON structure:
             };
             const retried = await retryEvaluation(questionObj, item.answer, sessionId);
             return { ...item, evaluation: retried };
-          } catch (err) {
-            console.warn("[Report] Re-evaluation failed, keeping local score:", err);
-            return item;
+          } catch (err: any) {
+            console.error("[Report] Re-evaluation failed:", err);
+            return {
+              ...item,
+              evaluation: {
+                ...item.evaluation,
+                evaluationPending: false,
+                evaluationError: err.message || String(err),
+                feedback: `AI Evaluation Failed: ${err.message || err}`,
+                contentScore: 0
+              }
+            };
           }
         }
         return item;
@@ -299,7 +308,9 @@ Return strictly the following JSON structure:
 
     // ── PHASE 3: Stability Score (Standard Deviation of primary questions) ──
     const primaryAnswers = resolvedAnswers.filter(item => !item.questionData?.isFollowUp);
-    const primaryScores = primaryAnswers.map(item => item.evaluation?.contentScore ?? 5);
+    const primaryScores = primaryAnswers
+      .filter(item => !item.evaluation?.evaluationError)
+      .map(item => item.evaluation?.contentScore ?? 5);
     let stdDev = 0;
     if (primaryScores.length > 0) {
       const mean = primaryScores.reduce((a, b) => a + b, 0) / primaryScores.length;
@@ -312,6 +323,7 @@ Return strictly the following JSON structure:
     let primaryMatchedConcepts = 0;
     let primaryExpectedConcepts = 0;
     for (const item of primaryAnswers) {
+      if (item.evaluation?.evaluationError) continue;
       const evalData = item.evaluation || {};
       const matched = evalData.matchedKeyPoints?.length || 0;
       const missed = evalData.missingKeyPoints?.length || 0;
@@ -335,6 +347,7 @@ Return strictly the following JSON structure:
     let totalWeightedScoreSum = 0;
     let totalWeightSum = 0;
     for (const item of resolvedAnswers) {
+      if (item.evaluation?.evaluationError) continue;
       const score = item.evaluation?.contentScore ?? 5;
       const q = item.questionData;
       const diffW = getDifficultyWeight(q);
@@ -380,13 +393,14 @@ Return strictly the following JSON structure:
     const knowledgeScore = technicalScore;
     
     const reasoningScores = resolvedAnswers
-      .filter(item => item.evaluation?.analysis?.reasoning !== undefined)
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.analysis?.reasoning !== undefined)
       .map(item => item.evaluation.analysis.reasoning);
     const reasoningScore = reasoningScores.length > 0
       ? Math.round((reasoningScores.reduce((a, b) => a + b, 0) / reasoningScores.length) * 10)
       : 50;
 
     const communicationScores = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError)
       .map(item => item.evaluation?.communicationScore ?? item.evaluation?.analysis?.communication ?? 5);
     const communicationScore = Math.round((communicationScores.reduce((a, b) => a + b, 0) / (communicationScores.length || 1)) * 10);
 
@@ -495,7 +509,8 @@ Return strictly the following JSON structure (do not include markdown code block
         technicalErrors: errors,
         analysis: analysisObj,
         transcriptionQualityScore: evalData.evaluationConfidence ?? 80,
-        followupResult: evalData.followupResult
+        followupResult: evalData.followupResult,
+        evaluationError: evalData.evaluationError
       };
     });
 

@@ -500,25 +500,30 @@ export const submitAnswer = async (
     : (currentQuestion.keyPoints?.join(", ") || "Analyze based on general knowledge.");
 
   const difficulty = settings?.difficulty ?? "Medium";
-  let scoringGuide = `SCORING ANCHORS:
-- 8-10: Covers most HIGH concepts clearly, shows depth and practical understanding
-- 5-7: Covers at least 1-2 HIGH concepts, partially addresses others
-- 3-4: Shows basic awareness but misses critical concepts or is vague
-- 0-2: Completely wrong, irrelevant, or no meaningful content`;
+  const scoringGuidelines = `SCORING GUIDELINES (IMPORTANT):
 
-  if (difficulty === 'Very Easy' || difficulty === 'Easy') {
-    scoringGuide = `SCORING ANCHORS (LENIENT):
-- 7-10: Mentions key concepts even if explanation is basic
-- 4-6: Shows some awareness of the topic
-- 2-3: Very vague but on-topic
-- 0-1: Completely irrelevant`;
-  } else if (difficulty === 'Hard' || difficulty === 'Very Hard') {
-    scoringGuide = `SCORING ANCHORS (STRICT):
-- 9-10: Expert-level depth, covers all HIGH concepts with examples
-- 6-8: Solid understanding, covers most concepts with some depth
-- 3-5: Basic understanding, missing key nuances
-- 0-2: Surface-level or incorrect`;
-  }
+1. CONCEPT OVER KEYWORDS:
+    If the candidate demonstrates correct conceptual understanding in their own words, award reasonable marks even if exact keywords or textbook terminology are missing.
+2. MODERATE LENIENCY:
+    Do not require perfect answers for medium scores. A partially correct explanation with clear understanding should typically score between 5-7/10 rather than being heavily penalized.
+3. REAL-WORLD INTERVIEW STANDARD:
+    Evaluate like an experienced interviewer, not an exam checker. Candidates may use simple language, informal phrasing, or imperfect grammar while still demonstrating understanding.
+4. UNDERSTANDING > MEMORIZATION:
+    Reward explanations, examples, reasoning, and practical understanding more than keyword matching.
+5. AVOID OVER-PENALIZATION:
+    Minor omissions, communication mistakes, stuttering, or imperfect wording should not significantly reduce scores if the core concept is correct.
+6. PARTIAL CREDIT:
+    If approximately 50-70% of the expected concept is explained correctly, award proportional credit instead of treating the answer as incorrect.
+7. STRICT ONLY FOR FACTUAL ERRORS:
+    Apply stronger penalties only when the candidate provides technically incorrect information, contradictions, hallucinations, or clearly misunderstands the concept.
+8. SCORING CALIBRATION (Difficulty Level: ${difficulty}):
+    * Excellent understanding: 8-10 ${difficulty.includes('Hard') ? '(strict, requires some examples/depth)' : difficulty.includes('Easy') ? '(lenient, basic explanation is enough)' : ''}
+    * Good understanding with minor gaps: 6-8
+    * Partial understanding: 4-6
+    * Limited understanding: 2-4
+    * Incorrect or irrelevant answer: 0-2
+
+Maintain evidence-based evaluation and avoid generic praise, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
 
   const evalPrompt = `You are evaluating a SPOKEN interview answer (transcribed via speech-to-text).
 IMPORTANT: The transcript may contain minor speech errors, informal phrasing, or filler words. Focus on the SUBSTANCE of what was said, not grammar or polish.
@@ -532,29 +537,33 @@ ${keyConceptsStr}
 
 CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
-${scoringGuide}
+${scoringGuidelines}
 
-INTERNAL RUBRICS:
+INTERNAL RUBRICS (Aligned with Scoring Calibration):
 - Coverage:
-  0-2 = no relevant concepts
-  3-5 = mentions some concepts
-  6-8 = covers most concepts
-  9-10 = covers nearly all concepts
+  8-10 = Explains almost all expected concepts correctly, showing clear conceptual coverage.
+  6-8 = Explains most expected concepts, with minor gaps or omission of non-critical details.
+  4-6 = Explains some expected concepts correctly (partial credit), showing partial coverage.
+  2-4 = Only mentions or superficially covers concepts without explaining them (limited coverage).
+  0-2 = No relevant concepts mentioned or answered.
 - Understanding:
-  0-2 = superficial mentions or copy-paste words without explaining
-  3-5 = demonstrates basic comprehension of some concepts
-  6-8 = demonstrates solid comprehension of most concepts, can explain key ideas
-  9-10 = demonstrates expert-level comprehension and clarity
+  8-10 = Explains core ideas in their own words clearly with examples, showing excellent understanding.
+  6-8 = Demonstrates good understanding, can explain key details but has minor gaps.
+  4-6 = Shows partial understanding, understands basic terms but struggles to explain deeply.
+  2-4 = Superficial mentions or copy-pasted terms without explaining what they mean.
+  0-2 = Incorrect information or total misunderstanding of the concept.
 - Reasoning:
-  0-2 = no logical connection or reasoning
-  3-5 = makes basic logical steps but contains holes
-  6-8 = solid logical structure and supports conclusions
-  9-10 = exemplary logical progression and analysis
+  8-10 = Core reasoning is solid, logical, and supports design choices or tradeoffs.
+  6-8 = Clear reasoning with minor logical gaps or incomplete pros/cons.
+  4-6 = Partial reasoning, some logic is present but has notable holes.
+  2-4 = Limited logical connection, unstructured or vague logic.
+  0-2 = Confused reasoning, technical contradictions, or irrelevant logic.
 - Depth:
-  0-2 = surface-level only
-  3-5 = basic details provided
-  6-8 = substantial detail and nuance
-  9-10 = excellent depth with comprehensive details
+  8-10 = Provides excellent detail and nuance; explains design tradeoffs, examples, or practical applications.
+  6-8 = Substantial detail and context provided, but misses some advanced nuances.
+  4-6 = Basic details provided; answers the question directly but lacks elaboration.
+  2-4 = Very surface-level, lists keywords without elaboration.
+  0-2 = No depth, incorrect assertions, or empty answer.
 
 CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
 If the candidate's answer simply lists the names of the key concepts, terms, or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
@@ -606,51 +615,8 @@ Return strictly the following JSON structure:
     const evaluation = await generateEval(evalPrompt);
     return { evaluation, nextQuestion: null };
   } catch (error) {
-    console.error("OpenRouter Evaluation Failed, falling back to local evaluation:", error);
-    const local = localEvaluate(answer, currentQuestion);
-
-    let verdict: 'Excellent' | 'Good' | 'Borderline' | 'Fail';
-    if (local.score >= 8) verdict = 'Excellent';
-    else if (local.score >= 6) verdict = 'Good';
-    else if (local.score >= 4) verdict = 'Borderline';
-    else verdict = 'Fail';
-
-    const fallbackEval: EvaluationResult = {
-      questionId: Number(currentQuestion.id),
-      questionText: currentQuestion.question,
-      userAnswer: answer,
-      contentScore: local.score,
-      grammarScore: 0,
-      fluencyScore: 0,
-      communicationScore: 0,
-      matchedKeyPoints: local.matched,
-      missingKeyPoints: local.missed,
-      verdict,
-      feedback: `Evaluated locally (AI unavailable). Score based on keyword coverage and answer completeness.`,
-      confidenceScore: visualMetrics?.confidenceLevel ?? 0,
-      expressionAnalysis: "N/A",
-      timestamp: new Date().toISOString(),
-      evaluationPending: true,
-      evaluationConfidence: local.confidence,
-      analysis: {
-        technicalAccuracy: local.score,
-        problemSolving: local.score,
-        practicalExecution: local.score,
-        communication: 0,
-        coverage: local.score,
-        understanding: local.score,
-        reasoning: local.score,
-        depth: local.score,
-        clarity: 0,
-        structure: 0,
-        confidence: 0,
-        consistency: 0,
-        answerDirectnessScore: local.score,
-        tradeoffReasoningScore: undefined,
-        technicalErrors: []
-      }
-    };
-    return { evaluation: fallbackEval, nextQuestion: null };
+    console.error("OpenRouter Evaluation Failed:", error);
+    throw error;
   }
 };
 
@@ -665,6 +631,31 @@ export const retryEvaluation = async (
 
   const isBehavioral = question.type?.startsWith("Behavioral");
 
+  const scoringGuidelines = `SCORING GUIDELINES (IMPORTANT):
+
+1. CONCEPT OVER KEYWORDS:
+    If the candidate demonstrates correct conceptual understanding in their own words, award reasonable marks even if exact keywords or textbook terminology are missing.
+2. MODERATE LENIENCY:
+    Do not require perfect answers for medium scores. A partially correct explanation with clear understanding should typically score between 5-7/10 rather than being heavily penalized.
+3. REAL-WORLD INTERVIEW STANDARD:
+    Evaluate like an experienced interviewer, not an exam checker. Candidates may use simple language, informal phrasing, or imperfect grammar while still demonstrating understanding.
+4. UNDERSTANDING > MEMORIZATION:
+    Reward explanations, examples, reasoning, and practical understanding more than keyword matching.
+5. AVOID OVER-PENALIZATION:
+    Minor omissions, communication mistakes, stuttering, or imperfect wording should not significantly reduce scores if the core concept is correct.
+6. PARTIAL CREDIT:
+    If approximately 50-70% of the expected concept is explained correctly, award proportional credit instead of treating the answer as incorrect.
+7. STRICT ONLY FOR FACTUAL ERRORS:
+    Apply stronger penalties only when the candidate provides technically incorrect information, contradictions, hallucinations, or clearly misunderstands the concept.
+8. SCORING CALIBRATION:
+    * Excellent understanding: 8-10
+    * Good understanding with minor gaps: 6-8
+    * Partial understanding: 4-6
+    * Limited understanding: 2-4
+    * Incorrect or irrelevant answer: 0-2
+
+Maintain evidence-based evaluation and avoid generic praise, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
+
   const prompt = `You are evaluating a SPOKEN interview answer (transcribed via speech-to-text).
 IMPORTANT: The transcript may contain minor speech errors, informal phrasing, or filler words. Focus on the SUBSTANCE of what was said, not grammar or polish.
 
@@ -677,27 +668,33 @@ ${keyConceptsStr}
 
 ANSWER: "${answer}"
 
-INTERNAL RUBRICS:
+${scoringGuidelines}
+
+INTERNAL RUBRICS (Aligned with Scoring Calibration):
 - Coverage:
-  0-2 = no relevant concepts
-  3-5 = mentions some concepts
-  6-8 = covers most concepts
-  9-10 = covers nearly all concepts
+  8-10 = Explains almost all expected concepts correctly, showing clear conceptual coverage.
+  6-8 = Explains most expected concepts, with minor gaps or omission of non-critical details.
+  4-6 = Explains some expected concepts correctly (partial credit), showing partial coverage.
+  2-4 = Only mentions or superficially covers concepts without explaining them (limited coverage).
+  0-2 = No relevant concepts mentioned or answered.
 - Understanding:
-  0-2 = superficial mentions or copy-paste words without explaining
-  3-5 = demonstrates basic comprehension of some concepts
-  6-8 = demonstrates solid comprehension of most concepts, can explain key ideas
-  9-10 = demonstrates expert-level comprehension and clarity
+  8-10 = Explains core ideas in their own words clearly with examples, showing excellent understanding.
+  6-8 = Demonstrates good understanding, can explain key details but has minor gaps.
+  4-6 = Shows partial understanding, understands basic terms but struggles to explain deeply.
+  2-4 = Superficial mentions or copy-pasted terms without explaining what they mean.
+  0-2 = Incorrect information or total misunderstanding of the concept.
 - Reasoning:
-  0-2 = no logical connection or reasoning
-  3-5 = makes basic logical steps but contains holes
-  6-8 = solid logical structure and supports conclusions
-  9-10 = exemplary logical progression and analysis
+  8-10 = Core reasoning is solid, logical, and supports design choices or tradeoffs.
+  6-8 = Clear reasoning with minor logical gaps or incomplete pros/cons.
+  4-6 = Partial reasoning, some logic is present but has notable holes.
+  2-4 = Limited logical connection, unstructured or vague logic.
+  0-2 = Confused reasoning, technical contradictions, or irrelevant logic.
 - Depth:
-  0-2 = surface-level only
-  3-5 = basic details provided
-  6-8 = substantial detail and nuance
-  9-10 = excellent depth with comprehensive details
+  8-10 = Provides excellent detail and nuance; explains design tradeoffs, examples, or practical applications.
+  6-8 = Substantial detail and context provided, but misses some advanced nuances.
+  4-6 = Basic details provided; answers the question directly but lacks elaboration.
+  2-4 = Very surface-level, lists keywords without elaboration.
+  0-2 = No depth, incorrect assertions, or empty answer.
 
 CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
 If the candidate's answer simply lists the names of the key concepts, terms, or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
@@ -744,49 +741,7 @@ Return strictly the following JSON structure:
     const evalJson = JSON.parse(cleanText);
     return buildEvaluationResult(question, answer, evalJson, undefined, isBehavioral);
   } catch (err) {
-    console.warn("Retry evaluation failed, using local scoring:", err);
-    
-    const local = localEvaluate(answer, question);
-    let verdict: 'Excellent' | 'Good' | 'Borderline' | 'Fail';
-    if (local.score >= 8) verdict = 'Excellent';
-    else if (local.score >= 6) verdict = 'Good';
-    else if (local.score >= 4) verdict = 'Borderline';
-    else verdict = 'Fail';
-
-    return {
-      questionId: Number(question.id),
-      questionText: question.question,
-      userAnswer: answer,
-      contentScore: local.score,
-      grammarScore: 0,
-      fluencyScore: 0,
-      communicationScore: 0,
-      matchedKeyPoints: local.matched,
-      missingKeyPoints: local.missed,
-      verdict,
-      feedback: `Evaluated locally after retry failed. Score based on keyword coverage and answer completeness.`,
-      confidenceScore: 0,
-      expressionAnalysis: "Local evaluation.",
-      timestamp: new Date().toISOString(),
-      evaluationPending: false,
-      evaluationConfidence: local.confidence,
-      analysis: {
-        technicalAccuracy: local.score,
-        problemSolving: local.score,
-        practicalExecution: local.score,
-        communication: 0,
-        coverage: local.score,
-        understanding: local.score,
-        reasoning: local.score,
-        depth: local.score,
-        clarity: 0,
-        structure: 0,
-        confidence: 0,
-        consistency: 0,
-        answerDirectnessScore: local.score,
-        tradeoffReasoningScore: undefined,
-        technicalErrors: []
-      }
-    };
+    console.error("Retry evaluation failed:", err);
+    throw err;
   }
 };

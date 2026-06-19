@@ -251,21 +251,12 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [isMobileMonitorOpen, setIsMobileMonitorOpen] = useState(false);
   const MAX_QUESTIONS = 5;
 
-  // ── Background Evaluation Queue ──
-  const MAX_PARALLEL_EVALS = 2;
-  const evalQueueRef = useRef<Array<{ promise: Promise<any>; index: number; entry: any }>>([]);
-  const activeEvalsRef = useRef(0);
-  const pendingEvalTasksRef = useRef<Array<() => Promise<void>>>([]);
+  const historyRef = useRef<any[]>([]);
+  const bgEvalsRef = useRef<{ [key: number]: Promise<any> }>({});
 
-  const drainEvalQueue = () => {
-    while (activeEvalsRef.current < MAX_PARALLEL_EVALS && pendingEvalTasksRef.current.length > 0) {
-      const task = pendingEvalTasksRef.current.shift()!;
-      activeEvalsRef.current++;
-      task().finally(() => {
-        activeEvalsRef.current--;
-        drainEvalQueue();
-      });
-    }
+  const updateHistory = (newHistory: any[]) => {
+    historyRef.current = newHistory;
+    setHistory(newHistory);
   };
 
   const synthRef = useRef<SpeechSynthesis | null>(typeof window !== 'undefined' ? window.speechSynthesis : null);
@@ -495,7 +486,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
               if (!mounted) return;
               setQuestions(savedState.questions);
               setCurrentIndex(savedState.currentIndex || 0);
-              setHistory(savedState.history || []);
+              updateHistory(savedState.history || []);
               if (savedState.transcript) {
                   setTimeout(() => setTranscript(savedState.transcript), 100);
               }
@@ -583,19 +574,23 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         setToastWarning({ message: "Interview Terminated: Multiple integrity violations detected.", type: 'danger' });
         setIsProcessing(true);
         isProcessingRef.current = true;
-        setLoadingText("Terminating interview...");
+        setLoadingText("Awaiting background evaluations...");
         setLoading(true);
         stopListening();
         
         setTimeout(async () => {
+            const bgPromises = Object.values(bgEvalsRef.current);
+            await Promise.allSettled(bgPromises);
+
+            setLoadingText("Terminating interview...");
             const proctoringReport = compileReport();
             let evalReport = null;
             try {
-              evalReport = await AIService.evaluateInterview(history, sessionIdRef.current, proctoringReport);
+              evalReport = await AIService.evaluateInterview(historyRef.current, sessionIdRef.current, proctoringReport);
             } catch (e) {
               console.error("Evaluation failed during termination:", e);
             }
-            onComplete(history, proctoringReport, evalReport);
+            onComplete(historyRef.current, proctoringReport, evalReport);
         }, 100);
      } else if (proctoring.violationScore >= 10 && proctoring.violationScore < 15 && hasStarted) {
         setToastWarning({ message: `Severe Warning: Integrity violations detected. Score: ${proctoring.violationScore}/15. Further violations will terminate the interview.`, type: 'danger' });
@@ -644,62 +639,53 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     const capturedTranscript = transcript;
     const capturedIndex = currentIndex;
 
-    setLoadingText("Analyzing response...");
-    setLoading(true);
-
-    let evaluationResult: any = null;
-    try {
-      const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
-      evaluationResult = result.evaluation;
-    } catch (error: any) {
-      console.error("Evaluation failed synchronously:", error);
-      const local = localEvaluate(capturedTranscript, currentQ as any);
-      evaluationResult = {
-        questionId: Number(currentQ.id),
-        questionText: currentQ.question,
-        userAnswer: capturedTranscript,
-        contentScore: local.score,
-        grammarScore: 0,
-        fluencyScore: 0,
-        communicationScore: 0,
-        matchedKeyPoints: local.matched,
-        missingKeyPoints: local.missed,
-        verdict: local.score >= 8 ? 'Excellent' : local.score >= 6 ? 'Good' : local.score >= 4 ? 'Borderline' : 'Fail',
-        feedback: `Evaluated locally (AI unavailable). Score based on keyword coverage and answer completeness.`,
-        confidenceScore: 0,
-        expressionAnalysis: "N/A",
-        timestamp: new Date().toISOString(),
-        evaluationPending: true,
-        evaluationConfidence: local.confidence,
-        analysis: {
-          technicalAccuracy: local.score,
-          problemSolving: local.score,
-          practicalExecution: local.score,
-          communication: 0,
-          coverage: local.score,
-          understanding: local.score,
-          reasoning: local.score,
-          depth: local.score,
-          clarity: 0,
-          structure: 0,
-          confidence: 0,
-          consistency: 0,
-          answerDirectnessScore: local.score,
-          tradeoffReasoningScore: undefined,
-          technicalErrors: []
-        }
-      };
-    }
+    // 1. Calculate local evaluation immediately
+    const local = localEvaluate(capturedTranscript, currentQ as any);
+    const localEvalResult: any = {
+      questionId: Number(currentQ.id),
+      questionText: currentQ.question,
+      userAnswer: capturedTranscript,
+      contentScore: local.score,
+      grammarScore: 0,
+      fluencyScore: 0,
+      communicationScore: 0,
+      matchedKeyPoints: local.matched,
+      missingKeyPoints: local.missed,
+      verdict: local.score >= 8 ? 'Excellent' : local.score >= 6 ? 'Good' : local.score >= 4 ? 'Borderline' : 'Fail',
+      feedback: `Evaluating answer with AI...`,
+      confidenceScore: 0,
+      expressionAnalysis: "N/A",
+      timestamp: new Date().toISOString(),
+      evaluationPending: true,
+      evaluationConfidence: local.confidence,
+      analysis: {
+        technicalAccuracy: local.score,
+        problemSolving: local.score,
+        practicalExecution: local.score,
+        communication: 0,
+        coverage: local.score,
+        understanding: local.score,
+        reasoning: local.score,
+        depth: local.score,
+        clarity: 0,
+        structure: 0,
+        confidence: 0,
+        consistency: 0,
+        answerDirectnessScore: local.score,
+        tradeoffReasoningScore: undefined,
+        technicalErrors: []
+      }
+    };
 
     // Reliability calculation if this was a follow-up
     if (currentQ.isFollowUp) {
-      const parentEntry = history[history.length - 1]; // Previous item in history is parent
+      const parentEntry = historyRef.current[historyRef.current.length - 1]; // Previous item in history is parent
       if (parentEntry && parentEntry.evaluation) {
         const parentScore = parentEntry.evaluation.contentScore;
-        const followupScore = evaluationResult.contentScore;
+        const followupScore = localEvalResult.contentScore;
         const collapse = Math.max(0, parentScore - followupScore);
         const reliability = Math.max(0, Math.min(100, Math.round(100 - (collapse * 15))));
-        evaluationResult.followupResult = { reliability };
+        localEvalResult.followupResult = { reliability };
       }
     }
 
@@ -707,45 +693,102 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       question: currentQ.question, 
       answer: capturedTranscript, 
       ideal_answer: currentQ.ideal_answer || "",
-      evaluation: evaluationResult,
+      evaluation: localEvalResult,
       difficulty: currentQ.difficulty,
       category: currentQ.category,
       questionData: currentQ
     };
 
-    const newHistory = [...history, newEntry];
-    setHistory(newHistory);
+    const currentHistoryLength = historyRef.current.length;
+    const newHistory = [...historyRef.current, newEntry];
+    updateHistory(newHistory);
 
-    // Save to Supabase
+    // Save to Supabase (temporary local result)
     try {
-      await SupabaseService.saveResponse(sessionIdRef.current, history.length, evaluationResult, currentQ.ideal_answer, candidate.name);
+      await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, localEvalResult, currentQ.ideal_answer, candidate.name);
     } catch (err) {
       console.error("Failed to save response to Supabase:", err);
     }
 
+    // 2. Queue Background AI Evaluation
+    const evalPromise = (async () => {
+      try {
+        const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
+        const realEval = result.evaluation;
+
+        // Recalculate reliability if it is a follow-up
+        if (currentQ.isFollowUp) {
+          const parentEntry = historyRef.current[currentHistoryLength - 1];
+          if (parentEntry && parentEntry.evaluation) {
+            const parentScore = parentEntry.evaluation.contentScore;
+            const followupScore = realEval.contentScore;
+            const collapse = Math.max(0, parentScore - followupScore);
+            const reliability = Math.max(0, Math.min(100, Math.round(100 - (collapse * 15))));
+            realEval.followupResult = { reliability };
+          }
+        }
+
+        // Update local history
+        if (historyRef.current[currentHistoryLength]) {
+          const updatedHistory = [...historyRef.current];
+          updatedHistory[currentHistoryLength] = {
+            ...updatedHistory[currentHistoryLength],
+            evaluation: realEval
+          };
+          updateHistory(updatedHistory);
+        }
+
+        // Update final result in Supabase
+        await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, realEval, currentQ.ideal_answer, candidate.name);
+        return realEval;
+      } catch (err: any) {
+        console.error(`Background evaluation failed for question index ${currentHistoryLength}:`, err);
+        const errorEval = {
+          ...localEvalResult,
+          evaluationPending: false,
+          evaluationError: err.message || String(err),
+          feedback: `AI Evaluation Failed: ${err.message || err}`,
+          contentScore: 0,
+        };
+        // Update local history
+        if (historyRef.current[currentHistoryLength]) {
+          const updatedHistory = [...historyRef.current];
+          updatedHistory[currentHistoryLength] = {
+            ...updatedHistory[currentHistoryLength],
+            evaluation: errorEval
+          };
+          updateHistory(updatedHistory);
+        }
+        // Save final error result in Supabase
+        try {
+          await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, errorEval, currentQ.ideal_answer, candidate.name);
+        } catch (dbErr) {
+          console.error("Failed to save error response to Supabase:", dbErr);
+        }
+        return errorEval;
+      }
+    })();
+    bgEvalsRef.current[currentHistoryLength] = evalPromise;
+
     const primaryCount = newHistory.filter(h => !h.questionData?.isFollowUp).length;
     const isTechnical = currentQ.type && !currentQ.type.startsWith("Behavioral");
 
-    // Check if we should trigger follow-up:
-    // Only on primary technical questions
+    // Check if we should trigger follow-up based on local evaluation score:
     let shouldTriggerFollowUp = false;
     if (isTechnical && !currentQ.isFollowUp) {
       const hashVal = hashString(sessionIdRef.current + currentQ.id) % 100;
-      const contentScore = evaluationResult.contentScore;
-      const reasoning = evaluationResult.analysis?.reasoning ?? 5;
-      const understanding = evaluationResult.analysis?.understanding ?? 5;
-      const coverage = evaluationResult.analysis?.coverage ?? 5;
-
-      const cond1 = contentScore > 8.0 && (reasoning < understanding || (coverage - understanding) > 2.0);
+      const contentScore = localEvalResult.contentScore;
+      // Using local metrics or fallback threshold
       const cond2 = contentScore > 8.0 && hashVal < 20;
 
-      if (cond1 || cond2) {
+      if (cond2) {
         shouldTriggerFollowUp = true;
       }
     }
 
     if (shouldTriggerFollowUp) {
       setLoadingText("Generating validation question...");
+      setLoading(true);
       try {
         const followUpQ = await AIService.generateFollowUpQuestion(currentQ, capturedTranscript);
         const updatedQuestions = [...questions];
@@ -812,16 +855,22 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         speakQuestion(updatedQuestions[nextIdx].question);
       }, 300);
     } else {
+      setLoadingText("Awaiting background evaluations...");
+      setLoading(true);
+
+      const bgPromises = Object.values(bgEvalsRef.current);
+      await Promise.allSettled(bgPromises);
+
       setLoadingText("Compiling final decision report...");
       const proctoringReport = compileReport();
 
       let evalReport = null;
       try {
-        evalReport = await AIService.evaluateInterview(newHistory, sessionIdRef.current, proctoringReport);
+        evalReport = await AIService.evaluateInterview(historyRef.current, sessionIdRef.current, proctoringReport);
       } catch (e) {
         console.error("Evaluation failed:", e);
       }
-      onComplete(newHistory, proctoringReport, evalReport);
+      onComplete(historyRef.current, proctoringReport, evalReport);
     }
   };
 
@@ -1090,7 +1139,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
                         firstQuestionText = savedQ.question;
                         setQuestions(savedState.questions);
                         setCurrentIndex(savedState.currentIndex || 0);
-                        setHistory(savedState.history || []);
+                        updateHistory(savedState.history || []);
                         if (savedState.transcript) {
                           setTranscript(savedState.transcript);
                         }
