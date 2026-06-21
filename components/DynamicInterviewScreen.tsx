@@ -240,10 +240,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const {
     isListening, transcript, setTranscript, resetTranscript,
     startListening, stopListening, isSupported, speak, stopSpeaking, isSpeaking, warmUp,
-    micStatus
-  } = useSpeech();
+    micStatus, interimTranscript
+  } = useSpeech(questions[currentIndex]?.id);
   
-  const [interimSpeech, setInterimSpeech] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingText, setLoadingText] = useState('Evaluating your response...');
   const [isEditing, setIsEditing] = useState(false);
@@ -684,7 +683,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     if (isListening) {
       stopListening();
     } else {
-      startListening();
+      startListening(currentQ?.id);
     }
   };
 
@@ -1307,10 +1306,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
                 }}
                 placeholder={isListening ? "Listening..." : "Type or speak your answer here..."}
               />
-              {interimSpeech && (
+              {interimTranscript && (
                 <div className="absolute bottom-4 left-4 right-16 pointer-events-none">
                   <span className="bg-slate-800/80 text-white text-xs md:text-sm px-3 py-1.5 rounded-lg shadow-lg backdrop-blur-sm animate-pulse">
-                    {interimSpeech}
+                    {interimTranscript}
                   </span>
                 </div>
               )}
