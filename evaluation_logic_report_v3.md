@@ -1,4 +1,4 @@
-# Reicrew AI Platform: Active Evaluation & Scoring Logic Report (Version 3)
+# Reicrew AI Platform: Active Evaluation & Scoring Logic Report (Version 4)
 
 This document provides a detailed report of the evaluation logic, system parameters, architectural flow, and prompts that are **currently implemented and actively running** in the system.
 
@@ -135,29 +135,50 @@ Return strictly the following JSON structure:
 
 ### B. Single Question Mathematical Formulas
 
-#### 1. Technical Error Deductions
+#### 1. Per-Question Core Metrics
+Rather than a single aggregate content score, the evaluator tracks two primary dimensions:
+- **Knowledge Score:** Evaluates conceptual correctness, coverage, and understanding depth.
+  $$\text{Knowledge Score} = 0.40 \cdot \text{Accuracy} + 0.30 \cdot \text{Concept Coverage} + 0.30 \cdot \text{Concept Understanding}$$
+- **Problem Solving Score:** Evaluates analytical reasoning, directness, and elaboration depth.
+  $$\text{Problem Solving Score} = 0.40 \cdot \text{Reasoning} + 0.30 \cdot \text{Depth} + 0.30 \cdot \text{Answer Directness}$$
+
+#### 2. Fundamental Safety Floors & Guardrails
+To prevent high scores when fundamental understanding is weak:
+- If $\text{Accuracy} < 4.0 \rightarrow \text{Knowledge Score} = \min(5.0, \text{Knowledge Score})$
+- If $\text{Understanding} < 4.0 \rightarrow \text{Knowledge Score} = \min(6.0, \text{Knowledge Score})$
+- If $\text{Reasoning} < 4.0 \rightarrow \text{Problem Solving Score} = \min(5.0, \text{Problem Solving Score})$
+- If $\text{Accuracy} \le 2.0 \text{ and } \text{Understanding} \le 2.0 \rightarrow \text{Knowledge Score} = \min(4.0, \text{Knowledge Score})$
+
+#### 3. Evidence Bonus (Practicality Multiplier)
+An extra bonus is awarded if the candidate discusses a concrete real-world example or practical project experience:
+- **Condition:** $\text{Knowledge Score} \ge 6.0$ OR $\text{Problem Solving Score} \ge 6.0$ (ensures baseline correctness).
+- **Bonus Value:**
+  - If tradeoff reasoning is present: $+1.0$ point
+  - Else if depth is high (depth $\ge 7$): $+0.5$ points
+  - Else: $+0.0$ points
+
+$$\text{Evidence Bonus} = \begin{cases} 1.0 & \text{if } \text{Tradeoff Reasoning } \ge 6.0 \\ 0.5 & \text{if } \text{Depth } \ge 7.0 \\ 0.0 & \text{otherwise} \end{cases}$$
+
+#### 4. Technical Error Deductions
 Factually incorrect or contradictory statements penalize the content score based on severity:
 - **Low severity:** $-0.25$ points
 - **Medium severity:** $-0.75$ points
 - **High severity:** $-1.50$ points
-- **Deduction Cap:** Maximum total deduction of $2.00$ points.
+- **Soft Cap:** Maximum total deduction of $1.50$ points per question.
 
-$$\text{Error Deduction} = \min\left(2.00, \sum (0.25 \cdot N_{\text{low}} + 0.75 \cdot N_{\text{medium}} + 1.50 \cdot N_{\text{high}})\right)$$
+$$\text{Error Deduction} = \min\left(1.50, \sum (0.25 \cdot N_{\text{low}} + 0.75 \cdot N_{\text{medium}} + 1.50 \cdot N_{\text{high}})\right)$$
 
-#### 2. Content Score Formula
-Combines accuracy, conceptual understanding, logical reasoning, answer depth, and concept coverage weights, then applies the technical error penalty:
+#### 5. Aggregated Content Score Formula
+Combines the weighted core metrics, applies the error deductions, and adds the evidence bonus:
+$$\text{Raw Content Score} = 0.60 \cdot \text{Knowledge Score} + 0.40 \cdot \text{Problem Solving Score}$$
+$$\text{Content Score} = \text{Round}\big(\text{Clamp}(0, 10, \text{Raw Content Score} - \text{Error Deduction} + \text{Evidence Bonus}) \cdot 10\big) / 10$$
 
-$$\text{Raw Content Score} = 0.30 \cdot \text{Accuracy} + 0.25 \cdot \text{Understanding} + 0.20 \cdot \text{Reasoning} + 0.15 \cdot \text{Depth} + 0.10 \cdot \text{Coverage}$$
-$$\text{Content Score} = \text{Round}\big(\text{Clamp}(0, 10, \text{Raw Content Score} - \text{Error Deduction}) \cdot 10\big) / 10$$
-
-#### 3. Communication Score Formula
+#### 6. Communication Score Formula
 Evaluates verbal structure, delivery clarity, confidence, and consistency:
-
 $$\text{Communication Score} = \text{Round}\left(\frac{\text{Clarity} + \text{Structure} + \text{Confidence} + \text{Consistency}}{4} \cdot 10\right) / 10$$
 
-#### 4. Evaluation Confidence
+#### 7. Evaluation Confidence
 Calculates the internal alignment/certainty of the AI evaluation parameters:
-
 $$\text{Evaluation Confidence} = \text{Round}\big((0.30 \cdot \text{Coverage} + 0.30 \cdot \text{Understanding} + 0.20 \cdot \text{Reasoning} + 0.20 \cdot \text{Consistency}) \cdot 10\big)$$
 
 ---
@@ -330,21 +351,57 @@ Different questions contribute different weights to the final score based on the
 
 $$\text{Weighted Performance} = \text{Round}\left(\frac{\sum (\text{Content Score}_i \cdot W_{\text{diff}, i} \cdot W_{\text{disc}, i})}{\sum (W_{\text{diff}, i} \cdot W_{\text{disc}, i})} \cdot 10\right)$$
 
-### E. Final Scores
-1. **Technical Score:** Combines difficulty-weighted performance and contradiction deductions:
-   $$\text{Technical Score} = \max(0, \text{Weighted Performance} - \text{Contradiction Penalty})$$
-2. **Trust-Adjusted Score (Overall final score):**
-   $$\text{Trust Score} = \text{Round}\left(\text{Technical Score} \cdot \frac{\text{Integrity Score}}{100}\right)$$
-3. **Consistency Score:**
-   $$\text{Consistency Score} = \max(0, 100 - \text{Contradiction Penalty} \cdot 12.5)$$
+### E. Dual Overall Scoring Model
+
+To balance technical signals for recruiters with growth-oriented student psychology, the platform aggregates scores into two isolated paths:
+
+#### 1. Recruiter View: Recruiter Readiness Score (`readinessScore`)
+Evaluates the candidate's core technical readiness, heavily adjusted by session proctoring/integrity.
+- **Weights:** $40\%$ Overall Knowledge Score + $40\%$ Overall Problem Solving Score + $20\%$ Overall Communication Score.
+- **Integrity Adjustment:** Scaled by the integrity percentage.
+
+$$\text{Unadjusted Readiness} = 0.40 \cdot \text{Knowledge} + 0.40 \cdot \text{Problem Solving} + 0.20 \cdot \text{Communication}$$
+$$\text{Readiness Score} = \max\left(0, \min\left(100, \text{Round}\left(\text{Unadjusted Readiness} \cdot \frac{\text{Integrity Score}}{100}\right)\right)\right)$$
+
+#### 2. Candidate View: Interview Performance Score (`interviewPerformanceScore`)
+Evaluates candidate capability and growth potential for learning/coaching feedback. Crucially, this score is **NOT** integrity-adjusted (integrity is reported as a separate coaching indicator).
+- **Weights:** $75\%$ Overall Technical Score + $15\%$ Overall Communication Score + $10\%$ Overall Learning Potential Score.
+
+$$\text{Interview Performance Score} = \max\left(0, \min\left(100, \text{Round}\left(0.75 \cdot \text{Technical} + 0.15 \cdot \text{Communication} + 0.10 \cdot \text{Learning Potential}\right)\right)\right)$$
+
+#### 3. Answer Reliability Score (0-100)
+Measures the consistency of the candidate's responses across follow-ups, penalizing score collapses, contradictions, and overconfidence gaps:
+- **Collapse Deduction:** Average score drop from parent questions to validation follow-up questions:
+  $$\text{Collapse Deduction} = 100 - \text{Average Follow-Up Reliability}$$
+- **Contradiction Penalty:** Confirmed contradictions deduct up to $80$ points:
+  $$\text{Contradiction Penalty} = \text{Contradiction Penalty Score} \cdot 10$$
+- **Overconfidence Gap Deduction:** Applies if confidence is higher than demonstrated knowledge:
+  $$\text{Confidence Gap} = \text{Confidence Score} - \text{Knowledge Score}$$
+  $$\text{Gap Deduction} = \begin{cases} \min(150, \text{Confidence Gap} \cdot 1.5) & \text{if } \text{Confidence Gap} > 0 \\ 0 & \text{otherwise} \end{cases}$$
+
+$$\text{Answer Reliability Score} = \max\left(0, \min\left(100, \text{Round}\left(100 - (\text{Collapse Deduction} + \text{Contradiction Penalty} + \text{Gap Deduction})\right)\right)\right)$$
+
+#### 4. Growth & Opportunity Metrics
+- **Growth Potential:** Mapped directly to the candidate's average evaluated Learning Potential score ($0-100$).
+- **Improvement Opportunity:** Reflects how much room the candidate has for growth (rewards lower baseline capability with higher improvement numbers, clamped with a protective floor of $10$):
+  $$\text{Improvement Opportunity} = \max\left(10, \text{Round}\left(0.50 \cdot (100 - \text{Knowledge}) + 0.35 \cdot (100 - \text{Problem Solving}) + 0.15 \cdot (100 - \text{Communication})\right)\right)$$
 
 ---
 
-## 7. Recruiter Decisions & Status Overrides
+## 7. Recruiter Decisions & Classification Thresholds
 
-The hiring recommendation and validation status follow automated thresholds:
+The hiring recommendation and candidate level classification follow automated thresholds:
 
-### A. Recommendation Matrix
+### A. Candidate Level Banding (Growth-Oriented Classification)
+Candidate levels are determined based on the unadjusted candidate performance score:
+- **Exceptional:** $\ge 90$
+- **Advanced:** $85 - 89$
+- **Strong:** $75 - 84$
+- **Job Ready:** $65 - 74$
+- **Developing:** $50 - 64$
+- **Foundation Building:** $0 - 49$
+
+### B. Recruiter Recommendation Matrix
 - **Reject:**
   - $\text{Integrity Score} < 40$ OR $\text{Trust Score} < 50$
 - **Consider:**
@@ -354,9 +411,8 @@ The hiring recommendation and validation status follow automated thresholds:
 - **Strong Hire:**
   - $\text{Trust Score} \ge 85$ (provided $\text{Integrity Score} \ge 55$)
 
-### B. Insufficient Evidence Override
-If the AI confidence is low and the topic coverage is shallow:
-
+### C. Insufficient Evidence Override
+If the average AI confidence is low and the candidate's topic coverage is shallow:
 $$\text{Status Override} = \text{insufficient\_evidence} \quad \text{if} \quad \text{Average Confidence} < 55 \quad \text{AND} \quad \text{Topic Coverage} < 50\%$$
 
 ---

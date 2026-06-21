@@ -67,7 +67,11 @@ export interface EvaluationResult {
   userAnswer: string;
 
   // Granular Scoring
-  contentScore: number; // Concept
+  contentScore: number; // Concept (adjusted content score)
+  knowledgeScore?: number; // NEW
+  problemSolvingScore?: number; // NEW
+  learningPotentialScore?: number; // NEW
+  confidenceGap?: number; // NEW
   grammarScore: number;
   fluencyScore: number;
   communicationScore?: number;
@@ -96,6 +100,9 @@ export interface EvaluationResult {
     consistency?: number;
     answerDirectnessScore?: number;
     tradeoffReasoningScore?: number;
+    curiosity?: number; // NEW
+    selfCorrection?: number; // NEW
+    learningPotential?: number; // NEW
     technicalErrors?: { error: string; severity: 'low' | 'medium' | 'high' }[];
   };
 
@@ -381,6 +388,13 @@ export interface MasterEvaluationReport {
     recommendationStatus: 'normal' | 'insufficient_evidence';
     technicalScore: number; // 0-100
     trustScore: number; // 0-100 (trustAdjustedScore)
+    readinessScore?: number; // NEW
+    interviewPerformanceScore?: number; // NEW
+    candidateLevel?: string; // NEW
+    growthPotential?: number; // NEW
+    improvementOpportunity?: number; // NEW
+    confidenceGap?: number; // NEW
+    answerReliabilityScore?: number; // NEW
     topicCoverage: number; // 0-100
     knowledgeStability: number; // 0-100 (knowledgeStabilityScore)
     reportConfidence: 'High' | 'Medium' | 'Low';
@@ -393,9 +407,16 @@ export interface MasterEvaluationReport {
     consistencyScore: number; // 0-100
     difficultyWeightedPerformance: number; // 0-100
     trustAdjustedScore: number; // 0-100
+    readinessScore?: number; // NEW
+    interviewPerformanceScore?: number; // NEW
+    growthPotential?: number; // NEW
+    improvementOpportunity?: number; // NEW
+    confidenceGap?: number; // NEW
+    answerReliabilityScore?: number; // NEW
   };
   strengths: string[];
   weaknesses: string[];
+  topImprovements?: string[]; // NEW
   validationResults: {
     parentQuestion: string;
     parentScore: number;

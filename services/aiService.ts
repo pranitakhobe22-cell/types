@@ -523,21 +523,66 @@ Return strictly the following JSON structure:
     }
 
     // ── PHASE 8: Overall Score Parameters ──
-    const knowledgeScore = technicalScore;
-    
-    const reasoningScores = resolvedAnswers
-      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.analysis?.reasoning !== undefined)
-      .map(item => item.evaluation.analysis.reasoning);
-    const reasoningScore = reasoningScores.length > 0
-      ? Math.round((reasoningScores.reduce((a, b) => a + b, 0) / reasoningScores.length) * 10)
+    const knowledgeScores = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.knowledgeScore !== undefined)
+      .map(item => item.evaluation.knowledgeScore);
+    const overallKnowledgeScore = knowledgeScores.length > 0
+      ? Math.round((knowledgeScores.reduce((a, b) => a + b, 0) / knowledgeScores.length) * 10)
+      : 50;
+
+    const problemSolvingScores = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.problemSolvingScore !== undefined)
+      .map(item => item.evaluation.problemSolvingScore);
+    const overallProblemSolvingScore = problemSolvingScores.length > 0
+      ? Math.round((problemSolvingScores.reduce((a, b) => a + b, 0) / problemSolvingScores.length) * 10)
       : 50;
 
     const communicationScores = resolvedAnswers
       .filter(item => !item.evaluation?.evaluationError)
       .map(item => item.evaluation?.communicationScore ?? item.evaluation?.analysis?.communication ?? 5);
-    const communicationScore = Math.round((communicationScores.reduce((a, b) => a + b, 0) / (communicationScores.length || 1)) * 10);
+    const overallCommunicationScore = Math.round((communicationScores.reduce((a, b) => a + b, 0) / (communicationScores.length || 1)) * 10);
+
+    const learningPotentialScores = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.learningPotentialScore !== undefined)
+      .map(item => item.evaluation.learningPotentialScore);
+    const overallLearningPotentialScore = learningPotentialScores.length > 0
+      ? Math.round((learningPotentialScores.reduce((a, b) => a + b, 0) / learningPotentialScores.length) * 10)
+      : 50;
+
+    const confidenceScores = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.analysis?.confidence !== undefined)
+      .map(item => item.evaluation.analysis.confidence);
+    const overallConfidenceScore = confidenceScores.length > 0
+      ? Math.round((confidenceScores.reduce((a, b) => a + b, 0) / confidenceScores.length) * 10)
+      : 50;
 
     const consistencyScore = Math.max(0, 100 - contradictionPenalty * 12.5);
+
+    // 1. Recruiter View Readiness Score (integrity-adjusted, 40/40/20 weighted)
+    const readinessScore = Math.max(0, Math.min(100, Math.round(((overallKnowledgeScore * 0.40) + (overallProblemSolvingScore * 0.40) + (overallCommunicationScore * 0.20)) * (integrityScore / 100))));
+
+    // 2. Candidate View Interview Performance Score (NOT integrity-adjusted, 75/15/10 weighted)
+    const interviewPerformanceScore = Math.max(0, Math.min(100, Math.round((technicalScore * 0.75) + (overallCommunicationScore * 0.15) + (overallLearningPotentialScore * 0.10))));
+
+    // 3. Calibrated Level Classification
+    let candidateLevel = 'Foundation Building';
+    if (interviewPerformanceScore >= 90) candidateLevel = 'Exceptional';
+    else if (interviewPerformanceScore >= 85) candidateLevel = 'Advanced';
+    else if (interviewPerformanceScore >= 75) candidateLevel = 'Strong';
+    else if (interviewPerformanceScore >= 65) candidateLevel = 'Job Ready';
+    else if (interviewPerformanceScore >= 50) candidateLevel = 'Developing';
+    else candidateLevel = 'Foundation Building';
+
+    // 4. Growth & Opportunity Metrics
+    const growthPotential = overallLearningPotentialScore;
+    const improvementOpportunity = Math.max(0, Math.min(100, Math.round(
+      0.50 * (100 - overallKnowledgeScore) + 
+      0.35 * (100 - overallProblemSolvingScore) + 
+      0.15 * (100 - overallCommunicationScore)
+    )));
+
+    // 5. Confidence Gap
+    const confidenceGap = overallConfidenceScore - overallKnowledgeScore;
 
     // Timeline Trend
     const timeline = resolvedAnswers.map((item, idx) => ({
@@ -554,6 +599,33 @@ Return strictly the following JSON structure:
       if (avgSecond - avgFirst >= 10) trend = 'improving';
       else if (avgFirst - avgSecond >= 10) trend = 'declining';
     }
+
+    // 6. reasoningScore mapping
+    const reasoningScore = overallProblemSolvingScore;
+
+    // Validation Results
+    const validationResults: any[] = [];
+    resolvedAnswers.forEach((item, idx) => {
+      if (item.questionData?.isFollowUp) {
+        const parentEntry = resolvedAnswers[idx - 1];
+        validationResults.push({
+          parentQuestion: parentEntry?.question || "",
+          parentScore: (parentEntry?.evaluation?.contentScore ?? 0) * 10,
+          followupQuestion: item.question,
+          followupScore: (item.evaluation?.contentScore ?? 0) * 10,
+          reliability: item.evaluation?.followupResult?.reliability ?? 100
+        });
+      }
+    });
+
+    // 7. Answer Reliability Score calculation
+    const followUpReliabilities = validationResults.map(r => r.reliability);
+    const averageReliability = followUpReliabilities.length > 0
+      ? followUpReliabilities.reduce((a, b) => a + b, 0) / followUpReliabilities.length
+      : 100;
+    const collapseDeduction = 100 - averageReliability;
+    const gapDeduction = confidenceGap > 0 ? Math.min(150, confidenceGap * 1.5) : 0;
+    const answerReliabilityScore = Math.max(0, Math.min(100, Math.round(100 - (collapseDeduction + (contradictionPenalty * 10) + gapDeduction))));
 
     // ── PHASE 9: Executive Summary, Strengths, and Weaknesses AI Evaluation ──
     const evaluationPrompt = `You are an expert technical recruiter evaluating a candidate's full performance.
@@ -572,7 +644,7 @@ Overall Interview Performance Metrics:
 - Trust Score: ${trustAdjustedScore}/100 (Integrity: ${integrityScore}/100)
 - Topic Coverage: ${topicCoverage}%
 - Knowledge Stability: ${knowledgeStabilityScore}%
-- Communication Score: ${communicationScore}%
+- Communication Score: ${overallCommunicationScore}%
 - Reasoning Score: ${reasoningScore}%
 - Cross-Question Technical Contradictions: ${processedContradictions.length > 0 ? processedContradictions.map(c => c.explanation).join("; ") : "None"}
 
@@ -581,17 +653,20 @@ Generate:
 1. An executive summary paragraph explaining their general performance, technical gaps, and why this recommendation is appropriate (exactly 3 sentences).
 2. A list of 3 to 4 overall strengths. Each strength must be a specific, professional, and actionable observation based on their actual answers, logic, communication, and behavior (e.g., "Demonstrated strong knowledge of data structures when explaining trees", "Communicated technical ideas clearly with low use of filler words"). Do not just list simple technical keywords.
 3. A list of 3 to 4 overall weaknesses/gaps. Each weakness must be a specific, professional, and actionable observation based on their actual gaps, communication issues, or inconsistencies.
+4. A list of 3 overall top actionable improvements (checklist items) the candidate can work on to improve their score (e.g. ["Study the differences between REST and GraphQL", "Practice writing asynchronous Javascript handlers", "Refine explanations on database indexing and trade-offs"]).
 
 Return strictly the following JSON structure (do not include markdown code block backticks):
 {
   "summary": "<summary text>",
   "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
-  "weaknesses": ["<weakness 1>", "<weakness 2>", "<weakness 3>"]
+  "weaknesses": ["<weakness 1>", "<weakness 2>", "<weakness 3>"],
+  "topImprovements": ["<actionable improvement 1>", "<actionable improvement 2>", "<actionable improvement 3>"]
 }`;
 
     let summaryText = "";
     let finalStrengths: string[] = [];
     let finalWeaknesses: string[] = [];
+    let topImprovements: string[] = [];
 
     try {
       let rawEvalJson = await resilientGenerate(evaluationPrompt, 1, 'eval');
@@ -602,6 +677,7 @@ Return strictly the following JSON structure (do not include markdown code block
         summaryText = parsed.summary || "";
         finalStrengths = parsed.strengths || [];
         finalWeaknesses = parsed.weaknesses || [];
+        topImprovements = parsed.topImprovements || [];
       }
     } catch (e) {
       console.error("AI overall evaluation prompt failed:", e);
@@ -619,6 +695,10 @@ Return strictly the following JSON structure (do not include markdown code block
       finalWeaknesses = resolvedAnswers.flatMap(a => a.evaluation?.missingKeyPoints || []).slice(0, 4).map(w => `Could improve understanding of ${w}.`);
       if (finalWeaknesses.length === 0) finalWeaknesses = ["Demonstrated minor area-specific technical gaps."];
     }
+    if (topImprovements.length === 0) {
+      topImprovements = resolvedAnswers.flatMap(a => a.evaluation?.missingKeyPoints || []).slice(0, 3).map(w => `Focus on mastering ${w}.`);
+      if (topImprovements.length === 0) topImprovements = ["Deepen fundamental knowledge in core topics."];
+    }
 
     // Question Breakdown
     const questionBreakdown = resolvedAnswers.map((item, idx) => {
@@ -628,13 +708,20 @@ Return strictly the following JSON structure (do not include markdown code block
         coverage: evalData.analysis?.coverage ?? 5,
         understanding: evalData.analysis?.understanding ?? 5,
         reasoning: evalData.analysis?.reasoning ?? 5,
-        communication: evalData.analysis?.communication ?? 5
+        communication: evalData.analysis?.communication ?? 5,
+        curiosity: evalData.analysis?.curiosity,
+        selfCorrection: evalData.analysis?.selfCorrection,
+        learningPotential: evalData.analysis?.learningPotential
       };
 
       return {
         questionText: item.question,
         difficulty: (item.questionData?.difficulty || 'medium') as 'easy' | 'medium' | 'hard',
         score: evalData.contentScore ?? 5,
+        knowledgeScore: evalData.knowledgeScore,
+        problemSolvingScore: evalData.problemSolvingScore,
+        learningPotentialScore: evalData.learningPotentialScore,
+        confidenceGap: evalData.confidenceGap,
         userAnswer: item.answer || "",
         feedback: evalData.feedback || "",
         matchedKeyPoints: evalData.matchedKeyPoints || [],
@@ -645,21 +732,6 @@ Return strictly the following JSON structure (do not include markdown code block
         followupResult: evalData.followupResult,
         evaluationError: evalData.evaluationError
       };
-    });
-
-    // Validation Results
-    const validationResults: any[] = [];
-    resolvedAnswers.forEach((item, idx) => {
-      if (item.questionData?.isFollowUp) {
-        const parentEntry = resolvedAnswers[idx - 1];
-        validationResults.push({
-          parentQuestion: parentEntry?.question || "",
-          parentScore: (parentEntry?.evaluation?.contentScore ?? 0) * 10,
-          followupQuestion: item.question,
-          followupScore: (item.evaluation?.contentScore ?? 0) * 10,
-          reliability: item.evaluation?.followupResult?.reliability ?? 100
-        });
-      }
     });
 
     // Proctoring Summary mapping
@@ -690,21 +762,35 @@ Return strictly the following JSON structure (do not include markdown code block
         recommendationStatus,
         technicalScore,
         trustScore: trustAdjustedScore,
+        readinessScore,
+        interviewPerformanceScore,
+        candidateLevel,
+        growthPotential,
+        improvementOpportunity,
+        confidenceGap,
+        answerReliabilityScore,
         topicCoverage,
         knowledgeStability: knowledgeStabilityScore,
         reportConfidence,
         summary: summaryText
       },
       overallScores: {
-        knowledgeScore,
+        knowledgeScore: overallKnowledgeScore,
         reasoningScore,
-        communicationScore,
+        communicationScore: overallCommunicationScore,
         consistencyScore,
         difficultyWeightedPerformance,
-        trustAdjustedScore
+        trustAdjustedScore,
+        readinessScore,
+        interviewPerformanceScore,
+        growthPotential,
+        improvementOpportunity,
+        confidenceGap,
+        answerReliabilityScore
       },
       strengths: finalStrengths,
       weaknesses: finalWeaknesses,
+      topImprovements,
       validationResults,
       contradictions: processedContradictions,
       performanceTrend: {

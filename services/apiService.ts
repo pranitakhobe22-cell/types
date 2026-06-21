@@ -330,22 +330,62 @@ export function buildEvaluationResult(
     ? Math.max(0, Math.min(10, evalJson.tradeoffReasoningScore))
     : undefined;
 
+  const curiosity = Math.max(0, Math.min(10, evalJson.curiosity ?? 5));
+  const selfCorrection = Math.max(0, Math.min(10, evalJson.selfCorrection ?? 5));
+
+  // 1. Calculate Knowledge & Problem Solving Scores (0-10)
+  let knowledgeScore = (accuracy * 0.40) + (conceptCoverage * 0.30) + (conceptUnderstanding * 0.30);
+  let problemSolvingScore = (reasoning * 0.40) + (depth * 0.30) + (answerDirectnessScore * 0.30);
+
+  // 2. Anti-Inflation Guardrails & Floor Protection
+  if (accuracy < 4) {
+    knowledgeScore = Math.min(5, knowledgeScore);
+  }
+  if (conceptUnderstanding < 4) {
+    knowledgeScore = Math.min(6, knowledgeScore);
+  }
+  if (reasoning < 4) {
+    problemSolvingScore = Math.min(5, problemSolvingScore);
+  }
+  if (accuracy <= 2 && conceptUnderstanding <= 2) {
+    knowledgeScore = Math.min(4, knowledgeScore);
+  }
+
+  // 3. Conditional Positive Evidence Bonus
+  let evidenceBonus = 0;
+  if (knowledgeScore >= 6 || problemSolvingScore >= 6) {
+    if (evalJson.positiveEvidence?.strongExample) evidenceBonus += 0.25;
+    if (evalJson.positiveEvidence?.realProject) evidenceBonus += 0.25;
+    if (evalJson.positiveEvidence?.tradeoffDiscussion) evidenceBonus += 0.25;
+    if (evalJson.positiveEvidence?.practicalExperience) evidenceBonus += 0.25;
+    evidenceBonus = Math.min(1.0, evidenceBonus);
+  }
+
+  // 4. Reduced Technical Error Penalties
   const errors = evalJson.technicalErrors || [];
   let errorDeduction = 0;
   for (const err of errors) {
-    if (err.severity === 'low') errorDeduction += 0.25;
-    else if (err.severity === 'medium') errorDeduction += 0.75;
-    else if (err.severity === 'high') errorDeduction += 1.50;
+    if (err.severity === 'low') errorDeduction += 0.15;
+    else if (err.severity === 'medium') errorDeduction += 0.40;
+    else if (err.severity === 'high') errorDeduction += 0.80;
   }
-  errorDeduction = Math.min(2.0, errorDeduction);
+  errorDeduction = Math.min(1.5, errorDeduction);
 
-  let rawContentScore = (accuracy * 0.30) + (conceptUnderstanding * 0.25) + (reasoning * 0.20) + (depth * 0.15) + (conceptCoverage * 0.10);
-  rawContentScore -= errorDeduction;
-  const contentScore = Math.round(Math.max(0, Math.min(10, rawContentScore)) * 10) / 10;
+  // 5. Final Adjusted Content Score
+  const rawContent = (0.60 * knowledgeScore) + (0.40 * problemSolvingScore);
+  const contentScore = Math.round(Math.max(0, Math.min(10, rawContent + evidenceBonus - errorDeduction)) * 10) / 10;
 
+  // 6. Communication Score
   const communicationScore = Math.round(((clarity + structure + confidenceScoreVal + consistency) / 4) * 10) / 10;
 
-  let verdict: 'Excellent' | 'Good' | 'Borderline' | 'Fail';
+  // 7. Clamped Confidence Alignment / Gap
+  const effectiveConfidence = Math.min(confidenceScoreVal, knowledgeScore + 2);
+  const confidenceGap = effectiveConfidence - knowledgeScore; // range -10 to +10
+
+  // 8. Constrained Learning Potential
+  const learningPotentialScore = (0.40 * curiosity) + (0.30 * reasoning) + (0.30 * selfCorrection);
+
+  let verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
   if (contentScore >= 8) verdict = 'Excellent';
   else if (contentScore >= 6) verdict = 'Good';
   else if (contentScore >= 4) verdict = 'Borderline';
@@ -360,6 +400,10 @@ export function buildEvaluationResult(
     questionText: currentQuestion.question,
     userAnswer: answer,
     contentScore,
+    knowledgeScore: Math.round(knowledgeScore * 10) / 10,
+    problemSolvingScore: Math.round(problemSolvingScore * 10) / 10,
+    learningPotentialScore: Math.round(learningPotentialScore * 10) / 10,
+    confidenceGap: Math.round(confidenceGap * 10) / 10,
     grammarScore: 0,
     fluencyScore: 0,
     communicationScore,
@@ -382,6 +426,9 @@ export function buildEvaluationResult(
       consistency,
       answerDirectnessScore,
       tradeoffReasoningScore,
+      curiosity,
+      selfCorrection,
+      learningPotential: Math.round(learningPotentialScore * 10) / 10,
       technicalErrors: errors
     },
     behavioralMetrics: isBehavioral ? {
@@ -416,30 +463,29 @@ export const submitAnswer = async (
     : "- Explain the core concepts of the question.";
 
   const difficulty = settings?.difficulty ?? "Medium";
+  
+  // Revised scoring guidelines mapping to new bands
   const scoringGuidelines = `SCORING GUIDELINES (IMPORTANT):
 
-1. CONCEPT OVER KEYWORDS:
+1. GROWTH-ORIENTED SCORING BANDS (RECALIBRATED):
+    * Exceptional (9-10/10): Candidates showing deep, flawless understanding with practical nuance.
+    * Strong candidate (8-9/10): Good understanding, depth, and details.
+    * Industry-ready fundamentals (6-7/10): Award this range if the candidate demonstrates genuine basic understanding of the concepts with minor gaps (do not penalize average answers down to 4-5).
+    * Early learner (4-5/10): Shows basic, limited, or partial credit.
+    * Very weak understanding (0-3/10): Significant inaccuracies, empty answers, or pure guess/bluff.
+2. CONCEPT OVER KEYWORDS:
     If the candidate demonstrates correct conceptual understanding in their own words, award reasonable marks even if exact keywords or textbook terminology are missing.
-2. MODERATE LENIENCY:
-    Do not require perfect answers for medium scores. A partially correct explanation with clear understanding should typically score between 5-7/10 rather than being heavily penalized.
 3. REAL-WORLD INTERVIEW STANDARD:
     Evaluate like an experienced interviewer, not an exam checker. Candidates may use simple language, informal phrasing, or imperfect grammar while still demonstrating understanding.
-4. UNDERSTANDING > MEMORIZATION:
-    Reward explanations, examples, reasoning, and practical understanding more than keyword matching.
+4. LEARNING POTENTIAL RUBRIC:
+    Evaluate:
+    - Curiosity: Does the candidate show an interest in details, edge cases, or broader context?
+    - Reasoning: Can they trace logic and derive answers systematically?
+    - Self-Correction: Do they acknowledge gaps or self-correct when realizing mistakes?
 5. AVOID OVER-PENALIZATION:
     Minor omissions, communication mistakes, stuttering, or imperfect wording should not significantly reduce scores if the core concept is correct.
-6. PARTIAL CREDIT:
-    If approximately 50-70% of the expected concept is explained correctly, award proportional credit instead of treating the answer as incorrect.
-7. STRICT ONLY FOR FACTUAL ERRORS:
-    Apply stronger penalties only when the candidate provides technically incorrect information, contradictions, hallucinations, or clearly misunderstands the concept.
-8. SCORING CALIBRATION (Difficulty Level: ${difficulty}):
-    * Excellent understanding: 8-10 ${difficulty.includes('Hard') ? '(strict, requires some examples/depth)' : difficulty.includes('Easy') ? '(lenient, basic explanation is enough)' : ''}
-    * Good understanding with minor gaps: 6-8
-    * Partial understanding: 4-6
-    * Limited understanding: 2-4
-    * Incorrect or irrelevant answer: 0-2
 
-Maintain evidence-based evaluation and avoid generic praise, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
+Maintain evidence-based evaluation, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
 
   const evalPrompt = `You are evaluating a SPOKEN interview answer (transcribed via speech-to-text).
 IMPORTANT: The transcript may contain minor speech errors, informal phrasing, or filler words. Focus on the SUBSTANCE of what was said, not grammar or polish.
@@ -482,19 +528,25 @@ INTERNAL RUBRICS (Aligned with Scoring Calibration):
   0-2 = No depth, incorrect assertions, or empty answer.
 
 CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
-If the candidate's answer simply lists the names of the expected areas or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
+If the candidate's answer simply lists the names of the expected areas or keywords without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
 In this case, you MUST penalize the scores strictly:
-- "conceptUnderstanding" MUST NOT exceed 2/10 (since they only gave superficial mentions or recited terms without explaining).
-- "depth" MUST NOT exceed 1/10 (since there is no elaboration or detail).
+- "conceptUnderstanding" MUST NOT exceed 2/10.
+- "depth" MUST NOT exceed 1/10.
 - "reasoning" MUST NOT exceed 2/10.
-- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10 (since reciting terms is only a superficial identification and lacks full coverage or accuracy of the required knowledge).
-- Make sure to list these terms under "matchedKeyPoints" if they are present, but the scores must reflect the severe lack of understanding and explanation.
+- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10.
 - State in the "feedback" that the candidate only listed the concepts without explaining them.
 
 Evaluate the candidate's answer against the expected checklist areas and rubrics.
 Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
 Provide score for answerDirectnessScore (0-10) which measures how directly they answered the question without keyword stuffing or bluffing.
 Provide tradeoffReasoningScore (0-10 or null) which evaluates how well they discuss design tradeoffs, pros/cons, or alternative approaches (return null if not applicable to this question).
+
+EVALUATE EVIDENCE OF POSITIVE MOMENTS:
+Set the following positiveEvidence flags to true if the candidate explicitly demonstrates:
+- strongExample: provides a clear, valid real-world example or code demonstration.
+- realProject: mentions a concrete professional/academic project they worked on related to this topic.
+- tradeoffDiscussion: explicitly discusses pros/cons, design tradeoffs, or alternatives.
+- practicalExperience: references hands-on practical troubleshooting, deployment, or execution.
 
 Return strictly the following JSON structure:
 {
@@ -509,9 +561,17 @@ Return strictly the following JSON structure:
   "consistency": number, // 0-10
   "answerDirectnessScore": number, // 0-10
   "tradeoffReasoningScore": number | null, // 0-10 or null
+  "curiosity": number, // 0-10 (measure of candidate details/edge-case exploration)
+  "selfCorrection": number, // 0-10 (capacity to adjust and self-correct)
   "technicalErrors": [
     { "error": "description of incorrect or hallucinated statement", "severity": "low" | "medium" | "high" }
   ],
+  "positiveEvidence": {
+    "strongExample": boolean,
+    "realProject": boolean,
+    "tradeoffDiscussion": boolean,
+    "practicalExperience": boolean
+  },
   "matchedKeyPoints": ["areas from the evaluation guide checklist that the candidate covered"],
   "missingKeyPoints": ["areas from the evaluation guide checklist that the candidate missed"],
   "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what expected areas they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
@@ -550,28 +610,25 @@ export const retryEvaluation = async (
 
   const scoringGuidelines = `SCORING GUIDELINES (IMPORTANT):
 
-1. CONCEPT OVER KEYWORDS:
+1. GROWTH-ORIENTED SCORING BANDS (RECALIBRATED):
+    * Exceptional (9-10/10): Candidates showing deep, flawless understanding with practical nuance.
+    * Strong candidate (8-9/10): Good understanding, depth, and details.
+    * Industry-ready fundamentals (6-7/10): Award this range if the candidate demonstrates genuine basic understanding of the concepts with minor gaps (do not penalize average answers down to 4-5).
+    * Early learner (4-5/10): Shows basic, limited, or partial credit.
+    * Very weak understanding (0-3/10): Significant inaccuracies, empty answers, or pure guess/bluff.
+2. CONCEPT OVER KEYWORDS:
     If the candidate demonstrates correct conceptual understanding in their own words, award reasonable marks even if exact keywords or textbook terminology are missing.
-2. MODERATE LENIENCY:
-    Do not require perfect answers for medium scores. A partially correct explanation with clear understanding should typically score between 5-7/10 rather than being heavily penalized.
 3. REAL-WORLD INTERVIEW STANDARD:
     Evaluate like an experienced interviewer, not an exam checker. Candidates may use simple language, informal phrasing, or imperfect grammar while still demonstrating understanding.
-4. UNDERSTANDING > MEMORIZATION:
-    Reward explanations, examples, reasoning, and practical understanding more than keyword matching.
+4. LEARNING POTENTIAL RUBRIC:
+    Evaluate:
+    - Curiosity: Does the candidate show an interest in details, edge cases, or broader context?
+    - Reasoning: Can they trace logic and derive answers systematically?
+    - Self-Correction: Do they acknowledge gaps or self-correct when realizing mistakes?
 5. AVOID OVER-PENALIZATION:
     Minor omissions, communication mistakes, stuttering, or imperfect wording should not significantly reduce scores if the core concept is correct.
-6. PARTIAL CREDIT:
-    If approximately 50-70% of the expected concept is explained correctly, award proportional credit instead of treating the answer as incorrect.
-7. STRICT ONLY FOR FACTUAL ERRORS:
-    Apply stronger penalties only when the candidate provides technically incorrect information, contradictions, hallucinations, or clearly misunderstands the concept.
-8. SCORING CALIBRATION:
-    * Excellent understanding: 8-10
-    * Good understanding with minor gaps: 6-8
-    * Partial understanding: 4-6
-    * Limited understanding: 2-4
-    * Incorrect or irrelevant answer: 0-2
 
-Maintain evidence-based evaluation and avoid generic praise, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
+Maintain evidence-based evaluation, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
 
   const prompt = `You are evaluating a SPOKEN interview answer (transcribed via speech-to-text).
 IMPORTANT: The transcript may contain minor speech errors, informal phrasing, or filler words. Focus on the SUBSTANCE of what was said, not grammar or polish.
@@ -614,19 +671,25 @@ INTERNAL RUBRICS (Aligned with Scoring Calibration):
   0-2 = No depth, incorrect assertions, or empty answer.
 
 CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
-If the candidate's answer simply lists the names of the expected areas or keywords (e.g., just listing the terms "encapsulation, inheritance, polymorphism, abstraction" for OOP, or "HTML, CSS, JS" for web development) without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
+If the candidate's answer simply lists the names of the expected areas or keywords without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
 In this case, you MUST penalize the scores strictly:
-- "conceptUnderstanding" MUST NOT exceed 2/10 (since they only gave superficial mentions or recited terms without explaining).
-- "depth" MUST NOT exceed 1/10 (since there is no elaboration or detail).
+- "conceptUnderstanding" MUST NOT exceed 2/10.
+- "depth" MUST NOT exceed 1/10.
 - "reasoning" MUST NOT exceed 2/10.
-- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10 (since reciting terms is only a superficial identification and lacks full coverage or accuracy of the required knowledge).
-- Make sure to list these terms under "matchedKeyPoints" if they are present, but the scores must reflect the severe lack of understanding and explanation.
+- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10.
 - State in the "feedback" that the candidate only listed the concepts without explaining them.
 
 Evaluate the candidate's answer against the expected checklist areas and rubrics.
 Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
 Provide score for answerDirectnessScore (0-10) which measures how directly they answered the question without keyword stuffing or bluffing.
 Provide tradeoffReasoningScore (0-10 or null) which evaluates how well they discuss design tradeoffs, pros/cons, or alternative approaches (return null if not applicable to this question).
+
+EVALUATE EVIDENCE OF POSITIVE MOMENTS:
+Set the following positiveEvidence flags to true if the candidate explicitly demonstrates:
+- strongExample: provides a clear, valid real-world example or code demonstration.
+- realProject: mentions a concrete professional/academic project they worked on related to this topic.
+- tradeoffDiscussion: explicitly discusses pros/cons, design tradeoffs, or alternatives.
+- practicalExperience: references hands-on practical troubleshooting, deployment, or execution.
 
 Return strictly the following JSON structure:
 {
@@ -641,9 +704,17 @@ Return strictly the following JSON structure:
   "consistency": number, // 0-10
   "answerDirectnessScore": number, // 0-10
   "tradeoffReasoningScore": number | null, // 0-10 or null
+  "curiosity": number, // 0-10
+  "selfCorrection": number, // 0-10
   "technicalErrors": [
     { "error": "description of incorrect or hallucinated statement", "severity": "low" | "medium" | "high" }
   ],
+  "positiveEvidence": {
+    "strongExample": boolean,
+    "realProject": boolean,
+    "tradeoffDiscussion": boolean,
+    "practicalExperience": boolean
+  },
   "matchedKeyPoints": [],
   "missingKeyPoints": [],
   "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what expected areas they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
