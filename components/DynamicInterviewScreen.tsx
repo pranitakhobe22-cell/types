@@ -774,78 +774,180 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       console.error("Failed to save response to Supabase:", err);
     }
 
-    // 2. Queue Background AI Evaluation
-    const evalPromise = (async () => {
+    // 2. Evaluation execution (Synchronous for technical primary, background for others)
+    let realEvalResult: any = null;
+    let timedOut = false;
+    const isTechnical = currentQ.type && !currentQ.type.startsWith("Behavioral");
+
+    if (isTechnical && !currentQ.isFollowUp) {
+      // 1. Technical Primary Question: Synchronous await with 15s timeout
+      setLoadingText("Analyzing technical concepts...");
+      setLoading(true);
+
+      const messageTimer1 = setTimeout(() => setLoadingText("Evaluating reasoning depth..."), 4000);
+      const messageTimer2 = setTimeout(() => setLoadingText("Checking for follow-up alignment..."), 8000);
+      const messageTimer3 = setTimeout(() => setLoadingText("Almost ready..."), 12000);
+
+      const evalPromise = (async () => {
+        try {
+          const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
+          return result.evaluation;
+        } catch (err: any) {
+          console.error(`Synchronous evaluation failed:`, err);
+          throw err;
+        }
+      })();
+
       try {
-        const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
-        const realEval = result.evaluation;
+        realEvalResult = await Promise.race([
+          evalPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000))
+        ]);
 
-        // Recalculate reliability if it is a follow-up
-        if (currentQ.isFollowUp) {
-          const parentEntry = historyRef.current[currentHistoryLength - 1];
-          if (parentEntry && parentEntry.evaluation) {
-            const parentScore = parentEntry.evaluation.contentScore;
-            const followupScore = realEval.contentScore;
-            const collapse = Math.max(0, parentScore - followupScore);
-            const reliability = Math.max(0, Math.min(100, Math.round(100 - (collapse * 15))));
-            realEval.followupResult = { reliability };
-          }
-        }
+        clearTimeout(messageTimer1);
+        clearTimeout(messageTimer2);
+        clearTimeout(messageTimer3);
 
         // Update local history
-        if (historyRef.current[currentHistoryLength]) {
-          const updatedHistory = [...historyRef.current];
-          updatedHistory[currentHistoryLength] = {
-            ...updatedHistory[currentHistoryLength],
-            evaluation: realEval
-          };
-          updateHistory(updatedHistory);
-        }
-
-        // Update final result in Supabase
-        await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, realEval, currentQ.ideal_answer, candidate.name);
-        return realEval;
-      } catch (err: any) {
-        console.error(`Background evaluation failed for question index ${currentHistoryLength}:`, err);
-        const errorEval = {
-          ...localEvalResult,
-          evaluationPending: false,
-          evaluationError: err.message || String(err),
-          feedback: `AI Evaluation Failed: ${err.message || err}`,
-          contentScore: 0,
+        const updatedHistory = [...historyRef.current];
+        updatedHistory[currentHistoryLength] = {
+          ...newEntry,
+          evaluation: realEvalResult
         };
-        // Update local history
-        if (historyRef.current[currentHistoryLength]) {
+        updateHistory(updatedHistory);
+
+        // Save real result in Supabase
+        await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, realEvalResult, currentQ.ideal_answer, candidate.name);
+
+      } catch (err: any) {
+        clearTimeout(messageTimer1);
+        clearTimeout(messageTimer2);
+        clearTimeout(messageTimer3);
+
+        if (err.message === "Timeout") {
+          timedOut = true;
+          setLoadingText("Continuing interview while evaluation finishes in background.");
+          await new Promise(resolve => setTimeout(resolve, 1500));
+
+          const bgPromise = (async () => {
+            try {
+              const res = await evalPromise;
+              const updatedHistory = [...historyRef.current];
+              updatedHistory[currentHistoryLength] = {
+                ...newEntry,
+                evaluation: res
+              };
+              updateHistory(updatedHistory);
+              await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, res, currentQ.ideal_answer, candidate.name);
+              return res;
+            } catch (bgErr: any) {
+              console.error(`Background evaluation failed after timeout:`, bgErr);
+              const errorEval = {
+                ...localEvalResult,
+                evaluationPending: false,
+                evaluationError: bgErr.message || String(bgErr),
+                feedback: `AI Evaluation Failed: ${bgErr.message || bgErr}`,
+                contentScore: 0,
+              };
+              const updatedHistory = [...historyRef.current];
+              updatedHistory[currentHistoryLength] = {
+                ...newEntry,
+                evaluation: errorEval
+              };
+              updateHistory(updatedHistory);
+              await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, errorEval, currentQ.ideal_answer, candidate.name);
+              return errorEval;
+            }
+          })();
+          bgEvalsRef.current[currentHistoryLength] = bgPromise;
+        } else {
+          // API error
+          const errorEval = {
+            ...localEvalResult,
+            evaluationPending: false,
+            evaluationError: err.message || String(err),
+            feedback: `AI Evaluation Failed: ${err.message || err}`,
+            contentScore: 0,
+          };
           const updatedHistory = [...historyRef.current];
           updatedHistory[currentHistoryLength] = {
-            ...updatedHistory[currentHistoryLength],
+            ...newEntry,
             evaluation: errorEval
           };
           updateHistory(updatedHistory);
-        }
-        // Save final error result in Supabase
-        try {
           await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, errorEval, currentQ.ideal_answer, candidate.name);
-        } catch (dbErr) {
-          console.error("Failed to save error response to Supabase:", dbErr);
         }
-        return errorEval;
       }
-    })();
-    bgEvalsRef.current[currentHistoryLength] = evalPromise;
+    } else {
+      // 2. Behavioral or Follow-up: Evaluate strictly in background
+      updateHistory(newHistory);
+      const bgPromise = (async () => {
+        try {
+          const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
+          const realEval = result.evaluation;
+
+          if (currentQ.isFollowUp) {
+            const parentEntry = historyRef.current[currentHistoryLength - 1];
+            if (parentEntry && parentEntry.evaluation) {
+              const parentScore = parentEntry.evaluation.contentScore;
+              const followupScore = realEval.contentScore;
+              const collapse = Math.max(0, parentScore - followupScore);
+              const reliability = Math.max(0, Math.min(100, Math.round(100 - (collapse * 15))));
+              realEval.followupResult = { reliability };
+            }
+          }
+
+          const updatedHistory = [...historyRef.current];
+          updatedHistory[currentHistoryLength] = {
+            ...newEntry,
+            evaluation: realEval
+          };
+          updateHistory(updatedHistory);
+          await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, realEval, currentQ.ideal_answer, candidate.name);
+          return realEval;
+        } catch (bgErr: any) {
+          console.error(`Background evaluation failed:`, bgErr);
+          const errorEval = {
+            ...localEvalResult,
+            evaluationPending: false,
+            evaluationError: bgErr.message || String(bgErr),
+            feedback: `AI Evaluation Failed: ${bgErr.message || bgErr}`,
+            contentScore: 0,
+          };
+          const updatedHistory = [...historyRef.current];
+          updatedHistory[currentHistoryLength] = {
+            ...newEntry,
+            evaluation: errorEval
+          };
+          updateHistory(updatedHistory);
+          await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, errorEval, currentQ.ideal_answer, candidate.name);
+          return errorEval;
+        }
+      })();
+      bgEvalsRef.current[currentHistoryLength] = bgPromise;
+    }
 
     const primaryCount = newHistory.filter(h => !h.questionData?.isFollowUp).length;
-    const isTechnical = currentQ.type && !currentQ.type.startsWith("Behavioral");
 
-    // Check if we should trigger follow-up based on local evaluation score:
+    // Check if we should trigger follow-up based on synchronously awaited evaluation score:
     let shouldTriggerFollowUp = false;
-    if (isTechnical && !currentQ.isFollowUp) {
-      const hashVal = hashString(sessionIdRef.current + currentQ.id) % 100;
-      const contentScore = localEvalResult.contentScore;
-      // Using local metrics or fallback threshold
-      const cond2 = contentScore > 8.0 && hashVal < 20;
+    if (realEvalResult && !timedOut) {
+      const accuracy = realEvalResult.analysis?.technicalAccuracy ?? 5;
+      const coverage = realEvalResult.analysis?.coverage ?? 5;
+      const understanding = realEvalResult.analysis?.understanding ?? 5;
+      const reasoning = realEvalResult.analysis?.reasoning ?? 5;
+      const depth = realEvalResult.analysis?.depth ?? 5;
+      const knowledgeScore = realEvalResult.knowledgeScore ?? 5;
+      const confidenceGap = realEvalResult.confidenceGap ?? 0;
 
-      if (cond2) {
+      // Broadened follow-up trigger formula:
+      // (depth <= 5 && knowledgeScore >= 6) || (knowledgeScore >= 8 && reasoning <= 6) || (coverage >= 6 && understanding <= 4) || (confidenceGap >= 3 && knowledgeScore <= 6)
+      if (
+        (depth <= 5 && knowledgeScore >= 6) ||
+        (knowledgeScore >= 8 && reasoning <= 6) ||
+        (coverage >= 6 && understanding <= 4) ||
+        (confidenceGap >= 3 && knowledgeScore <= 6)
+      ) {
         shouldTriggerFollowUp = true;
       }
     }

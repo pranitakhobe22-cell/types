@@ -63,8 +63,27 @@ const MetricBar: React.FC<{ label: string; value: number; max?: number }> = ({ l
   );
 };
 
-const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown'][0]; index: number }> = ({ item, index }) => {
+const getPerformanceDetails = (score: number) => {
+  if (score >= 9.0) return { label: 'Excellent', color: 'bg-purple-50 text-purple-700 border-purple-200' };
+  if (score >= 8.0) return { label: 'Strong', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+  if (score >= 6.0) return { label: 'Competent', color: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
+  if (score >= 4.0) return { label: 'Developing', color: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (score >= 2.0) return { label: 'Early Understanding', color: 'bg-amber-50 text-amber-700 border-amber-200' };
+  return { label: 'Not Demonstrated', color: 'bg-rose-50 text-rose-700 border-rose-200' };
+};
+
+const renderStars = (score: number) => {
+  const filled = Math.min(5, Math.max(0, Math.round(score / 2)));
+  return (
+    <span className="text-indigo-600 tracking-wider">
+      {'★'.repeat(filled)}{'☆'.repeat(5 - filled)}
+    </span>
+  );
+};
+
+const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown'][0]; index: number; mode?: 'admin' | 'candidate' }> = ({ item, index, mode = 'candidate' }) => {
   const [expanded, setExpanded] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const scoreText = item.evaluationError ? 'Error' : `${item.score}`;
   const scoreColor =
@@ -74,6 +93,101 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
     item.score >= 4 ? 'text-amber-600' : 'text-rose-600';
 
   const hasError = !!item.evaluationError;
+  const performance = getPerformanceDetails(item.score);
+
+  // Sub-metrics base values
+  const knowledgeScoreVal = item.knowledgeScore ?? item.analysis?.understanding ?? 0;
+  const problemSolvingScoreVal = item.problemSolvingScore ?? item.analysis?.reasoning ?? 0;
+  const communicationScoreVal = item.analysis?.communication ?? 0;
+  const confidenceGapVal = item.confidenceGap ?? 0;
+
+  // Extract raw details
+  const rawContent = 0.60 * knowledgeScoreVal + 0.40 * problemSolvingScoreVal;
+  const diff = item.score - rawContent;
+  const evidenceBonus = diff > 0 ? Math.round(diff * 10) / 10 : 0;
+  const errorPenalty = diff < 0 ? Math.round(Math.abs(diff) * 10) / 10 : 0;
+
+  const kStars = Math.min(5, Math.max(0, Math.round(knowledgeScoreVal / 2)));
+  const pStars = Math.min(5, Math.max(0, Math.round(problemSolvingScoreVal / 2)));
+  const cStars = Math.min(5, Math.max(0, Math.round(communicationScoreVal / 2)));
+
+  const kLabels = ["Very Limited", "Limited", "Basic", "Competent", "Strong", "Excellent"];
+  const pLabels = ["Not Assessed", "Limited", "Basic", "Competent", "Strong", "Excellent"];
+  const cLabels = ["Minimal", "Basic", "Clear", "Effective", "Strong", "Excellent"];
+
+  const kLabel = kLabels[kStars];
+  const pLabel = pLabels[pStars];
+  const cLabel = cLabels[cStars];
+
+  let confidenceStatus = "Honest Self-Assessment";
+  let confidenceGuidance = "Your confidence matched your demonstrated knowledge.";
+  if (confidenceGapVal > 2) {
+    confidenceStatus = "Possible Overconfidence";
+    confidenceGuidance = "You sounded very confident, but your explanation contained several technical gaps.";
+  } else if (confidenceGapVal < -2) {
+    confidenceStatus = "Underconfident";
+    confidenceGuidance = "Your answer demonstrated stronger understanding than your delivery suggested.";
+  }
+
+  // Gaps and What went well logic
+  const userAnswerLower = (item.userAnswer || '').toLowerCase();
+  const isHonestNo = userAnswerLower.includes("don't know") || 
+                     userAnswerLower.includes("do not know") || 
+                     userAnswerLower.includes("unfamiliar") || 
+                     userAnswerLower.includes("haven't went") ||
+                     userAnswerLower.includes("not sure") ||
+                     userAnswerLower.includes("no idea");
+
+  const whatWentWell: string[] = [];
+  if (item.score <= 2 && isHonestNo) {
+    whatWentWell.push("You answered honestly instead of guessing.");
+  } else if (item.matchedKeyPoints && item.matchedKeyPoints.length > 0) {
+    item.matchedKeyPoints.slice(0, 2).forEach(pt => {
+      whatWentWell.push(`You correctly explained: ${pt}`);
+    });
+  } else {
+    whatWentWell.push("You attempted the question and kept communication open.");
+  }
+
+  const whyScoreLow: string[] = [];
+  if (item.score <= 2 && isHonestNo) {
+    whyScoreLow.push("No explanation of the concept was provided.");
+    whyScoreLow.push("Core concepts were not discussed.");
+    whyScoreLow.push("No examples or reasoning were given.");
+  } else {
+    if (item.missingKeyPoints && item.missingKeyPoints.length > 0) {
+      item.missingKeyPoints.slice(0, 2).forEach(pt => {
+        whyScoreLow.push(`Missing explanation of: ${pt}`);
+      });
+    }
+    if (item.technicalErrors && item.technicalErrors.length > 0) {
+      whyScoreLow.push("Your answer contained technical inaccuracies.");
+    }
+    if (whyScoreLow.length === 0 && item.score < 8) {
+      whyScoreLow.push("Lacks sufficient depth or practical trade-off analysis.");
+    }
+  }
+
+  const improvements: string[] = [];
+  if (item.missingKeyPoints && item.missingKeyPoints.length > 0) {
+    item.missingKeyPoints.slice(0, 3).forEach(pt => {
+      improvements.push(`Explain that: ${pt}`);
+    });
+  } else {
+    improvements.push("Elaborate on real-world edge cases and tradeoffs.");
+    improvements.push("Incorporate concrete examples from your previous projects.");
+  }
+
+  let estimatedScoreRange = "8-9 / 10";
+  if (item.score <= 2) {
+    estimatedScoreRange = "6-7 / 10";
+  } else if (item.score <= 5) {
+    estimatedScoreRange = "7-8 / 10";
+  } else if (item.score <= 8) {
+    estimatedScoreRange = "8-9 / 10";
+  } else {
+    estimatedScoreRange = "9-10 / 10";
+  }
 
   return (
     <div className={`bg-white border rounded-3xl overflow-hidden shadow-sm transition-all duration-300 ${
@@ -120,7 +234,7 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
         <div className="flex items-center gap-3 shrink-0">
           <div className="text-right">
             <span className={`text-2xl font-black ${scoreColor}`}>{scoreText}</span>
-            {scoreText !== 'Error' && <span className="text-slate-300 text-xs">/10</span>}
+            {scoreText !== 'Error' && <span className="text-slate-350 text-xs font-bold">/10</span>}
           </div>
           {expanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
         </div>
@@ -129,9 +243,45 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
       {/* Expanded content */}
       {expanded && (
         <div className="px-6 pb-6 space-y-5 border-t border-slate-100 pt-5 bg-slate-50/50">
-          {/* Candidate's Answer */}
+          
+          {/* 1. Score Explanation (Advanced) - placed right under the marks header */}
+          {!hasError && (
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Score Calculation Details</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                  className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors outline-none"
+                >
+                  {showAdvanced ? 'Hide Explanation' : 'Show Score Explanation'}
+                </button>
+              </div>
+              {showAdvanced && (
+                <div className="mt-3 bg-slate-50 p-4 rounded-xl border border-slate-200/60 font-mono text-[11px] text-slate-650 space-y-2">
+                  <p className="font-bold text-[10px] text-slate-500 uppercase tracking-wider">How it was calculated:</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-slate-600">
+                    <div>Knowledge Score: <span className="font-bold">{knowledgeScoreVal.toFixed(1)}</span></div>
+                    <div>Problem Solving Score: <span className="font-bold">{problemSolvingScoreVal.toFixed(1)}</span></div>
+                    <div>Communication Score: <span className="font-bold">{communicationScoreVal.toFixed(1)}</span></div>
+                  </div>
+                  <div className="border-t border-slate-200/80 my-2 pt-2 space-y-1 text-slate-600">
+                    <div>Raw Content Score (60% Knowledge + 40% Problem Solving): <span className="font-bold">{rawContent.toFixed(1)}</span></div>
+                    <div>Evidence Bonus: <span className="text-emerald-600 font-bold">+{evidenceBonus.toFixed(1)}</span></div>
+                    <div>Error Penalty: <span className="text-rose-600 font-bold">-{errorPenalty.toFixed(1)}</span></div>
+                  </div>
+                  <div className="border-t border-slate-200 pt-2 font-black text-slate-800 text-[11px] flex justify-between items-center">
+                    <span>Final Adjusted Score:</span>
+                    <span className="bg-slate-200 px-2 py-0.5 rounded">{item.score} / 10</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 2. Candidate's Answer */}
           <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Candidate Response</p>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Your Answer</p>
             <div className="bg-white rounded-2xl p-4 border border-slate-200">
               <p className="text-sm text-slate-700 leading-relaxed italic">
                 "{item.userAnswer || 'No answer recorded'}"
@@ -152,77 +302,135 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
             </div>
           ) : (
             <>
-              {/* AI Feedback */}
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Evaluation Feedback</p>
-                <p className="text-sm text-slate-700 leading-relaxed font-medium">{item.feedback}</p>
-              </div>
-
-              {/* Technical Errors */}
-              {item.technicalErrors && item.technicalErrors.length > 0 && (
-                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 space-y-2">
-                  <p className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1.5">
-                    <AlertTriangle size={14} /> Fact Mismatches & Technical Errors
+              {/* 3. Mentor Feedback */}
+              {item.feedback && (
+                <div className="space-y-2">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mentor Feedback</p>
+                  <p className="text-sm text-slate-750 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-200/60 italic">
+                    "{item.feedback}"
                   </p>
-                  <div className="space-y-1.5">
-                    {item.technicalErrors.map((err, i) => (
-                      <div key={i} className="flex items-start gap-2 text-xs text-rose-800">
-                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
-                          err.severity === 'high' ? 'bg-red-200 text-red-800' :
-                          err.severity === 'medium' ? 'bg-orange-200 text-orange-800' :
-                          'bg-yellow-200 text-yellow-800'
-                        }`}>
-                          {err.severity}
-                        </span>
-                        <p className="leading-relaxed">{err.error}</p>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
 
-              {/* Key Points */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {item.matchedKeyPoints && item.matchedKeyPoints.length > 0 && (
-                  <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-                    <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                      <CheckCircle size={12} /> Key Concepts Covered
-                    </p>
-                    <ul className="space-y-1.5">
-                      {item.matchedKeyPoints.map((pt, i) => (
-                        <li key={i} className="flex gap-2 text-xs text-slate-600 font-medium">
-                          <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                          {pt}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {item.missingKeyPoints && item.missingKeyPoints.length > 0 && (
-                  <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-                    <p className="text-xs font-bold text-rose-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                      <AlertCircle size={12} /> Key Concepts Missed
-                    </p>
-                    <ul className="space-y-1.5">
-                      {item.missingKeyPoints.map((pt, i) => (
-                        <li key={i} className="flex gap-2 text-xs text-slate-600 font-medium">
-                          <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
-                          {pt}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+              {/* 4. Why You Got This Score (What Went Well & Low score reasons) */}
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="bg-emerald-50/20 border border-emerald-100/50 p-4 rounded-2xl space-y-2">
+                  <h5 className="text-xs font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
+                    <CheckCircle size={14} /> What went well
+                  </h5>
+                  <ul className="space-y-1">
+                    {whatWentWell.map((w, i) => (
+                      <li key={i} className="text-xs text-slate-650 font-semibold flex items-start gap-1.5 leading-relaxed">
+                        <span className="text-emerald-500 font-bold">✓</span>
+                        {w}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-rose-50/20 border border-rose-100/50 p-4 rounded-2xl space-y-2">
+                  <h5 className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1">
+                    <AlertCircle size={14} /> Why the score is low
+                  </h5>
+                  <ul className="space-y-1">
+                    {whyScoreLow.map((w, i) => (
+                      <li key={i} className="text-xs text-slate-650 font-semibold flex items-start gap-1.5 leading-relaxed">
+                        <span className="text-rose-500 font-bold">✗</span>
+                        {w}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
 
-              {/* Sub-Metrics */}
-              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Dimension Scores</p>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <MetricBar label="Coverage" value={item.analysis?.coverage ?? 5} />
-                  <MetricBar label="Understanding" value={item.analysis?.understanding ?? 5} />
-                  <MetricBar label="Reasoning" value={item.analysis?.reasoning ?? 5} />
-                  <MetricBar label="Communication" value={item.analysis?.communication ?? 5} />
+              {/* 5. What Recruiters Expected */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Target size={14} className="text-indigo-500" /> What Recruiters Expected
+                </p>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {item.matchedKeyPoints.map((pt, i) => (
+                    <li key={i} className="text-xs text-slate-650 font-semibold flex items-center gap-1.5 leading-snug">
+                      <span className="text-emerald-500 font-bold">✓</span>
+                      <span className="line-through text-slate-400">{pt}</span>
+                    </li>
+                  ))}
+                  {item.missingKeyPoints.map((pt, i) => (
+                    <li key={i} className="text-xs text-slate-650 font-semibold flex items-center gap-1.5 leading-snug">
+                      <span className="text-slate-350 font-bold">•</span>
+                      <span>{pt}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* 6. How To Improve */}
+              <div className="bg-indigo-50/30 border border-indigo-150 p-5 rounded-3xl space-y-3">
+                <p className="text-xs font-bold text-indigo-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Brain size={14} /> How To Improve
+                </p>
+                <ul className="space-y-1.5">
+                  {improvements.map((imp, i) => (
+                    <li key={i} className="text-xs text-slate-700 font-semibold flex items-start gap-1.5 leading-relaxed">
+                      <span className="text-indigo-500 font-black">•</span>
+                      {imp}
+                    </li>
+                  ))}
+                </ul>
+                <div className="pt-2.5 border-t border-indigo-100/50 flex justify-between items-center text-xs font-bold text-indigo-800">
+                  <span>Estimated score if these points were covered:</span>
+                  <span className="bg-indigo-100/80 px-2 py-0.5 rounded-lg">{estimatedScoreRange}</span>
+                </div>
+              </div>
+
+              {/* 7. Performance Level */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Performance Profile</span>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${performance.color}`}>
+                    {performance.label}
+                  </span>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Stars and Labels */}
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center text-xs font-medium text-slate-600">
+                      <span>Knowledge Demonstrated</span>
+                      <div className="flex items-center gap-2 font-bold text-slate-800">
+                        <span className="text-[10px] text-slate-400 font-medium">({kLabel})</span>
+                        {renderStars(knowledgeScoreVal)}
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center text-xs font-medium text-slate-650">
+                      <span>Problem Solving</span>
+                      <div className="flex items-center gap-2 font-bold text-slate-800">
+                        <span className="text-[10px] text-slate-400 font-medium">({pLabel})</span>
+                        {renderStars(problemSolvingScoreVal)}
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center text-xs font-medium text-slate-600">
+                      <span>Communication</span>
+                      <div className="flex items-center gap-2 font-bold text-slate-800">
+                        <span className="text-[10px] text-slate-400 font-medium">({cLabel})</span>
+                        {renderStars(communicationScoreVal)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Confidence Alignment info */}
+                  <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-150 flex flex-col justify-center">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                      Confidence Alignment
+                    </span>
+                    <p className="text-xs text-slate-600 leading-relaxed font-semibold mb-2">
+                      {confidenceGuidance}
+                    </p>
+                    <div className="text-[11px] font-bold text-slate-700">
+                      Status: <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                        Math.abs(confidenceGapVal) <= 2 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                      }`}>{confidenceStatus}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </>
@@ -233,6 +441,13 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
   );
 };
 
+const getCandidateFriendlyRecommendation = (rec: string) => {
+  if (rec === 'Strong Hire') return 'Exceptional Alignment';
+  if (rec === 'Hire') return 'Strong Potential';
+  if (rec === 'Consider') return 'Growing Foundations';
+  return 'Needs Development';
+};
+
 export const SessionReportView: React.FC<SessionReportViewProps> = ({
   candidate,
   evalReport,
@@ -240,7 +455,8 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
   onHome,
   mode = 'candidate'
 }) => {
-  const report = evalReport;  const hiringColors: Record<string, string> = {
+  const report = evalReport;
+  const hiringColors: Record<string, string> = {
     'Strong Hire': 'bg-emerald-50 text-emerald-700 border-emerald-200',
     'Hire': 'bg-indigo-50 text-indigo-700 border-indigo-200',
     'Consider': 'bg-amber-50 text-amber-700 border-amber-200',
@@ -259,6 +475,262 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
     stabilityDescription = "Moderate score variance. The candidate performed well on some topics but showed minor gaps on others.";
   }
 
+  // 1. Candidate View Rendering
+  if (mode === 'candidate') {
+    const performanceScore = report.executiveSummary?.interviewPerformanceScore ?? report.overallScores?.interviewPerformanceScore ?? 0;
+    const candidateLevel = report.executiveSummary?.candidateLevel ?? 'Foundation Building';
+    const growthPotential = report.executiveSummary?.growthPotential ?? report.overallScores?.growthPotential ?? 0;
+    const improvementOpportunity = report.executiveSummary?.improvementOpportunity ?? report.overallScores?.improvementOpportunity ?? 0;
+    const confidenceGap = report.executiveSummary?.confidenceGap ?? report.overallScores?.confidenceGap ?? 0;
+    const topImprovements = report.topImprovements || [];
+
+    const levelColors: Record<string, string> = {
+      'Exceptional': 'bg-purple-50 text-purple-700 border-purple-200',
+      'Advanced': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      'Strong': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      'Job Ready': 'bg-blue-50 text-blue-700 border-blue-200',
+      'Developing': 'bg-amber-50 text-amber-700 border-amber-200',
+      'Foundation Building': 'bg-rose-50 text-rose-700 border-rose-200',
+    };
+
+    let confidenceGuidance = "Your confidence is well-aligned with your technical understanding. Great job speaking clearly and accurately.";
+    if (confidenceGap > 2) {
+      confidenceGuidance = "You present yourself with high confidence, but make sure to back it up with deep technical details and direct examples to match your self-assurance.";
+    } else if (confidenceGap < -2) {
+      confidenceGuidance = "You have strong technical knowledge but speak with caution. Work on presenting your answers more assertively to showcase your capability.";
+    }
+
+    let integrityGuidance = "Excellent focus and integrity. You kept your attention on the screen and fully respected interview guidelines.";
+    if (integrityScore < 70) {
+      integrityGuidance = "Interview guidelines were breached multiple times (e.g. tab switches or gaze away). Make sure to stay fully focused on the camera and avoid switching tabs in future interviews.";
+    } else if (integrityScore < 90) {
+      integrityGuidance = "Good integrity. There were minor gaze shifts or movements, but overall you stayed aligned with standard expectations.";
+    }
+
+    const friendlyRecommendation = getCandidateFriendlyRecommendation(report.executiveSummary?.recommendation || 'Consider');
+
+    return (
+      <div className="w-full text-slate-900 font-sans animate-in fade-in duration-500">
+        <div className="max-w-4xl mx-auto space-y-8">
+          
+          {/* Header */}
+          <header className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-200 pb-6 gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Brain className="text-indigo-600" size={16} />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Your Personalized Growth Report</span>
+              </div>
+              <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Hi, {candidate.name}!</h1>
+              <p className="text-sm text-slate-500 font-medium mt-1">
+                Role Focus: <span className="text-slate-900 font-bold">{candidate.role} Branch</span> | Date: <span className="text-slate-700 font-semibold">{new Date().toLocaleDateString()}</span>
+              </p>
+            </div>
+            <Logo className="w-10 h-10 opacity-70" />
+          </header>
+
+          {/* Performance Overview & Level */}
+          <div className="grid md:grid-cols-12 gap-6">
+            
+            {/* Overall Score & Level Card */}
+            <div className="md:col-span-5 bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Interview Performance</span>
+              
+              <div className="relative flex items-center justify-center">
+                <ScoreRing score={performanceScore} size={150} />
+                <div className="absolute text-center">
+                  <span className="text-3xl font-black text-slate-800">{performanceScore}%</span>
+                  <span className="text-xs text-slate-400 block mt-0.5">overall</span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 w-full">
+                <span className={`inline-block px-4 py-1.5 rounded-2xl text-xs font-black uppercase tracking-wider border ${levelColors[candidateLevel] || 'bg-slate-50 border-slate-200'}`}>
+                  {candidateLevel}
+                </span>
+                <p className="text-xs font-semibold text-slate-500 mt-2">
+                  Alignment Band: <span className="text-indigo-600 font-black">{friendlyRecommendation}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Growth Profiles & Confidence Alignment */}
+            <div className="md:col-span-7 bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col justify-between space-y-6">
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Activity size={16} className="text-indigo-600" /> Key Profiles
+                </h3>
+                
+                {/* Growth Potential */}
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-xs font-bold">
+                    <span className="text-slate-500 uppercase tracking-wider">Growth Potential</span>
+                    <span className="text-slate-800">{growthPotential}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded-full transition-all duration-700" style={{ width: `${growthPotential}%` }} />
+                  </div>
+                </div>
+
+                {/* Improvement Opportunity */}
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-xs font-bold">
+                    <span className="text-slate-500 uppercase tracking-wider">Improvement Opportunity</span>
+                    <span className="text-slate-800">{improvementOpportunity}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full transition-all duration-700" style={{ width: `${improvementOpportunity}%` }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Confidence Alignment Section */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 space-y-2">
+                <div className="flex justify-between items-center text-xs font-bold">
+                  <span className="text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <Scale size={14} className="text-indigo-500" /> Confidence Alignment
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                    Math.abs(confidenceGap) <= 2 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {Math.abs(confidenceGap) <= 2 ? 'Aligned' : confidenceGap > 0 ? 'Over-Confident' : 'Under-Confident'}
+                  </span>
+                </div>
+                <p className="text-slate-600 text-xs leading-relaxed font-medium">
+                  {confidenceGuidance}
+                </p>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Detailed Question Breakdown */}
+          <section className="space-y-4">
+            <div className="border-b border-slate-200 pb-2">
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                <MessageSquare size={20} className="text-indigo-600" /> Question-by-Question Breakdown
+              </h2>
+            </div>
+            <div className="space-y-4">
+              {report.questionBreakdown && report.questionBreakdown.length > 0 ? (
+                report.questionBreakdown.map((item, idx) => (
+                  <QuestionCard key={idx} item={item} index={idx} mode={mode} />
+                ))
+              ) : (
+                <p className="text-xs font-medium text-slate-400 italic">No question breakdown available.</p>
+              )}
+            </div>
+          </section>
+
+          {/* Top 3 Actionable Improvements Checklist */}
+          {topImprovements.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <Trophy size={16} className="text-indigo-600" /> Top Actionable Improvements
+              </h3>
+              <div className="grid gap-3">
+                {topImprovements.slice(0, 3).map((imp, idx) => (
+                  <div key={idx} className="flex items-start gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200/60">
+                    <div className="mt-0.5 flex items-center justify-center w-5 h-5 rounded-full border-2 border-indigo-400 bg-white shrink-0 text-xs font-black text-indigo-600">
+                      {idx + 1}
+                    </div>
+                    <p className="text-sm text-slate-700 font-semibold leading-relaxed">{imp}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Strengths & Focus Areas */}
+          <div className="grid md:grid-cols-2 gap-6">
+            
+            {/* Strengths */}
+            <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <Trophy className="text-emerald-500" size={16} /> Key Strengths
+              </h3>
+              <div className="space-y-2">
+                {report.strengths && report.strengths.length > 0 ? (
+                  report.strengths.map((str, idx) => (
+                    <div key={idx} className="flex items-start gap-2.5 bg-emerald-50/20 p-3 rounded-2xl border border-emerald-100/50">
+                      <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={14} />
+                      <p className="text-xs font-semibold text-slate-700 leading-relaxed">{str}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs font-medium text-slate-400 italic">No key strengths identified.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Focus Areas */}
+            <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <Target className="text-rose-500" size={16} /> Areas for Growth
+              </h3>
+              <div className="space-y-2">
+                {report.weaknesses && report.weaknesses.length > 0 ? (
+                  report.weaknesses.map((weak, idx) => (
+                    <div key={idx} className="flex items-start gap-2.5 bg-rose-50/20 p-3 rounded-2xl border border-rose-100/50">
+                      <AlertCircle className="text-rose-500 shrink-0 mt-0.5" size={14} />
+                      <p className="text-xs font-semibold text-slate-700 leading-relaxed">{weak}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs font-medium text-slate-400 italic">No focus areas identified.</p>
+                )}
+              </div>
+            </div>
+
+          </div>
+
+          {/* Interview Integrity Card */}
+          <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm grid md:grid-cols-12 gap-6 items-center">
+            <div className="md:col-span-4 flex flex-col items-center justify-center text-center border-r border-slate-100 pr-0 md:pr-6">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Interview Integrity</span>
+              <div className="relative flex items-center justify-center">
+                <ScoreRing score={integrityScore} size={100} />
+                <div className="absolute text-center">
+                  <span className="text-xl font-black text-slate-800">{integrityScore}%</span>
+                </div>
+              </div>
+            </div>
+            <div className="md:col-span-8 space-y-2">
+              <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <ShieldAlert size={16} className="text-indigo-600" /> Proctoring & Integrity Status
+              </h4>
+              <p className="text-xs text-slate-600 leading-relaxed font-medium">
+                {integrityGuidance}
+              </p>
+            </div>
+          </div>
+
+          {/* Footer Action */}
+          {onHome && (
+            <footer className="flex justify-between items-center bg-slate-900 text-white rounded-[32px] p-6 shadow-xl mt-12">
+              <div>
+                <h4 className="text-sm font-bold">Feedback Record Finalized</h4>
+                <p className="text-[10px] text-slate-400 mt-1">Your report has been saved to your student profile.</p>
+              </div>
+              <button
+                type="button"
+                onClick={onHome}
+                className="px-6 py-3 bg-white text-slate-900 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-100 transition-colors"
+              >
+                <ArrowLeft size={16} /> Return to Home
+              </button>
+            </footer>
+          )}
+
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Admin (Recruiter) View Rendering
+  const readinessScore = report.executiveSummary?.readinessScore ?? report.overallScores?.readinessScore ?? 0;
+  const performanceScore = report.executiveSummary?.interviewPerformanceScore ?? report.overallScores?.interviewPerformanceScore ?? 0;
+  const reliabilityScore = report.executiveSummary?.answerReliabilityScore ?? report.overallScores?.answerReliabilityScore ?? 0;
+
   return (
     <div className="w-full text-slate-900 font-sans animate-in fade-in duration-500">
       <div className="max-w-6xl mx-auto space-y-10">
@@ -268,7 +740,7 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Shield className="text-indigo-600" size={16} />
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Candidate Interview Report</span>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Candidate Technical Readiness Report (Admin View)</span>
             </div>
             <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">{candidate.name}</h1>
             <p className="text-sm text-slate-500 font-medium mt-1">
@@ -284,42 +756,143 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
           </div>
         </header>
 
-        {/* 1. Candidate Question-by-Question Proof Cards */}
-        <section className="space-y-6">
-          <div className="border-b border-slate-200 pb-4">
-            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-              <MessageSquare size={24} className="text-indigo-600" /> Detailed Question Evaluation
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">Detailed analysis of candidate responses and technical scores.</p>
+        {/* 1. Decision Grid & Primary Scores */}
+        <div className="grid md:grid-cols-12 gap-6">
+          
+          {/* Recommendation Ring Card */}
+          <div className="md:col-span-4 bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Hiring Recommendation</span>
+            
+            <div className="relative flex items-center justify-center">
+              <ScoreRing score={report.overallScores?.trustAdjustedScore ?? 0} size={130} />
+              <div className="absolute text-center">
+                <span className="text-2xl font-black text-slate-800">{report.overallScores?.trustAdjustedScore ?? 0}%</span>
+                <span className="text-[10px] text-slate-400 block">Trust Score</span>
+              </div>
+            </div>
+
+            <div className="space-y-1 w-full">
+              <span className={`inline-block px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider border ${hiringColors[report.executiveSummary?.recommendation ?? 'Consider']}`}>
+                {report.executiveSummary?.recommendation ?? 'Consider'}
+              </span>
+              {isInsufficientEvidence && (
+                <div className="text-[10px] text-rose-500 font-bold mt-1 uppercase flex items-center justify-center gap-1">
+                  <AlertTriangle size={12} /> Insufficient Evidence
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="space-y-4">
-            {report.questionBreakdown && report.questionBreakdown.length > 0 ? (
-              report.questionBreakdown.map((item, idx) => (
-                <QuestionCard key={idx} item={item} index={idx} />
-              ))
-            ) : (
-              <p className="text-xs font-medium text-slate-400 italic">No question breakdown available.</p>
-            )}
+          {/* Primary Scores & Reliability Card */}
+          <div className="md:col-span-8 bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm grid md:grid-cols-3 gap-4 items-center justify-between">
+            <div className="flex flex-col p-4 bg-slate-50 rounded-2xl border border-slate-200/60">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Recruiter Readiness</span>
+              <span className="text-3xl font-black text-slate-800 mt-2 block">
+                {readinessScore}%
+              </span>
+              <p className="text-[10px] text-slate-500 font-semibold mt-1">Integrity-adjusted</p>
+            </div>
+            <div className="flex flex-col p-4 bg-slate-50 rounded-2xl border border-slate-200/60">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Candidate Performance</span>
+              <span className="text-3xl font-black text-slate-800 mt-2 block">
+                {performanceScore}%
+              </span>
+              <p className="text-[10px] text-slate-500 font-semibold mt-1">Unadjusted</p>
+            </div>
+            <div className="flex flex-col p-4 bg-slate-50 rounded-2xl border border-slate-200/60">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Answer Reliability</span>
+              <span className="text-3xl font-black text-slate-800 mt-2 block">
+                {reliabilityScore}%
+              </span>
+              <p className="text-[10px] text-slate-500 font-semibold mt-1">Consistency check</p>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Executive Summary Paragraph */}
+        <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm space-y-4">
+          <h3 className="text-sm font-bold text-indigo-600 uppercase tracking-wider">Executive Summary & Verdict Rationale</h3>
+          <p className="text-slate-700 text-sm leading-relaxed font-semibold italic">
+            "{report.executiveSummary?.summary || 'No summary evaluation available.'}"
+          </p>
+        </section>
+
+        {/* 2. Detailed Dimension Scores */}
+        <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm space-y-6">
+          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-3 flex items-center gap-2">
+            <Activity size={18} className="text-indigo-600" /> Overall Technical & Communication Metrics
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Knowledge Score</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {Math.round(report.overallScores?.knowledgeScore ?? 0)}/100
+              </span>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Reasoning Score</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {Math.round(report.overallScores?.reasoningScore ?? 0)}/100
+              </span>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Communication</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {Math.round(report.overallScores?.communicationScore ?? 0)}/100
+              </span>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Consistency Score</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {Math.round(report.overallScores?.consistencyScore ?? 0)}/100
+              </span>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Session Integrity</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {Math.round(integrityScore)}/100
+              </span>
+            </div>
           </div>
         </section>
 
-        {/* 2. Integrity Verification & Gaze Summary */}
+        {/* 3. Cross-Question Technical Contradictions */}
+        {report.contradictions && report.contradictions.length > 0 && (
+          <section className="bg-rose-50/20 border border-rose-200 rounded-[32px] p-8 shadow-sm space-y-4">
+            <h3 className="text-sm font-bold text-rose-700 uppercase tracking-wider flex items-center gap-2">
+              <ShieldAlert size={18} /> Cross-Question Technical Contradictions Detected
+            </h3>
+            <div className="space-y-3">
+              {report.contradictions.map((c, idx) => (
+                <div key={idx} className="bg-white p-4 rounded-2xl border border-rose-200/60 shadow-sm space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-slate-500">
+                      Between Question #{c.qIndex1} and #{c.qIndex2}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                      c.severity === 'high' ? 'bg-red-100 text-red-700' :
+                      c.severity === 'medium' ? 'bg-orange-100 text-orange-700' :
+                      'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {c.severity} severity
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-700 font-semibold leading-relaxed">
+                    {c.explanation}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* 4. Proctoring Details & Warnings */}
         <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm space-y-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 pb-4 gap-4">
             <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <ShieldAlert size={20} className="text-rose-500" /> Integrity Verification & Gaze Summary
+              <ShieldAlert size={20} className="text-rose-500" /> Proctoring Summary & Event Breakdown
             </h3>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-medium">Session Integrity Score:</span>
-              <span className={`px-3 py-1 rounded-xl text-xs font-black border ${
-                integrityScore >= 90 ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                integrityScore >= 70 ? 'bg-amber-50 text-amber-700 border-amber-100' :
-                'bg-rose-50 text-rose-700 border-rose-100'
-              }`}>
-                {integrityScore}% Integrity
-              </span>
-            </div>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -356,23 +929,15 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
           </div>
         </section>
 
-        {/* 3. Strengths & Improvement Areas */}
+        {/* 5. Strengths & Weaknesses */}
         <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm space-y-6">
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Brain size={20} className="text-indigo-600" /> Strengths & Improvement Areas
+              <Brain size={20} className="text-indigo-600" /> Recruiter Assessment Notes
             </h3>
-            <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${
-              report.executiveSummary?.reportConfidence === 'High' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-              report.executiveSummary?.reportConfidence === 'Medium' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-              'bg-rose-50 text-rose-700 border-rose-200'
-            }`}>
-              {report.executiveSummary?.reportConfidence ?? 'High'} Confidence
-            </span>
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">
-            {/* Key Strengths */}
             <div className="space-y-4">
               <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                 <Trophy className="text-emerald-500" size={16} /> Key Strengths
@@ -380,7 +945,7 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
               <div className="space-y-2">
                 {report.strengths && report.strengths.length > 0 ? (
                   report.strengths.map((str, idx) => (
-                    <div key={idx} className="flex items-start gap-2.5 bg-emerald-50/30 p-3 rounded-2xl border border-emerald-100/50">
+                    <div key={idx} className="flex items-start gap-2.5 bg-emerald-50/20 p-3 rounded-2xl border border-emerald-100/50">
                       <CheckCircle className="text-emerald-500 shrink-0 mt-0.5" size={14} />
                       <p className="text-xs font-semibold text-slate-700 leading-relaxed">{str}</p>
                     </div>
@@ -391,15 +956,14 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
               </div>
             </div>
 
-            {/* Key Areas for Growth / Weaknesses */}
             <div className="space-y-4">
               <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Target className="text-rose-500" size={16} /> Gaps & Improvement Areas
+                <Target className="text-rose-500" size={16} /> Identified Technical Gaps
               </h4>
               <div className="space-y-2">
                 {report.weaknesses && report.weaknesses.length > 0 ? (
                   report.weaknesses.map((weak, idx) => (
-                    <div key={idx} className="flex items-start gap-2.5 bg-rose-50/30 p-3 rounded-2xl border border-rose-100/50">
+                    <div key={idx} className="flex items-start gap-2.5 bg-rose-50/20 p-3 rounded-2xl border border-rose-100/50">
                       <AlertCircle className="text-rose-500 shrink-0 mt-0.5" size={14} />
                       <p className="text-xs font-semibold text-slate-700 leading-relaxed">{weak}</p>
                     </div>
@@ -412,85 +976,30 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
           </div>
         </section>
 
-        {/* 4. Recruiter Evaluation & Verdict (Redesigned Light Theme, at the end) */}
-        <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm space-y-6">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-100">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 text-indigo-700 rounded-full text-[10px] font-black uppercase tracking-wider border border-indigo-100">
-                <Shield size={12} /> Recruiter Decision Summary
-              </div>
-              <h2 className="text-2xl font-extrabold tracking-tight text-slate-900">Recruiter Evaluation & Final Verdict</h2>
-              <p className="text-sm text-slate-500">
-                Overall score is computed based on difficulty-weighted performance adjusted for session integrity, not a simple average.
-              </p>
-            </div>
-            
-            {/* Final Score Circle */}
-            <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-3xl border border-slate-200/60 shadow-sm shrink-0">
-              <div className="relative flex items-center justify-center">
-                <ScoreRing score={report.overallScores?.trustAdjustedScore ?? 0} size={80} />
-                <div className="absolute text-center">
-                  <span className="text-sm font-black text-slate-800">{report.overallScores?.trustAdjustedScore ?? 0}%</span>
-                </div>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Overall Score</p>
-                <span className={`inline-block mt-1 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider border ${hiringColors[report.executiveSummary?.recommendation ?? 'Consider']}`}>
-                  {report.executiveSummary?.recommendation ?? 'Consider'}
-                </span>
-              </div>
-            </div>
+        {/* 6. Question Breakdown */}
+        <section className="space-y-6">
+          <div className="border-b border-slate-200 pb-4">
+            <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+              <MessageSquare size={24} className="text-indigo-600" /> Detailed Question Proofs
+            </h2>
           </div>
-
-          {/* Verdict Rationale */}
-          <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200/60">
-            <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-2">Verdict Rationale</h3>
-            <p className="text-slate-700 text-sm leading-relaxed font-medium italic">
-              "{report.executiveSummary?.summary || 'No summary evaluation available.'}"
-            </p>
-          </div>
-
-          {/* Evaluated Whole Scores */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Knowledge Score</span>
-              <span className="text-2xl font-black text-slate-800 mt-1 block">
-                {Math.round(report.overallScores?.knowledgeScore ?? 0)}<span className="text-xs text-slate-400 font-normal">/100</span>
-              </span>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Logical Reasoning</span>
-              <span className="text-2xl font-black text-slate-800 mt-1 block">
-                {Math.round(report.overallScores?.reasoningScore ?? 0)}<span className="text-xs text-slate-400 font-normal">/100</span>
-              </span>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Spoken Communication</span>
-              <span className="text-2xl font-black text-slate-800 mt-1 block">
-                {Math.round(report.overallScores?.communicationScore ?? 0)}<span className="text-xs text-slate-400 font-normal">/100</span>
-              </span>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Consistency Score</span>
-              <span className="text-2xl font-black text-slate-800 mt-1 block">
-                {Math.round(report.overallScores?.consistencyScore ?? 0)}<span className="text-xs text-slate-400 font-normal">/100</span>
-              </span>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Session Integrity</span>
-              <span className="text-2xl font-black text-slate-800 mt-1 block">
-                {Math.round(integrityScore)}<span className="text-xs text-slate-400 font-normal">/100</span>
-              </span>
-            </div>
+          <div className="space-y-4">
+            {report.questionBreakdown && report.questionBreakdown.length > 0 ? (
+              report.questionBreakdown.map((item, idx) => (
+                <QuestionCard key={idx} item={item} index={idx} mode={mode} />
+              ))
+            ) : (
+              <p className="text-xs font-medium text-slate-400 italic">No question breakdown available.</p>
+            )}
           </div>
         </section>
 
         {/* Action Button Footer */}
-        {mode === 'candidate' && onHome && (
+        {onHome && (
           <footer className="flex justify-between items-center bg-slate-900 text-white rounded-[32px] p-8 shadow-xl mt-12">
             <div>
               <h4 className="text-sm font-bold">Unified Recruiter Report Compiled</h4>
-              <p className="text-[10px] text-slate-400 mt-1">Full master evaluation record saved to db.evaluation_logic</p>
+              <p className="text-[10px] text-slate-400 mt-1">Full master evaluation record saved to database.</p>
             </div>
             <button
               type="button"
