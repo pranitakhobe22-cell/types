@@ -152,6 +152,16 @@ export const CameraMonitor: React.FC<CameraMonitorProps> = ({
       isActive = false;
       isComponentMountedRef.current = false;
       if (animationFrameIdRef.current) cancelAnimationFrame(animationFrameIdRef.current);
+      
+      if (videoRef.current && videoRef.current.srcObject) {
+        try {
+          const stream = videoRef.current.srcObject as MediaStream;
+          stream.getTracks().forEach(track => track.stop());
+          videoRef.current.srcObject = null;
+        } catch (e) {
+          console.warn("[CameraMonitor] Error stopping tracks:", e);
+        }
+      }
     };
   }, [mediaStream]);
 

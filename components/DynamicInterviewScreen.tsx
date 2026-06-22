@@ -6,6 +6,7 @@ import { useSpeech } from '../hooks/useSpeech';
 import { CameraMonitor } from './CameraMonitor';
 import { MonitoringDashboard } from './MonitoringDashboard';
 import { SupabaseService } from '../services/supabaseService';
+import { AptitudeTestScreen } from './AptitudeTestScreen';
 import { MediaCaptureService, RollingRecorder } from '../services/mediaCaptureService';
 import { 
   InterviewMediaResources, RawDetectionFrame, ProctorViolation, TimelineEvent, 
@@ -233,6 +234,10 @@ interface DynamicInterviewScreenProps {
 }
 
 export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ candidate, onComplete }) => {
+  if (candidate.role === 'APTITUDE') {
+    return <AptitudeTestScreen candidate={candidate} onComplete={onComplete} />;
+  }
+
   const [branch, setBranch] = useState<InterviewBranch | null>(null);
   const [questions, setQuestions] = useState<any[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);

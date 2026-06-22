@@ -4,7 +4,7 @@ import {
   CheckCircle, AlertCircle, ArrowLeft, Trophy, Target,
   TrendingUp, TrendingDown, ChevronDown, ChevronUp,
   Star, ThumbsUp, ThumbsDown, BarChart2,
-  ShieldAlert, AlertTriangle, Shield, Brain, MessageSquare, Scale, HelpCircle, Activity, Info
+  ShieldAlert, AlertTriangle, Shield, Brain, MessageSquare, Scale, HelpCircle, Activity, Info, Check
 } from 'lucide-react';
 import { Logo } from './Logo';
 
@@ -84,6 +84,125 @@ const renderStars = (score: number) => {
 const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown'][0]; index: number; mode?: 'admin' | 'candidate' }> = ({ item, index, mode = 'candidate' }) => {
   const [expanded, setExpanded] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  if (item.options && item.options.length > 0) {
+    const isCorrect = item.userAnswer?.trim().toUpperCase() === item.correctAnswer?.trim().toUpperCase() || (item.score === 10);
+    const isUnattempted = !item.userAnswer || item.userAnswer === 'Unattempted' || item.userAnswer === 'NONE';
+    const statusColor = isCorrect 
+      ? 'text-emerald-600' 
+      : (isUnattempted ? 'text-amber-500' : 'text-rose-600');
+    const statusText = isCorrect 
+      ? 'Correct' 
+      : (isUnattempted ? 'Unattempted' : 'Incorrect');
+
+    return (
+      <div className={`bg-white border rounded-3xl overflow-hidden shadow-sm transition-all duration-300 ${
+        expanded ? 'ring-2 ring-indigo-500/10' : ''
+      }`}>
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="w-full text-left p-6 flex items-start justify-between gap-4 hover:bg-slate-50 transition-colors"
+        >
+          <div className="flex items-start gap-4 flex-1 min-w-0">
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-white shrink-0 text-xs bg-slate-900`}>
+              Q{index + 1}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase border border-indigo-100">
+                  {item.difficulty || 'medium'}
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                  isCorrect ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
+                  isUnattempted ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                  'bg-rose-50 text-rose-700 border border-rose-100'
+                }`}>
+                  {statusText}
+                </span>
+                {item.timeSpentSeconds !== undefined && (
+                  <span className="text-slate-400 text-[10px] font-semibold">
+                    Time spent: {item.timeSpentSeconds}s
+                  </span>
+                )}
+              </div>
+              <p className="font-bold text-slate-800 text-sm leading-snug">{item.questionText}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="text-right">
+              <span className={`text-xl font-black ${statusColor}`}>
+                {isCorrect ? '10' : '0'}
+              </span>
+              <span className="text-slate-350 text-xs font-bold">/10</span>
+            </div>
+            {expanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+          </div>
+        </button>
+
+        {expanded && (
+          <div className="px-6 pb-6 space-y-5 border-t border-slate-100 pt-5 bg-slate-50/50">
+            {item.imageUrl && (
+              <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-60 flex justify-center bg-slate-50 p-2">
+                <img src={item.imageUrl} alt="Question Diagram" className="object-contain max-h-56" />
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {item.options.map((opt, oIdx) => {
+                const optKey = String.fromCharCode(65 + oIdx);
+                const isSelected = item.userAnswer === optKey;
+                const isCorrectOpt = item.correctAnswer === optKey;
+
+                let cardStyle = 'border-slate-100 bg-white text-slate-700';
+                let iconEl = null;
+
+                if (isSelected) {
+                  if (isCorrectOpt) {
+                    cardStyle = 'border-emerald-500 bg-emerald-50/40 text-emerald-800 font-bold';
+                    iconEl = <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center text-white"><Check size={12} strokeWidth={3} /></div>;
+                  } else {
+                    cardStyle = 'border-rose-500 bg-rose-50/40 text-rose-800 font-bold';
+                    iconEl = <div className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center text-white text-[10px] font-bold">X</div>;
+                  }
+                } else if (isCorrectOpt) {
+                  cardStyle = 'border-emerald-500 bg-emerald-50/30 text-emerald-800 font-semibold';
+                  iconEl = <div className="w-5 h-5 rounded-full bg-emerald-500/50 flex items-center justify-center text-white"><Check size={12} strokeWidth={3} /></div>;
+                }
+
+                return (
+                  <div key={oIdx} className={`p-4 rounded-xl border flex items-center justify-between transition-all ${cardStyle}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-7 h-7 rounded-md flex items-center justify-center font-bold text-xs ${
+                        isSelected 
+                          ? (isCorrectOpt ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white')
+                          : (isCorrectOpt ? 'bg-emerald-500/30 text-emerald-700' : 'bg-slate-100 text-slate-500')
+                      }`}>
+                        {optKey}
+                      </div>
+                      <span className="text-xs">{opt}</span>
+                    </div>
+                    {iconEl}
+                  </div>
+                );
+              })}
+            </div>
+
+            {item.explanation && (
+              <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-2xl space-y-1.5">
+                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest flex items-center gap-1.5">
+                  <Info size={12} /> Solution Explanation
+                </span>
+                <p className="text-slate-650 text-xs leading-relaxed font-semibold">
+                  {item.explanation}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const scoreText = item.evaluationError ? 'Error' : `${item.score}`;
   const scoreColor =
@@ -456,6 +575,259 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
   mode = 'candidate'
 }) => {
   const report = evalReport;
+  const isAptitudeReport = !!report.aptitudeSummary || candidate.role === 'APTITUDE' || report.questionBreakdown?.some(q => q.options && q.options.length > 0);
+
+  if (isAptitudeReport) {
+    const aptSummary = report.aptitudeSummary || {
+      correct: report.questionBreakdown?.filter(q => q.score === 10).length || 0,
+      incorrect: report.questionBreakdown?.filter(q => q.score === 0 && q.userAnswer !== 'Unattempted').length || 0,
+      unattempted: report.questionBreakdown?.filter(q => q.userAnswer === 'Unattempted').length || 0,
+      accuracy: report.executiveSummary?.technicalScore || 0,
+      trustScore: report.executiveSummary?.trustScore || 100,
+      timeSpentSeconds: 0,
+      categoryBreakdown: {},
+      improvements: report.topImprovements || []
+    };
+
+    const integrityScoreVal = report.proctoringSummary?.integrityScore ?? aptSummary.trustScore ?? 100;
+    const finalAccuracy = aptSummary.accuracy ?? Math.round((aptSummary.correct / 10) * 100);
+    
+    const durationSeconds = aptSummary.timeSpentSeconds || (report.proctoringSummary?.sessionDurationMs ? Math.round(report.proctoringSummary.sessionDurationMs / 1000) : 0);
+    const formatDuration = (sec: number) => {
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    };
+
+    return (
+      <div className="w-full text-slate-900 font-sans animate-in fade-in duration-500">
+        <div className="max-w-5xl mx-auto space-y-8">
+          {/* Header */}
+          <header className="flex flex-col md:flex-row md:items-center md:justify-between border-b border-slate-200 pb-6 gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Brain className="text-indigo-600" size={16} />
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  {mode === 'admin' ? 'Candidate Aptitude Readiness Report (Admin)' : 'Your Aptitude Growth Report'}
+                </span>
+              </div>
+              <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">
+                {mode === 'admin' ? candidate.name : `Hi, ${candidate.name}!`}
+              </h1>
+              <p className="text-sm text-slate-500 font-medium mt-1">
+                Role Focus: <span className="text-slate-900 font-bold">Aptitude Test</span> | Date: <span className="text-slate-700 font-semibold">{new Date().toLocaleDateString()}</span>
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {mode === 'admin' && (
+                <div className="text-right hidden md:block">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Evaluation Mode</p>
+                  <p className="text-xs font-mono font-bold text-slate-700">Objective MCQ</p>
+                </div>
+              )}
+              <Logo className="w-10 h-10 opacity-70" />
+            </div>
+          </header>
+
+          {/* Core Decision Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+            {/* Performance score card */}
+            <div className="md:col-span-4 bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Aptitude Accuracy</span>
+              <div className="relative flex items-center justify-center">
+                <ScoreRing score={finalAccuracy} size={140} />
+                <div className="absolute text-center">
+                  <span className="text-3xl font-black text-slate-800">{aptSummary.correct}/10</span>
+                  <span className="text-xs text-slate-400 block mt-0.5">{finalAccuracy}% Accuracy</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Integrity / Trust Score Card (Separate!) */}
+            <div className="md:col-span-4 bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col items-center justify-center text-center space-y-4">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Integrity / Trust Score</span>
+              <div className="relative flex items-center justify-center">
+                <ScoreRing score={integrityScoreVal} size={140} />
+                <div className="absolute text-center">
+                  <span className="text-3xl font-black text-slate-800">{integrityScoreVal}%</span>
+                  <span className="text-xs text-slate-400 block mt-0.5">Trust Integrity</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Metrics stats */}
+            <div className="md:col-span-4 bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm flex flex-col justify-between space-y-4">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Test Stats</h3>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-xs font-medium">
+                  <span className="text-slate-500">Correct Answers</span>
+                  <span className="font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full">{aptSummary.correct}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs font-medium">
+                  <span className="text-slate-500">Incorrect Answers</span>
+                  <span className="font-bold text-rose-600 bg-rose-50 px-2.5 py-0.5 rounded-full">{aptSummary.incorrect}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs font-medium">
+                  <span className="text-slate-500">Unattempted</span>
+                  <span className="font-bold text-amber-600 bg-amber-50 px-2.5 py-0.5 rounded-full">{aptSummary.unattempted}</span>
+                </div>
+                {durationSeconds > 0 && (
+                  <div className="flex justify-between items-center text-xs font-medium border-t border-slate-100 pt-2.5">
+                    <span className="text-slate-500">Time Taken</span>
+                    <span className="font-bold text-slate-800">{formatDuration(durationSeconds)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* AI Executive Summary Block */}
+          {report.executiveSummary?.summary && (
+            <section className="bg-white border border-slate-200 rounded-[32px] p-6 md:p-8 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-2">
+                <Info size={16} /> Executive Summary
+              </h3>
+              <p className="text-slate-700 text-sm leading-relaxed font-semibold italic">
+                "{report.executiveSummary.summary}"
+              </p>
+            </section>
+          )}
+
+          {/* Category-wise Performance and AI Actionable Improvements */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Category accuracy bars */}
+            <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <BarChart2 size={16} className="text-indigo-600" /> Category Breakdown
+              </h3>
+              <div className="space-y-4">
+                {Object.keys(aptSummary.categoryBreakdown || {}).length > 0 ? (
+                  Object.entries(aptSummary.categoryBreakdown).map(([cat, data]: [string, any]) => (
+                    <div key={cat} className="space-y-1">
+                      <div className="flex justify-between items-center text-xs font-semibold">
+                        <span className="text-slate-650">{cat}</span>
+                        <span className="text-slate-800">{data.correct}/{data.total} ({data.accuracy}%)</span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-indigo-600 rounded-full transition-all duration-1000" 
+                          style={{ width: `${data.accuracy}%` }} 
+                        />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  // Fallback category calculations from questionBreakdown
+                  ['Quantitative', 'Logical', 'Analytical', 'Verbal'].map(cat => {
+                    const catQs = report.questionBreakdown?.filter(q => q.category === cat) || [];
+                    const total = catQs.length;
+                    const correct = catQs.filter(q => q.score === 10).length;
+                    const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+                    if (total === 0) return null;
+
+                    return (
+                      <div key={cat} className="space-y-1">
+                        <div className="flex justify-between items-center text-xs font-semibold">
+                          <span className="text-slate-650">{cat}</span>
+                          <span className="text-slate-800">{correct}/{total} ({pct}%)</span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-indigo-600 rounded-full transition-all duration-1000" 
+                            style={{ width: `${pct}%` }} 
+                          />
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* AI Actionable Improvements */}
+            <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm space-y-4">
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <Trophy size={16} className="text-indigo-600" /> Actionable Improvements
+              </h3>
+              <div className="grid gap-3">
+                {(aptSummary.improvements || []).slice(0, 3).map((imp: string, idx: number) => (
+                  <div key={idx} className="flex items-start gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200/60 font-semibold leading-relaxed">
+                    <div className="mt-0.5 flex items-center justify-center w-5 h-5 rounded-full border-2 border-indigo-400 bg-white shrink-0 text-xs font-black text-indigo-600">
+                      {idx + 1}
+                    </div>
+                    <p className="text-sm text-slate-700">{imp}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Gaze Warnings and Proctor Details */}
+          <div className="bg-white border border-slate-200 rounded-[32px] p-6 shadow-sm space-y-4">
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+              <ShieldAlert size={16} className="text-rose-500" /> Proctor violations & logs
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Tab Switches</span>
+                <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary?.tabSwitches ?? 0}</span>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Camera Away / Gaze</span>
+                <span className="text-xl font-black text-slate-700 mt-1 block">
+                  {report.proctoringSummary?.faceAwayEvents ?? report.proctoringSummary?.gazeAwayEvents ?? 0}
+                </span>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Multiple Person</span>
+                <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary?.multiplePersonEvents ?? 0}</span>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Warnings Issued</span>
+                <span className="text-xl font-black text-slate-700 mt-1 block">{report.proctoringSummary?.warningsIssued ?? 0}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Detailed Question breakdown */}
+          <section className="space-y-4">
+            <div className="border-b border-slate-200 pb-2">
+              <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
+                <MessageSquare size={20} className="text-indigo-600" /> Detailed Question Proofs
+              </h2>
+            </div>
+            <div className="space-y-4">
+              {report.questionBreakdown && report.questionBreakdown.length > 0 ? (
+                report.questionBreakdown.map((item, idx) => (
+                  <QuestionCard key={idx} item={item} index={idx} mode={mode} />
+                ))
+              ) : (
+                <p className="text-xs font-medium text-slate-400 italic">No question breakdown available.</p>
+              )}
+            </div>
+          </section>
+
+          {/* Home button footer */}
+          {onHome && (
+            <footer className="flex justify-between items-center bg-slate-900 text-white rounded-[32px] p-6 shadow-xl mt-12">
+              <div>
+                <h4 className="text-sm font-bold">Feedback Record Finalized</h4>
+                <p className="text-[10px] text-slate-400 mt-1">Your report has been saved to your profile.</p>
+              </div>
+              <button
+                type="button"
+                onClick={onHome}
+                className="px-6 py-3 bg-white text-slate-900 rounded-xl font-bold flex items-center gap-2 hover:bg-slate-100 transition-colors"
+              >
+                <ArrowLeft size={16} /> Return to Home
+              </button>
+            </footer>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const hiringColors: Record<string, string> = {
     'Strong Hire': 'bg-emerald-50 text-emerald-700 border-emerald-200',
     'Hire': 'bg-indigo-50 text-indigo-700 border-indigo-200',

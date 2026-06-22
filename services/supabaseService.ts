@@ -5,7 +5,7 @@ import {
     ProctorViolation, TimelineEvent, DashboardTelemetry
 } from '../types';
 import { ErrorLogService } from './errorLogService';
-import { CSE_QUESTION_BANK, ECE_QUESTION_BANK } from './questionBank';
+import { CSE_QUESTION_BANK, ECE_QUESTION_BANK, APTITUDE_QUESTION_BANK } from './questionBank';
 
 export class SupabaseService {
     static logStatusChange: any;
@@ -21,12 +21,41 @@ export class SupabaseService {
                 {
                     title: 'Computer Science (CSE)',
                     description: 'Core evaluation for Computer Science fundamentals, DBMS, OS, Networking, and DSA.',
-                    questions: CSE_QUESTION_BANK
+                    questions: CSE_QUESTION_BANK,
+                    accessKey: 'CS123',
+                    settings: {
+                        difficulty: 'Medium',
+                        preset: 'Normal',
+                        assessmentType: 'VOICE_INTERVIEW',
+                        weights: { concept: 50, grammar: 20, fluency: 20, camera: 10 },
+                        proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
+                    }
                 },
                 {
                     title: 'Electronics (ECE)',
                     description: 'Core evaluation for Electronics, Embedded Systems, Signal Processing, and Circuits.',
-                    questions: ECE_QUESTION_BANK
+                    questions: ECE_QUESTION_BANK,
+                    accessKey: 'ECE123',
+                    settings: {
+                        difficulty: 'Medium',
+                        preset: 'Normal',
+                        assessmentType: 'VOICE_INTERVIEW',
+                        weights: { concept: 50, grammar: 20, fluency: 20, camera: 10 },
+                        proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
+                    }
+                },
+                {
+                    title: 'Aptitude',
+                    description: 'Placement preparation and campus hiring aptitude test.',
+                    questions: APTITUDE_QUESTION_BANK,
+                    accessKey: 'APT123',
+                    settings: {
+                        difficulty: 'Medium',
+                        preset: 'Normal',
+                        assessmentType: 'MCQ',
+                        weights: { concept: 100, grammar: 0, fluency: 0, camera: 0 },
+                        proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
+                    }
                 }
             ];
 
@@ -40,14 +69,9 @@ export class SupabaseService {
                         status: 'ACTIVE',
                         difficulty: 'Medium',
                         company: 'Reicrew AI',
-                        access_key: role.title.includes('CSE') ? 'CS123' : 'ECE123',
+                        access_key: role.accessKey,
                         questions: role.questions,
-                        settings: {
-                            difficulty: 'Medium',
-                            preset: 'Normal',
-                            weights: { concept: 50, grammar: 20, fluency: 20, camera: 10 },
-                            proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
-                        }
+                        settings: role.settings
                     });
                     if (insertError) {
                         console.error(`Failed to seed ${role.title}:`, insertError.message);

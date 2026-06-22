@@ -31,7 +31,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
     const [copySuccess, setCopySuccess] = useState<string | null>(null);
 
     // Questions Editor state
-    const [selectedRole, setSelectedRole] = useState<'CSE' | 'ECE'>('CSE');
+    const [selectedRole, setSelectedRole] = useState<'CSE' | 'ECE' | 'APTITUDE'>('CSE');
+    const [isUploading, setIsUploading] = useState(false);
     const [questionsList, setQuestionsList] = useState<Question[]>([]);
     const [questionsFilter, setQuestionsFilter] = useState<string>('all');
     const [isSaving, setIsSaving] = useState(false);
@@ -757,10 +758,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
             return;
         }
 
-        const validAreas = (editingQuestion.evaluationGuide || []).map(a => a.trim()).filter(Boolean);
-        if (validAreas.length === 0) {
-            alert("At least one non-empty evaluation checklist area is required.");
-            return;
+        let validAreas = (editingQuestion.evaluationGuide || []).map(a => a.trim()).filter(Boolean);
+        if (selectedRole === 'APTITUDE') {
+            if (validAreas.length === 0) {
+                validAreas = ["Explain the core concept or select the correct option directly."];
+            }
+            if (!editingQuestion.options || editingQuestion.options.length < 4 || editingQuestion.options.some(o => !o.trim())) {
+                alert("All 4 option fields must be filled out for Aptitude questions.");
+                return;
+            }
+            if (!editingQuestion.answer || !['A', 'B', 'C', 'D'].includes(editingQuestion.answer.toUpperCase())) {
+                alert("Please select a valid correct answer (A, B, C, or D).");
+                return;
+            }
+        } else {
+            if (validAreas.length === 0) {
+                alert("At least one non-empty evaluation checklist area is required.");
+                return;
+            }
         }
 
         const updatedQ: Question = {
@@ -780,6 +795,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
         setEditingQuestion(null);
         setIsAddModalOpen(false);
         setTimeout(() => setSuccessMessage(null), 5000);
+    };
+
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !editingQuestion) return;
+
+        setIsUploading(true);
+        try {
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${editingQuestion.id || Math.random().toString(36).substring(2, 9)}_${Date.now()}.${fileExt}`;
+            
+            // Check if supabase exists
+            const { supabase } = await import('../services/supabaseClient');
+            if (!supabase) throw new Error("Supabase client is not available.");
+
+            const { data, error: uploadError } = await supabase.storage
+                .from('question-images')
+                .upload(fileName, file, {
+                    cacheControl: '3600',
+                    upsert: true
+                });
+
+            if (uploadError) throw uploadError;
+
+            const { data: { publicUrl } } = supabase.storage
+                .from('question-images')
+                .getPublicUrl(fileName);
+
+            setEditingQuestion({
+                ...editingQuestion,
+                imageUrl: publicUrl
+            });
+            alert("Image uploaded successfully!");
+        } catch (error: any) {
+            console.error("Error uploading image:", error);
+            alert(`Failed to upload image: ${error.message || JSON.stringify(error)}`);
+        } finally {
+            setIsUploading(false);
+        }
     };
 
     // Filters error logs
@@ -1027,7 +1081,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                     <button
                                         onClick={() => { setSelectedRole('CSE'); setQuestionsFilter('all'); }}
                                         className={`px-6 py-2.5 rounded-lg text-xs font-black tracking-wider uppercase transition-all ${
-                                            selectedRole === 'CSE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                                            selectedRole === 'CSE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-550 hover:text-slate-800'
                                         }`}
                                     >
                                         Computer Science (CSE)
@@ -1035,10 +1089,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                     <button
                                         onClick={() => { setSelectedRole('ECE'); setQuestionsFilter('all'); }}
                                         className={`px-6 py-2.5 rounded-lg text-xs font-black tracking-wider uppercase transition-all ${
-                                            selectedRole === 'ECE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                                            selectedRole === 'ECE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-550 hover:text-slate-800'
                                         }`}
                                     >
                                         Electronics (ECE)
+                                    </button>
+                                    <button
+                                        onClick={() => { setSelectedRole('APTITUDE'); setQuestionsFilter('all'); }}
+                                        className={`px-6 py-2.5 rounded-lg text-xs font-black tracking-wider uppercase transition-all ${
+                                            selectedRole === 'APTITUDE' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-550 hover:text-slate-800'
+                                        }`}
+                                    >
+                                        Aptitude
                                     </button>
                                 </div>
                             </div>
@@ -1279,7 +1341,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                 </button>
                                                 <button 
                                                     onClick={() => {
-                                                        const newQ: Question = {
+                                                        const newQ: Question = selectedRole === 'APTITUDE' ? {
+                                                            id: `apt-custom-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+                                                            question: "",
+                                                            difficulty: 'medium',
+                                                            type: 'Fundamentals',
+                                                            category: "Quantitative",
+                                                            options: ["", "", "", ""],
+                                                            answer: "A",
+                                                            explanation: "",
+                                                            evaluationGuide: ["Explain the core concept or select the correct option directly."],
+                                                            maxScore: 10,
+                                                            version: 1,
+                                                            updatedAt: new Date().toISOString()
+                                                        } : {
                                                             id: `custom-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
                                                             question: "",
                                                             difficulty: 'medium',
@@ -1956,196 +2031,329 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                     value={editingQuestion.question} 
                                                     onChange={(e) => setEditingQuestion({ ...editingQuestion, question: e.target.value })} 
                                                 />
-                                            </div>
+                                                                            {selectedRole === 'APTITUDE' ? (
+                                                <>
+                                                    {/* Category & Difficulty */}
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Category</label>
+                                                            <select
+                                                                value={editingQuestion.category || 'Quantitative'}
+                                                                onChange={(e) => setEditingQuestion({ ...editingQuestion, category: e.target.value })}
+                                                                className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
+                                                            >
+                                                                <option value="Quantitative">Quantitative Aptitude</option>
+                                                                <option value="Logical">Logical Reasoning</option>
+                                                                <option value="Analytical">Analytical Reasoning</option>
+                                                                <option value="Verbal">Verbal Aptitude</option>
+                                                            </select>
+                                                        </div>
 
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                {/* Difficulty */}
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Difficulty Level</label>
-                                                    <select 
-                                                        value={editingQuestion.difficulty || 'medium'}
-                                                        onChange={(e) => setEditingQuestion({ ...editingQuestion, difficulty: e.target.value as any })}
-                                                        className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
-                                                    >
-                                                        <option value="easy">Easy</option>
-                                                        <option value="medium">Medium</option>
-                                                        <option value="hard">Hard (High Level)</option>
-                                                    </select>
-                                                </div>
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Difficulty Level</label>
+                                                            <select 
+                                                                value={editingQuestion.difficulty || 'medium'}
+                                                                onChange={(e) => setEditingQuestion({ ...editingQuestion, difficulty: e.target.value as any })}
+                                                                className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
+                                                            >
+                                                                <option value="easy">Easy</option>
+                                                                <option value="medium">Medium</option>
+                                                                <option value="hard">Hard</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
 
-                                                {/* Stage / Type */}
-                                                <div>
-                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Flow Stage (Type)</label>
-                                                    <select 
-                                                        value={editingQuestion.type || 'Core'}
-                                                        onChange={(e) => setEditingQuestion({ ...editingQuestion, type: e.target.value as any })}
-                                                        className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
-                                                    >
-                                                        <option value="Fundamentals">Stage 1: Fundamentals</option>
-                                                        <option value="Core">Stage 2: Core Technical</option>
-                                                        <option value="Scenario">Stage 3: Scenario Case Study</option>
-                                                        <option value="Behavioral Experience">Stage 4: Behavioral Experience</option>
-                                                        <option value="Behavioral Situation">Stage 5: Behavioral Situation</option>
-                                                    </select>
-                                                </div>
+                                                    {/* Options A, B, C, D */}
+                                                    <div className="space-y-3">
+                                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">MCQ Options</label>
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                            {['A', 'B', 'C', 'D'].map((lbl, idx) => {
+                                                                const opts = editingQuestion.options || ["", "", "", ""];
+                                                                return (
+                                                                    <div key={lbl} className="flex gap-2 items-center">
+                                                                        <span className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-500 shrink-0">
+                                                                            {lbl}
+                                                                        </span>
+                                                                        <input
+                                                                            type="text"
+                                                                            value={opts[idx] || ""}
+                                                                            onChange={(e) => {
+                                                                                const nextOpts = [...opts];
+                                                                                nextOpts[idx] = e.target.value;
+                                                                                setEditingQuestion({
+                                                                                    ...editingQuestion,
+                                                                                    options: nextOpts
+                                                                                });
+                                                                            }}
+                                                                            placeholder={`Option ${lbl} text`}
+                                                                            className="flex-1 border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2 text-xs outline-none transition-all text-slate-800 font-medium"
+                                                                        />
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
 
-                                                {/* Category */}
-                                                <div className="md:col-span-2">
-                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Category</label>
-                                                    <input 
-                                                        className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800 font-semibold" 
-                                                        value={editingQuestion.category || ''} 
-                                                        onChange={(e) => setEditingQuestion({ ...editingQuestion, category: e.target.value })} 
-                                                        placeholder="e.g. Technical"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            {/* Evaluation Areas Checklist Manager */}
-                                            <div className="space-y-3 pt-2">
-                                                <div className="flex justify-between items-center">
-                                                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Evaluation Checklist Areas (AI Grading Standard)</label>
-                                                    <button 
-                                                        onClick={() => {
-                                                            const currentGuide = editingQuestion.evaluationGuide || [];
-                                                            setEditingQuestion({
-                                                                ...editingQuestion,
-                                                                evaluationGuide: [...currentGuide, ""]
-                                                            });
-                                                        }}
-                                                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline"
-                                                    >
-                                                        + Add Area
-                                                    </button>
-                                                </div>
-                                                
-                                                <div className="space-y-2">
-                                                    {(editingQuestion.evaluationGuide || []).length === 0 ? (
-                                                        <p className="text-xs text-rose-500 font-semibold italic">No evaluation areas added. At least one area is required.</p>
-                                                    ) : (
-                                                        (editingQuestion.evaluationGuide || []).map((area, idx) => (
-                                                            <div key={idx} className="flex gap-3 items-center">
-                                                                <input 
-                                                                    className="flex-1 border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800 font-medium"
-                                                                    value={area}
-                                                                    onChange={(e) => {
-                                                                        const updated = [...(editingQuestion.evaluationGuide || [])];
-                                                                        updated[idx] = e.target.value;
-                                                                        setEditingQuestion({
-                                                                            ...editingQuestion,
-                                                                            evaluationGuide: updated
-                                                                        });
-                                                                    }}
-                                                                    placeholder="Describe the expected candidate answer point or checklist item..."
-                                                                />
-                                                                <button 
-                                                                    onClick={() => {
-                                                                        const updated = (editingQuestion.evaluationGuide || []).filter((_, i) => i !== idx);
-                                                                        setEditingQuestion({
-                                                                            ...editingQuestion,
-                                                                            evaluationGuide: updated
-                                                                        });
-                                                                    }}
-                                                                    className="p-2 text-slate-400 hover:text-red-500 hover:bg-slate-50 rounded-lg transition-colors"
-                                                                >
-                                                                    <Trash2 size={14} />
-                                                                </button>
-                                                            </div>
-                                                        ))
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            {/* Preview & Test Evaluation Simulator */}
-                                            <div className="border-t border-slate-100 pt-4 space-y-3">
-                                                <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                                                    <Terminal size={14} className="text-indigo-500" /> Preview/Test AI Grading
-                                                </h4>
-                                                <p className="text-[10px] text-slate-400 leading-normal">
-                                                    Verify your evaluation guide by grading a mock candidate response before saving.
-                                                </p>
-                                                
-                                                <div className="space-y-3 bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                    {/* Correct Answer Selector */}
                                                     <div>
-                                                        <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Sample Answer</label>
-                                                        <textarea 
-                                                            className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all resize-y h-16 text-slate-800 bg-white" 
-                                                            placeholder="Type a sample answer to test..." 
-                                                            value={testAnswer}
-                                                            onChange={(e) => setTestAnswer(e.target.value)}
+                                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Correct Answer Option</label>
+                                                        <select
+                                                            value={editingQuestion.answer || 'A'}
+                                                            onChange={(e) => setEditingQuestion({ ...editingQuestion, answer: e.target.value })}
+                                                            className="w-40 border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
+                                                        >
+                                                            <option value="A">Option A</option>
+                                                            <option value="B">Option B</option>
+                                                            <option value="C">Option C</option>
+                                                            <option value="D">Option D</option>
+                                                        </select>
+                                                    </div>
+
+                                                    {/* Solution Explanation */}
+                                                    <div>
+                                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Solution Explanation</label>
+                                                        <textarea
+                                                            value={editingQuestion.explanation || ''}
+                                                            onChange={(e) => setEditingQuestion({ ...editingQuestion, explanation: e.target.value })}
+                                                            placeholder="Detail the step-by-step mathematical or logical solution explanation..."
+                                                            className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-3 text-xs outline-none transition-all resize-y h-20 text-slate-800 font-medium"
                                                         />
                                                     </div>
-                                                    
-                                                    <div className="flex justify-between items-center">
-                                                        <button 
-                                                            onClick={handleTestGrading}
-                                                            disabled={isTesting || !testAnswer.trim()}
-                                                            className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-600 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5"
-                                                        >
-                                                            {isTesting ? (
-                                                                <>
-                                                                    <RefreshCw size={12} className="animate-spin" /> Testing...
-                                                                </>
-                                                            ) : (
-                                                                <>
-                                                                    <Play size={12} /> Run Test Grading
-                                                                </>
-                                                            )}
-                                                        </button>
-                                                        
-                                                        {testResult && !testResult.error && (
-                                                            <div className="text-[10px] font-bold text-slate-600 flex items-center gap-2">
-                                                                Expected Score: 
-                                                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider ${
-                                                                    testResult.contentScore >= 8 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
-                                                                    testResult.contentScore >= 6 ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' :
-                                                                    testResult.contentScore >= 4 ? 'bg-amber-50 text-amber-700 border border-amber-100' :
-                                                                    'bg-rose-50 text-rose-700 border border-rose-100'
-                                                                }`}>
-                                                                    {testResult.contentScore}/10 ({testResult.verdict})
-                                                                </span>
+
+                                                    {/* Image Attachment & Upload */}
+                                                    <div className="space-y-2 border-t border-slate-100 pt-4">
+                                                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Optional Image Attachment</label>
+                                                        <div className="flex flex-col md:flex-row gap-3 items-stretch">
+                                                            <input
+                                                                type="text"
+                                                                value={editingQuestion.imageUrl || ''}
+                                                                onChange={(e) => setEditingQuestion({ ...editingQuestion, imageUrl: e.target.value })}
+                                                                placeholder="Paste direct Image URL or upload a file..."
+                                                                className="flex-1 border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800 font-medium"
+                                                            />
+                                                            <div className="relative">
+                                                                <input
+                                                                    type="file"
+                                                                    accept="image/*"
+                                                                    onChange={handleImageUpload}
+                                                                    id="mcq-img-upload"
+                                                                    className="hidden"
+                                                                />
+                                                                <label
+                                                                    htmlFor="mcq-img-upload"
+                                                                    className={`px-4 py-2.5 border border-slate-200 hover:border-slate-350 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer h-full ${
+                                                                        isUploading ? 'opacity-50 pointer-events-none' : ''
+                                                                    }`}
+                                                                >
+                                                                    {isUploading ? 'Uploading...' : 'Upload File'}
+                                                                </label>
+                                                            </div>
+                                                        </div>
+                                                        {editingQuestion.imageUrl && (
+                                                            <div className="relative border border-slate-200 rounded-2xl overflow-hidden max-h-40 bg-slate-50 p-2 flex justify-center items-center group max-w-sm mt-2">
+                                                                <img src={editingQuestion.imageUrl} alt="Attached Preview" className="object-contain max-h-36" />
+                                                                <button
+                                                                    onClick={() => setEditingQuestion({ ...editingQuestion, imageUrl: undefined })}
+                                                                    className="absolute top-2 right-2 bg-slate-900/80 text-white rounded-lg p-1.5 hover:bg-red-600 transition-colors text-xs font-bold"
+                                                                >
+                                                                    Remove
+                                                                </button>
                                                             </div>
                                                         )}
                                                     </div>
-                                                    
-                                                    {testResult && (
-                                                        <div className="border-t border-slate-200/60 pt-3 space-y-2 mt-2">
-                                                            {testResult.error ? (
-                                                                <p className="text-xs text-rose-500 font-medium">{testResult.error}</p>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        {/* Difficulty */}
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Difficulty Level</label>
+                                                            <select 
+                                                                value={editingQuestion.difficulty || 'medium'}
+                                                                onChange={(e) => setEditingQuestion({ ...editingQuestion, difficulty: e.target.value as any })}
+                                                                className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
+                                                            >
+                                                                <option value="easy">Easy</option>
+                                                                <option value="medium">Medium</option>
+                                                                <option value="hard">Hard (High Level)</option>
+                                                            </select>
+                                                        </div>
+
+                                                        {/* Stage / Type */}
+                                                        <div>
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Flow Stage (Type)</label>
+                                                            <select 
+                                                                value={editingQuestion.type || 'Core'}
+                                                                onChange={(e) => setEditingQuestion({ ...editingQuestion, type: e.target.value as any })}
+                                                                className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all bg-white text-slate-800 font-semibold"
+                                                            >
+                                                                <option value="Fundamentals">Stage 1: Fundamentals</option>
+                                                                <option value="Core">Stage 2: Core Technical</option>
+                                                                <option value="Scenario">Stage 3: Scenario Case Study</option>
+                                                                <option value="Behavioral Experience">Stage 4: Behavioral Experience</option>
+                                                                <option value="Behavioral Situation">Stage 5: Behavioral Situation</option>
+                                                            </select>
+                                                        </div>
+
+                                                        {/* Category */}
+                                                        <div className="md:col-span-2">
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Category</label>
+                                                            <input 
+                                                                className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800 font-semibold" 
+                                                                value={editingQuestion.category || ''} 
+                                                                onChange={(e) => setEditingQuestion({ ...editingQuestion, category: e.target.value })} 
+                                                                placeholder="e.g. Technical"
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Evaluation Areas Checklist Manager */}
+                                                    <div className="space-y-3 pt-2">
+                                                        <div className="flex justify-between items-center">
+                                                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Evaluation Checklist Areas (AI Grading Standard)</label>
+                                                            <button 
+                                                                onClick={() => {
+                                                                    const currentGuide = editingQuestion.evaluationGuide || [];
+                                                                    setEditingQuestion({
+                                                                        ...editingQuestion,
+                                                                        evaluationGuide: [...currentGuide, ""]
+                                                                    });
+                                                                }}
+                                                                className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline"
+                                                            >
+                                                                + Add Area
+                                                            </button>
+                                                        </div>
+                                                        
+                                                        <div className="space-y-2">
+                                                            {(editingQuestion.evaluationGuide || []).length === 0 ? (
+                                                                <p className="text-xs text-rose-500 font-semibold italic">No evaluation areas added. At least one area is required.</p>
                                                             ) : (
-                                                                <div className="text-[11px] space-y-2.5">
-                                                                    <div>
-                                                                        <span className="font-bold text-slate-600 block mb-0.5">AI Feedback:</span>
-                                                                        <p className="text-slate-500 italic bg-white p-2.5 rounded-xl border border-slate-100 leading-relaxed font-sans">{testResult.feedback}</p>
+                                                                (editingQuestion.evaluationGuide || []).map((area, idx) => (
+                                                                    <div key={idx} className="flex gap-3 items-center">
+                                                                        <input 
+                                                                            className="flex-1 border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all text-slate-800 font-medium"
+                                                                            value={area}
+                                                                            onChange={(e) => {
+                                                                                const updated = [...(editingQuestion.evaluationGuide || [])];
+                                                                                updated[idx] = e.target.value;
+                                                                                setEditingQuestion({
+                                                                                    ...editingQuestion,
+                                                                                    evaluationGuide: updated
+                                                                                });
+                                                                            }}
+                                                                            placeholder="Describe the expected candidate answer point or checklist item..."
+                                                                        />
+                                                                        <button 
+                                                                            onClick={() => {
+                                                                                const updated = (editingQuestion.evaluationGuide || []).filter((_, i) => i !== idx);
+                                                                                setEditingQuestion({
+                                                                                    ...editingQuestion,
+                                                                                    evaluationGuide: updated
+                                                                                });
+                                                                            }}
+                                                                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-slate-50 rounded-lg transition-colors"
+                                                                        >
+                                                                            <Trash2 size={14} />
+                                                                        </button>
                                                                     </div>
-                                                                    <div className="grid grid-cols-2 gap-2">
-                                                                        <div>
-                                                                            <span className="font-bold text-emerald-700 block mb-1">✓ Areas Met:</span>
-                                                                            {testResult.matchedKeyPoints?.length > 0 ? (
-                                                                                <ul className="list-disc list-inside text-emerald-600 space-y-0.5 pl-1">
-                                                                                    {testResult.matchedKeyPoints.map((p: string, i: number) => <li key={i}>{p}</li>)}
-                                                                                </ul>
-                                                                            ) : (
-                                                                                <span className="text-slate-400 italic text-[10px]">None</span>
-                                                                            )}
-                                                                        </div>
-                                                                        <div>
-                                                                            <span className="font-bold text-rose-700 block mb-1">✕ Areas Missed:</span>
-                                                                            {testResult.missingKeyPoints?.length > 0 ? (
-                                                                                <ul className="list-disc list-inside text-rose-600 space-y-0.5 pl-1">
-                                                                                    {testResult.missingKeyPoints.map((p: string, i: number) => <li key={i}>{p}</li>)}
-                                                                                </ul>
-                                                                            ) : (
-                                                                                <span className="text-slate-400 italic text-[10px]">None</span>
-                                                                            )}
-                                                                        </div>
+                                                                ))
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Preview & Test Evaluation Simulator */}
+                                                    <div className="border-t border-slate-100 pt-4 space-y-3">
+                                                        <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                                                            <Terminal size={14} className="text-indigo-500" /> Preview/Test AI Grading
+                                                        </h4>
+                                                        <p className="text-[10px] text-slate-400 leading-normal">
+                                                            Verify your evaluation guide by grading a mock candidate response before saving.
+                                                        </p>
+                                                        
+                                                        <div className="space-y-3 bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                                            <div>
+                                                                <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">Sample Answer</label>
+                                                                <textarea 
+                                                                    className="w-full border border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/5 rounded-xl p-2.5 text-xs outline-none transition-all resize-y h-16 text-slate-800 bg-white" 
+                                                                    placeholder="Type a sample answer to test..." 
+                                                                    value={testAnswer}
+                                                                    onChange={(e) => setTestAnswer(e.target.value)}
+                                                                />
+                                                            </div>
+                                                            
+                                                            <div className="flex justify-between items-center">
+                                                                <button 
+                                                                    onClick={handleTestGrading}
+                                                                    disabled={isTesting || !testAnswer.trim()}
+                                                                    className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 disabled:text-slate-400 text-indigo-600 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5"
+                                                                >
+                                                                    {isTesting ? (
+                                                                        <>
+                                                                            <RefreshCw size={12} className="animate-spin" /> Testing...
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <Play size={12} /> Run Test Grading
+                                                                        </>
+                                                                    )}
+                                                                </button>
+                                                                
+                                                                {testResult && !testResult.error && (
+                                                                    <div className="text-[10px] font-bold text-slate-600 flex items-center gap-2">
+                                                                        Expected Score: 
+                                                                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider ${
+                                                                            testResult.contentScore >= 8 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
+                                                                            testResult.contentScore >= 6 ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' :
+                                                                            testResult.contentScore >= 4 ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                                                                            'bg-rose-50 text-rose-700 border border-rose-100'
+                                                                        }`}>
+                                                                            {testResult.contentScore}/10 ({testResult.verdict})
+                                                                        </span>
                                                                     </div>
+                                                                )}
+                                                            </div>
+                                                            
+                                                            {testResult && (
+                                                                <div className="border-t border-slate-200/60 pt-3 space-y-2 mt-2">
+                                                                    {testResult.error ? (
+                                                                        <p className="text-xs text-rose-500 font-medium">{testResult.error}</p>
+                                                                    ) : (
+                                                                        <div className="text-[11px] space-y-2.5">
+                                                                            <div>
+                                                                                <span className="font-bold text-slate-650 block mb-0.5">AI Feedback:</span>
+                                                                                <p className="text-slate-500 italic bg-white p-2.5 rounded-xl border border-slate-100 leading-relaxed font-sans">{testResult.feedback}</p>
+                                                                            </div>
+                                                                            <div className="grid grid-cols-2 gap-2">
+                                                                                <div>
+                                                                                    <span className="font-bold text-emerald-700 block mb-1">✓ Areas Met:</span>
+                                                                                    {testResult.matchedKeyPoints?.length > 0 ? (
+                                                                                        <ul className="list-disc list-inside text-emerald-600 space-y-0.5 pl-1">
+                                                                                            {testResult.matchedKeyPoints.map((p: string, i: number) => <li key={i}>{p}</li>)}
+                                                                                        </ul>
+                                                                                    ) : (
+                                                                                        <span className="text-slate-400 italic text-[10px]">None</span>
+                                                                                    )}
+                                                                                </div>
+                                                                                <div>
+                                                                                    <span className="font-bold text-rose-700 block mb-1">✕ Areas Missed:</span>
+                                                                                    {testResult.missingKeyPoints?.length > 0 ? (
+                                                                                        <ul className="list-disc list-inside text-rose-600 space-y-0.5 pl-1">
+                                                                                            {testResult.missingKeyPoints.map((p: string, i: number) => <li key={i}>{p}</li>)}
+                                                                                        </ul>
+                                                                                    ) : (
+                                                                                        <span className="text-slate-400 italic text-[10px]">None</span>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             )}
                                                         </div>
-                                                    )}
-                                                </div>
-                                            </div>
+                                                    </div>
+                                                </>
+                                            )}                  </div>
                                         </div>
 
                                         <div className="p-6 border-t border-slate-100 flex justify-between gap-3 shrink-0">

@@ -12,6 +12,12 @@ export interface Question {
   discriminationWeight?: number;
   version?: number;
   updatedAt?: string;
+  // MCQ/Aptitude Extensions
+  options?: string[];
+  answer?: string;
+  explanation?: string;
+  imageUrl?: string;
+  timeLimit?: number;
 }
 
 export interface Candidate {
@@ -466,6 +472,12 @@ export interface MasterEvaluationReport {
       reliability: number; // 0-100
     };
     evaluationError?: string;
+    // MCQ/Aptitude Extensions in Breakdown
+    options?: string[];
+    correctAnswer?: string;
+    explanation?: string;
+    imageUrl?: string;
+    timeSpentSeconds?: number;
   }[];
   benchmarkComparison: {
     percentile: number;
@@ -483,6 +495,23 @@ export interface MasterEvaluationReport {
     modelUsed: string;
     evaluationMode: 'full_ai' | 'fallback_heuristic' | 'mixed';
     roleLevel: 'intern' | 'junior' | 'mid' | 'senior';
+  };
+  // Aptitude Summary Extension
+  aptitudeSummary?: {
+    correct: number;
+    incorrect: number;
+    unattempted: number;
+    accuracy: number;
+    trustScore: number;
+    timeSpentSeconds: number;
+    categoryBreakdown: {
+      [category: string]: {
+        total: number;
+        correct: number;
+        accuracy: number;
+      }
+    };
+    improvements: string[];
   };
 }
 

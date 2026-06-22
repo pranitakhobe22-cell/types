@@ -121,6 +121,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onStart, onAdminAc
                   <option value="" disabled>Select your role</option>
                   <option value="CSE">Computer Science (CSE)</option>
                   <option value="ECE">Electronics (ECE)</option>
+                  <option value="APTITUDE">Aptitude Test</option>
                 </select>
                 <div className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                   <ChevronDown size={20} />

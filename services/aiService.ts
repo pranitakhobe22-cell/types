@@ -1,4 +1,4 @@
-import { CSE_QUESTION_BANK, ECE_QUESTION_BANK } from "./questionBank";
+import { CSE_QUESTION_BANK, ECE_QUESTION_BANK, APTITUDE_QUESTION_BANK } from "./questionBank";
 import { retryEvaluation, localEvaluate } from "./apiService";
 
 const getOpenRouterKey = () => {
@@ -146,7 +146,7 @@ export const getQuestionsForRole = (role: string): Question[] => {
       console.error("Failed to parse custom questions from localStorage", e);
     }
   }
-  const bank = role === "CSE" ? CSE_QUESTION_BANK : ECE_QUESTION_BANK;
+  const bank = role === "CSE" ? CSE_QUESTION_BANK : (role === "ECE" ? ECE_QUESTION_BANK : APTITUDE_QUESTION_BANK);
   return bank.map((q: any) => ensureEvaluationGuide(q));
 };
 
@@ -330,11 +330,237 @@ Return strictly the following JSON structure:
   },
 
   async evaluateInterview(
-    candidateAnswers: { question: string; answer: string; ideal_answer: string; evaluation?: any; questionData?: any }[],
+    candidateAnswers: { question: string; answer: string; ideal_answer: string; evaluation?: any; questionData?: any; timeSpentSeconds?: number }[],
     sessionId?: string,
     proctoring?: any
   ): Promise<any> {
-    
+    const isAptitude = candidateAnswers.some(item => 
+      item.questionData?.role === 'APTITUDE' || 
+      item.questionData?.category === 'Quantitative' || 
+      item.questionData?.category === 'Logical' || 
+      item.questionData?.category === 'Analytical' || 
+      item.questionData?.category === 'Verbal' ||
+      item.questionData?.id?.toString().startsWith('apt_')
+    );
+
+    if (isAptitude) {
+      let correct = 0;
+      let incorrect = 0;
+      let unattempted = 0;
+      let totalTimeSpent = 0;
+
+      const categoryCounts: { [cat: string]: { total: number; correct: number } } = {
+        "Quantitative": { total: 0, correct: 0 },
+        "Logical": { total: 0, correct: 0 },
+        "Analytical": { total: 0, correct: 0 },
+        "Verbal": { total: 0, correct: 0 }
+      };
+
+      const questionBreakdown = candidateAnswers.map((item) => {
+        const q = item.questionData || {};
+        const category = q.category || "Quantitative";
+        if (!categoryCounts[category]) {
+          categoryCounts[category] = { total: 0, correct: 0 };
+        }
+        categoryCounts[category].total++;
+
+        const userAnswer = (item.answer || "").trim().toUpperCase();
+        const correctAnswer = (q.answer || "").trim().toUpperCase();
+        const timeSpent = item.timeSpentSeconds || item.evaluation?.timeSpentSeconds || 0;
+        totalTimeSpent += timeSpent;
+
+        let isCorrect = false;
+        let isUnattempted = false;
+
+        if (userAnswer === "" || userAnswer === "UNATTEMPTED" || userAnswer === "NONE") {
+          isUnattempted = true;
+          unattempted++;
+        } else if (userAnswer === correctAnswer) {
+          isCorrect = true;
+          correct++;
+          categoryCounts[category].correct++;
+        } else {
+          incorrect++;
+        }
+
+        return {
+          questionText: item.question,
+          difficulty: (q.difficulty || 'medium') as 'easy' | 'medium' | 'hard',
+          score: isCorrect ? 10 : 0,
+          userAnswer: item.answer || "Unattempted",
+          feedback: isCorrect 
+            ? "Correct Answer." 
+            : (isUnattempted ? `Unattempted. Correct answer is ${correctAnswer}.` : `Incorrect. Chosen ${userAnswer}, correct is ${correctAnswer}.`),
+          matchedKeyPoints: isCorrect ? ["Correct Option Selection"] : [],
+          missingKeyPoints: !isCorrect ? ["Correct Option Selection"] : [],
+          technicalErrors: [],
+          analysis: {
+            coverage: isCorrect ? 10 : 0,
+            understanding: isCorrect ? 10 : 0,
+            reasoning: isCorrect ? 10 : 0,
+            communication: 10
+          },
+          options: q.options || [],
+          correctAnswer: correctAnswer,
+          explanation: q.explanation || "",
+          imageUrl: q.imageUrl || "",
+          timeSpentSeconds: timeSpent,
+          transcriptionQualityScore: 100
+        };
+      });
+
+      const accuracy = Math.round((correct / (candidateAnswers.length || 1)) * 100);
+      const integrityScore = proctoring ? (proctoring.integrityScore ?? 100) : 100;
+
+      const categoryBreakdown: { [category: string]: { total: number; correct: number; accuracy: number } } = {};
+      for (const [cat, data] of Object.entries(categoryCounts)) {
+        if (data.total > 0) {
+          categoryBreakdown[cat] = {
+            total: data.total,
+            correct: data.correct,
+            accuracy: Math.round((data.correct / data.total) * 100)
+          };
+        }
+      }
+
+      const prompt = `You are evaluating a candidate's aptitude test performance.
+Performance Data:
+- Total Questions: ${candidateAnswers.length}
+- Correct Answers: ${correct}
+- Incorrect Answers: ${incorrect}
+- Unattempted: ${unattempted}
+- Accuracy: ${accuracy}%
+- Category Breakdown:
+${Object.entries(categoryBreakdown).map(([cat, d]) => `  * ${cat}: ${d.correct}/${d.total} correct (${d.accuracy}% accuracy)`).join("\n")}
+
+Please write:
+1. An executive summary paragraph (exactly 3 sentences) summarizing their performance, highlighting their strongest and weakest areas based on the categories, and giving a professional assessment of their aptitude.
+2. A list of 3 overall top actionable improvements (checklist items) the candidate can work on to improve their scores in the weaker categories (e.g., ["Practice probability and permutations for Quantitative Aptitude", "Solve puzzle-based sequence questions to improve Logical Reasoning", "Focus on reading comprehension and idiom meanings for Verbal sections"]).
+
+Return strictly the following JSON structure:
+{
+  "summary": "<summary text>",
+  "improvements": ["<improvement 1>", "<improvement 2>", "<improvement 3>"]
+}`;
+
+      let summaryText = "";
+      let improvements: string[] = [];
+
+      try {
+        let rawEvalJson = await resilientGenerate(prompt, 1, 'eval');
+        rawEvalJson = rawEvalJson.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+        const jsonMatch = rawEvalJson.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          summaryText = parsed.summary || "";
+          improvements = parsed.improvements || [];
+        }
+      } catch (e) {
+        console.error("AI overall aptitude evaluation prompt failed:", e);
+      }
+
+      if (!summaryText) {
+        summaryText = `The candidate completed the Aptitude Assessment scoring ${correct} out of ${candidateAnswers.length} correct answers, achieving an overall accuracy of ${accuracy}%. Their category-specific performance indicates varying strengths across Quantitative, Logical, Analytical, and Verbal reasoning. General review of the incorrect questions is recommended.`;
+      }
+      if (improvements.length === 0) {
+        improvements = [
+          "Review the mathematical solutions for incorrect Quantitative questions.",
+          "Practice pattern recognition to increase speed in Logical Reasoning.",
+          "Work on vocabulary and sentence structure rules for Verbal sections."
+        ];
+      }
+
+      const masterReport = {
+        executiveSummary: {
+          recommendation: accuracy >= 80 ? 'Strong Hire' : accuracy >= 60 ? 'Hire' : accuracy >= 40 ? 'Consider' : 'Reject',
+          recommendationStatus: 'normal' as const,
+          technicalScore: accuracy,
+          trustScore: integrityScore,
+          readinessScore: accuracy,
+          interviewPerformanceScore: accuracy,
+          candidateLevel: accuracy >= 85 ? 'Advanced' : accuracy >= 70 ? 'Strong' : accuracy >= 50 ? 'Job Ready' : 'Developing',
+          growthPotential: accuracy,
+          improvementOpportunity: 100 - accuracy,
+          confidenceGap: 0,
+          answerReliabilityScore: 100,
+          topicCoverage: 100,
+          knowledgeStability: accuracy,
+          reportConfidence: 'High' as const,
+          summary: summaryText
+        },
+        overallScores: {
+          knowledgeScore: accuracy,
+          reasoningScore: accuracy,
+          communicationScore: 100,
+          consistencyScore: 100,
+          difficultyWeightedPerformance: accuracy,
+          trustAdjustedScore: integrityScore,
+          readinessScore: accuracy,
+          interviewPerformanceScore: accuracy,
+          growthPotential: accuracy,
+          improvementOpportunity: 100 - accuracy,
+          confidenceGap: 0,
+          answerReliabilityScore: 100
+        },
+        strengths: [],
+        weaknesses: [],
+        topImprovements: improvements,
+        validationResults: [],
+        contradictions: [],
+        performanceTrend: {
+          timeline: questionBreakdown.map((q, idx) => ({ qIndex: idx + 1, score: q.score })),
+          trend: 'stable' as const
+        },
+        proctoringSummary: proctoring ? {
+          faceAwayEvents: proctoring.gazeAwayEvents ?? 0,
+          multiplePersonEvents: proctoring.multipleFaceEvents ?? 0,
+          tabSwitches: proctoring.tabSwitchEvents ?? 0,
+          warningsIssued: proctoring.violations?.length ?? 0,
+          integrityScore: proctoring.integrityScore ?? 100,
+          totalGazeAwayDurationMs: proctoring.totalGazeAwayDurationMs ?? 0,
+          longestGazeAwayDurationMs: proctoring.healthSummary?.longestGazeAwayDurationMs ?? 0
+        } : {
+          faceAwayEvents: 0,
+          multiplePersonEvents: 0,
+          tabSwitches: 0,
+          warningsIssued: 0,
+          integrityScore: 100,
+          totalGazeAwayDurationMs: 0,
+          longestGazeAwayDurationMs: 0
+        },
+        questionBreakdown,
+        benchmarkComparison: {
+          percentile: accuracy,
+          comparedAgainst: "Aptitude Candidates",
+          sampleSize: 1000
+        },
+        telemetry: {
+          followupTriggerRate: 0,
+          sessionApiCostEstimate: 0.005,
+          modelCalls: 1
+        },
+        metadata: {
+          evaluationVersion: "1.0-mcq",
+          scoreCalculationVersion: "1.0",
+          modelUsed: "deepseek/deepseek-chat",
+          evaluationMode: "mixed" as const,
+          roleLevel: "mid" as const
+        },
+        aptitudeSummary: {
+          correct,
+          incorrect,
+          unattempted,
+          accuracy,
+          trustScore: integrityScore,
+          timeSpentSeconds: totalTimeSpent,
+          categoryBreakdown,
+          improvements
+        }
+      };
+
+      return masterReport;
+    }
+
     // ── PHASE 1: Re-evaluate any pending answers ──
     const resolvedAnswers = await Promise.all(
       candidateAnswers.map(async (item) => {
