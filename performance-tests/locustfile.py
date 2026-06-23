@@ -43,6 +43,7 @@ peak_ai_requests = 0
 
 global_ai_requests = 0
 global_ai_429s = 0
+global_ai_402s = 0  # Free-tier exhaustion tracker
 
 # Financial & Token Tracking
 total_ai_calls = 0
@@ -50,9 +51,17 @@ total_input_tokens = 0
 total_output_tokens = 0
 total_ai_cost = 0.0
 
+# Completed interview counter (for per-interview tracking)
+completed_interviews_count = 0
+
+# Per-AI-Call Detailed Log (for pinpointing free-tier exhaustion)
+# Each entry: {"call_num": int, "interview_num": int, "call_type": str, "status": str, "http_code": int, "latency_ms": float, "timestamp": float}
+ai_call_log = []
+
 # Failure Classifications
 supabase_failures = {
     401: 0,
+    402: 0,
     403: 0,
     404: 0,
     409: 0,
@@ -302,6 +311,10 @@ class ReincrewUser(HttpUser):
     wait_time = between(0, 0) if FAST_LOAD_MODE else between(20, 60)
     
     def on_start(self):
+        global completed_interviews_count
+        completed_interviews_count += 1
+        self.interview_number = completed_interviews_count
+        
         self.candidate_name = f"locust_test_{random.randint(1000, 9999)}_{int(time.time() * 1000)}"
         self.candidate_email = f"{self.candidate_name}@example.com"
         self.candidate_id = None
@@ -309,6 +322,7 @@ class ReincrewUser(HttpUser):
         self.job_post_id = None
         self.transcripts_history = []
         self.interview_start_time = time.time()
+        self.ai_call_count_local = 0  # per-interview AI call counter
         
         self.supabase_headers = {
             "apikey": SUPABASE_ANON_KEY,
@@ -359,9 +373,11 @@ class ReincrewUser(HttpUser):
                 return None
 
     def call_openrouter(self, prompt, name):
-        global active_ai_requests, peak_ai_requests, global_ai_requests, global_ai_429s
+        global active_ai_requests, peak_ai_requests, global_ai_requests, global_ai_429s, global_ai_402s, ai_call_log
         
         global_ai_requests += 1
+        self.ai_call_count_local += 1
+        call_start = time.time()
         
         # Gevent-safe counter increment
         active_ai_requests += 1
@@ -434,8 +450,20 @@ class ReincrewUser(HttpUser):
                 }
                 
                 with self.client.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers, name=name, catch_response=True) as response:
+                    call_latency = (time.time() - call_start) * 1000
+                    
                     if response.status_code == 200:
                         response.success()
+                        # Log successful call
+                        ai_call_log.append({
+                            "call_num": global_ai_requests,
+                            "interview_num": self.interview_number,
+                            "call_type": name,
+                            "status": "SUCCESS",
+                            "http_code": 200,
+                            "latency_ms": round(call_latency, 1),
+                            "timestamp": time.time()
+                        })
                         try:
                             res_json = response.json()
                             content = res_json["choices"][0]["message"]["content"]
@@ -457,8 +485,22 @@ class ReincrewUser(HttpUser):
                             response.failure(f"JSON parsing error: {str(e)}. Original Content: {original_content}")
                             return mock_response_val
                     else:
+                        # Log failed call with details
+                        ai_call_log.append({
+                            "call_num": global_ai_requests,
+                            "interview_num": self.interview_number,
+                            "call_type": name,
+                            "status": f"FAILED_{response.status_code}",
+                            "http_code": response.status_code,
+                            "latency_ms": round(call_latency, 1),
+                            "timestamp": time.time(),
+                            "error_snippet": response.text[:200] if response.text else ""
+                        })
                         if response.status_code == 429:
                             global_ai_429s += 1
+                        elif response.status_code == 402:
+                            global_ai_402s += 1
+                            print(f"\n[FREE-TIER EXHAUSTED] 402 Payment Required at AI Call #{global_ai_requests}, Interview #{self.interview_number}, Call Type: {name}")
                         response.failure(f"OpenRouter Error {response.status_code}: {response.text}")
                         return mock_response_val
         finally:
@@ -755,6 +797,8 @@ def write_aborted_metadata(reason):
         "abort_reason": reason,
         "peak_concurrent_ai_requests": peak_ai_requests,
         "total_ai_calls": total_ai_calls,
+        "total_ai_402s": global_ai_402s,
+        "total_ai_429s": global_ai_429s,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
         "total_ai_cost": total_ai_cost,
@@ -763,11 +807,18 @@ def write_aborted_metadata(reason):
         "interview_duration_avg_sec": 0.0,
         "interview_duration_p95_sec": 0.0,
         "interview_duration_p99_sec": 0.0,
-        "completed_interviews": len(completed_interview_durations)
+        "completed_interviews": len(completed_interview_durations),
+        "interviews_started": completed_interviews_count
     }
     os.makedirs("performance-tests/results", exist_ok=True)
     with open(filename, "w") as f:
         json.dump(metadata, f, indent=2)
+    
+    # Also save the detailed AI call log
+    log_filename = f"performance-tests/results/ai_call_log_{TEST_STAGE}.json"
+    with open(log_filename, "w") as f:
+        json.dump(ai_call_log, f, indent=2)
+    print(f"Detailed AI call log saved to {log_filename} ({len(ai_call_log)} entries)")
 
 
 # Health check monitor for Hard Stop conditions
@@ -784,7 +835,9 @@ def monitor_hard_stop(environment):
         
         ai_total = global_ai_requests
         ai_429s = global_ai_429s
+        ai_402s = global_ai_402s
         ai_429_rate = ai_429s / ai_total if ai_total > 0 else 0.0
+        ai_402_rate = ai_402s / ai_total if ai_total > 0 else 0.0
         
         p95_latency_ms = stats.total.get_response_time_percentile(0.95)
         p95_latency_sec = p95_latency_ms / 1000.0 if p95_latency_ms else 0.0
@@ -793,6 +846,8 @@ def monitor_hard_stop(environment):
             reason = None
             if error_rate > 0.20:
                 reason = f"Total Error Rate exceeds 20% (current: {error_rate*100:.1f}%)"
+            elif ai_402_rate > 0.20:
+                reason = f"AI 402 (Payment Required / Free-Tier Exhausted) Rate exceeds 20% (current: {ai_402_rate*100:.1f}%, total 402s: {ai_402s})"
             elif ai_429_rate > 0.30:
                 reason = f"AI 429 Rate exceeds 30% (current: {ai_429_rate*100:.1f}%)"
             elif p95_latency_sec > 30.0:
@@ -837,6 +892,8 @@ def on_test_stop(environment, **kwargs):
         "aborted": False,
         "peak_concurrent_ai_requests": peak_ai_requests,
         "total_ai_calls": total_ai_calls,
+        "total_ai_402s": global_ai_402s,
+        "total_ai_429s": global_ai_429s,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
         "total_ai_cost": total_ai_cost,
@@ -845,10 +902,17 @@ def on_test_stop(environment, **kwargs):
         "interview_duration_avg_sec": avg_duration,
         "interview_duration_p95_sec": p95_duration,
         "interview_duration_p99_sec": p99_duration,
-        "completed_interviews": len(durations)
+        "completed_interviews": len(durations),
+        "interviews_started": completed_interviews_count
     }
     
     os.makedirs("performance-tests/results", exist_ok=True)
     with open(filename, "w") as f:
         json.dump(metadata, f, indent=2)
+    
+    # Also save the detailed AI call log
+    log_filename = f"performance-tests/results/ai_call_log_{TEST_STAGE}.json"
+    with open(log_filename, "w") as f:
+        json.dump(ai_call_log, f, indent=2)
     print(f"Test complete. Metrics saved to {filename}")
+    print(f"Detailed AI call log saved to {log_filename} ({len(ai_call_log)} entries)")

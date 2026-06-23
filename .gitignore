@@ -28,3 +28,6 @@ dist-ssr
 # Python
 __pycache__/
 *.pyc
+
+# Test Results
+performance-tests/results/
