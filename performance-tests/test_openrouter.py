@@ -15,7 +15,8 @@ def main():
         "model": "deepseek/deepseek-chat",
         "messages": [{"role": "user", "content": "Return a JSON object with: { 'message': 'Hello' }"}],
         "temperature": 0.2,
-        "response_format": {"type": "json_object"}
+        "response_format": {"type": "json_object"},
+        "max_tokens": 1000
     }
     
     url = "https://openrouter.ai/api/v1/chat/completions"
