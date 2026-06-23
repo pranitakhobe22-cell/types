@@ -1,5 +1,5 @@
 -- ============================================================================
--- REICREW AI — CLEAN SLATE DATABASE SCHEMA v6 (Auditable Architecture)
+-- REICREW AI — CLEAN SLATE DATABASE SCHEMA v6 (Optimized Auditable Architecture)
 -- Run this ONCE in a new Supabase project's SQL Editor
 -- WARNING: This will DROP ALL EXISTING TABLES and wipe your database!
 -- ============================================================================
@@ -12,54 +12,59 @@ CREATE SCHEMA public;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================================
--- TABLE 2: candidates
+-- TABLE 1: candidates
 -- ============================================================================
 CREATE TABLE candidates (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
-  applied_role TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
+  applied_role TEXT NOT NULL DEFAULT 'CSE',
+  created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
 -- ============================================================================
--- TABLE 3: job_posts (Combined with role_settings and access_records info)
+-- TABLE 2: job_posts (Role template definitions)
 -- ============================================================================
 CREATE TABLE job_posts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT,
-  mode TEXT CHECK (mode IN ('AI', 'Custom')) DEFAULT 'AI',
-  status TEXT CHECK (status IN ('ACTIVE', 'INACTIVE')) DEFAULT 'ACTIVE',
-  difficulty TEXT,
-  question_count INTEGER DEFAULT 5,
-  technical_weight NUMERIC(5,2) DEFAULT 40.00,
-  communication_weight NUMERIC(5,2) DEFAULT 20.00,
-  confidence_weight NUMERIC(5,2) DEFAULT 20.00,
-  proctoring_weight NUMERIC(5,2) DEFAULT 20.00,
-  created_at TIMESTAMPTZ DEFAULT now()
+  mode TEXT CHECK (mode IN ('AI', 'Custom')) DEFAULT 'AI' NOT NULL,
+  status TEXT CHECK (status IN ('ACTIVE', 'INACTIVE')) DEFAULT 'ACTIVE' NOT NULL,
+  difficulty TEXT DEFAULT 'Medium' NOT NULL,
+  question_count INTEGER DEFAULT 5 NOT NULL,
+  technical_weight NUMERIC(5,2) DEFAULT 40.00 NOT NULL,
+  communication_weight NUMERIC(5,2) DEFAULT 20.00 NOT NULL,
+  confidence_weight NUMERIC(5,2) DEFAULT 20.00 NOT NULL,
+  proctoring_weight NUMERIC(5,2) DEFAULT 20.00 NOT NULL,
+  questions JSONB DEFAULT '[]'::jsonb NOT NULL,
+  settings JSONB DEFAULT '{}'::jsonb NOT NULL,
+  company TEXT DEFAULT 'General' NOT NULL,
+  access_key TEXT,
+  created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
 -- ============================================================================
--- TABLE 5: interview_sessions
+-- TABLE 3: interview_sessions (Active candidate sessions)
 -- ============================================================================
 CREATE TABLE interview_sessions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  candidate_id UUID REFERENCES candidates(id) ON DELETE SET NULL,
-  job_post_id UUID REFERENCES job_posts(id) ON DELETE SET NULL,
-  status TEXT CHECK (status IN ('CREATED','IN_PROGRESS','COMPLETED','TERMINATED','PAUSED')) DEFAULT 'CREATED',
+  candidate_id UUID REFERENCES candidates(id) ON DELETE CASCADE NOT NULL,
+  job_post_id UUID REFERENCES job_posts(id) ON DELETE CASCADE NOT NULL,
+  status TEXT CHECK (status IN ('CREATED','IN_PROGRESS','COMPLETED','TERMINATED','PAUSED')) DEFAULT 'CREATED' NOT NULL,
   termination_reason TEXT,
-  overall_score NUMERIC(5,2) DEFAULT 0,
-  total_questions INTEGER DEFAULT 5,
-  duration_seconds INTEGER DEFAULT 0,
-  started_at TIMESTAMPTZ DEFAULT now(),
+  overall_score NUMERIC(5,2),
+  total_questions INTEGER DEFAULT 5 NOT NULL,
+  duration_seconds INTEGER,
+  started_at TIMESTAMPTZ DEFAULT now() NOT NULL,
   completed_at TIMESTAMPTZ,
-  interview_metadata JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ DEFAULT now()
+  interview_metadata JSONB DEFAULT '{}'::jsonb NOT NULL,
+  candidate_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
 -- ============================================================================
--- TABLE 6: session_responses
+-- TABLE 4: session_responses (Transcripts & Detailed AI Evaluations)
 -- ============================================================================
 CREATE TABLE session_responses (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -79,24 +84,41 @@ CREATE TABLE session_responses (
   bonus_reason TEXT,
   response_duration_seconds INTEGER,
 
-  -- Scores
+  -- Detailed AI Evaluation Scores (Optional: only populated when evaluated)
   content_score NUMERIC(4,2),
   grammar_score NUMERIC(4,2),
   fluency_score NUMERIC(4,2),
+  coverage NUMERIC(4,2),
+  understanding NUMERIC(4,2),
+  reasoning NUMERIC(4,2),
+  depth NUMERIC(4,2),
+  clarity NUMERIC(4,2),
+  structure NUMERIC(4,2),
+  confidence NUMERIC(4,2),
+  consistency NUMERIC(4,2),
+  answer_directness_score NUMERIC(4,2),
+  tradeoff_reasoning_score NUMERIC(4,2),
+  curiosity NUMERIC(4,2),
+  self_correction NUMERIC(4,2),
+  learning_potential NUMERIC(4,2),
+  technical_errors JSONB,
+  positive_evidence JSONB,
+
   verdict TEXT CHECK (verdict IN ('Pass', 'Borderline', 'Fail')),
   feedback TEXT,
-  answered_at TIMESTAMPTZ DEFAULT now()
+  candidate_name TEXT NOT NULL,
+  answered_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
 -- ============================================================================
--- TABLE 7: evaluation_reports
+-- TABLE 5: evaluation_reports (Final Aggregate AI Reports)
 -- ============================================================================
 CREATE TABLE evaluation_reports (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   session_id UUID REFERENCES interview_sessions(id) ON DELETE CASCADE UNIQUE NOT NULL,
   
-  -- Core Evaluation
-  total_score INTEGER DEFAULT 0,
+  -- Core Evaluation (Optional until generated)
+  total_score INTEGER,
   technical_score NUMERIC(5,2),
   communication_score NUMERIC(5,2),
   confidence_score NUMERIC(5,2),
@@ -106,41 +128,169 @@ CREATE TABLE evaluation_reports (
   failures TEXT[],
   final_verdict TEXT,
   verdict_justification TEXT,
-  evaluation_logic JSONB DEFAULT '{}'::jsonb,
+  evaluation_logic JSONB,
   
   -- Auditable Risk & Proctoring Snapshots
   risk_score INTEGER,
   risk_level TEXT CHECK (risk_level IN ('Low', 'Medium', 'High', 'Critical')),
   risk_reason TEXT[],
-  proctoring_summary JSONB DEFAULT '{}'::jsonb,
+  proctoring_summary JSONB,
   
   -- Evaluation Metadata Snapshots
-  evaluation_weights_snapshot JSONB DEFAULT '{}'::jsonb,
+  evaluation_weights_snapshot JSONB,
   evaluation_version TEXT,
   evaluation_model TEXT,
   evaluation_prompt_version TEXT,
-  evaluated_at TIMESTAMPTZ DEFAULT now(),
+  evaluated_at TIMESTAMPTZ,
+  
+  -- Recruiter Decision & Extended Metrics (add_report_tables)
+  trust_score NUMERIC(5,2),
+  topic_coverage NUMERIC(5,2),
+  knowledge_stability NUMERIC(5,2),
+  reasoning_score NUMERIC(5,2),
+  consistency_score NUMERIC(5,2),
+  difficulty_weighted_performance NUMERIC(5,2),
+  report_confidence TEXT,
+  recommendation_status TEXT,
+  score_calculation_version TEXT,
+  candidate_name TEXT NOT NULL,
   
   -- Human/Final Outcome
-  candidate_outcome TEXT CHECK (candidate_outcome IN ('SHORTLIST', 'REJECT', 'REVIEW', 'PENDING')),
+  candidate_outcome TEXT CHECK (candidate_outcome IN ('SHORTLIST', 'REJECT', 'REVIEW', 'PENDING')) DEFAULT 'PENDING' NOT NULL,
   
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
 -- ============================================================================
--- TABLE 8: proctoring_events
+-- TABLE 6: proctoring_events (Cheating & Warning Log)
 -- ============================================================================
 CREATE TABLE proctoring_events (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   session_id UUID REFERENCES interview_sessions(id) ON DELETE CASCADE NOT NULL,
   event_type TEXT NOT NULL,
-  severity TEXT CHECK (severity IN ('Low', 'Medium', 'High')) DEFAULT 'Medium',
-  risk_points INTEGER DEFAULT 0,
+  severity TEXT CHECK (severity IN ('Low', 'Medium', 'High')) DEFAULT 'Medium' NOT NULL,
+  risk_points INTEGER DEFAULT 0 NOT NULL,
   message TEXT,
   snapshot_url TEXT,
   clip_url TEXT,
+  candidate_name TEXT NOT NULL,
   occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================================
+-- TABLE 7: contradictions (AI Detection of Answer Contradictions)
+-- ============================================================================
+CREATE TABLE contradictions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  session_id UUID REFERENCES interview_sessions(id) ON DELETE CASCADE NOT NULL,
+  candidate_name TEXT NOT NULL,
+  q_index1 INTEGER NOT NULL,
+  q_index2 INTEGER NOT NULL,
+  explanation TEXT NOT NULL,
+  severity TEXT CHECK (severity IN ('low', 'medium', 'high')) DEFAULT 'medium' NOT NULL,
+  status TEXT CHECK (status IN ('confirmed', 'possible', 'insufficient_evidence')) DEFAULT 'possible' NOT NULL,
+  confidence NUMERIC(5,2),
+  created_at TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+-- ============================================================================
+-- TABLE 8: validation_results (AI verification of follow-up reliability)
+-- ============================================================================
+CREATE TABLE validation_results (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  session_id UUID REFERENCES interview_sessions(id) ON DELETE CASCADE NOT NULL,
+  candidate_name TEXT NOT NULL,
+  parent_question TEXT NOT NULL,
+  parent_score NUMERIC(5,2) NOT NULL,
+  followup_question TEXT NOT NULL,
+  followup_score NUMERIC(5,2) NOT NULL,
+  reliability NUMERIC(5,2) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+-- ============================================================================
+-- DATABASE PERFORMANCE INDEXES (Optimized for Peak Capacity)
+-- ============================================================================
+-- Single-Column Foreign Key Indexes
+CREATE INDEX IF NOT EXISTS idx_interview_sessions_candidate_id ON interview_sessions(candidate_id);
+CREATE INDEX IF NOT EXISTS idx_interview_sessions_job_post_id ON interview_sessions(job_post_id);
+CREATE INDEX IF NOT EXISTS idx_session_responses_session_id ON session_responses(session_id);
+CREATE INDEX IF NOT EXISTS idx_proctoring_events_session_id ON proctoring_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_contradictions_session_id ON contradictions(session_id);
+CREATE INDEX IF NOT EXISTS idx_validation_results_session_id ON validation_results(session_id);
+
+-- Hot-Path Q&A Composite Index (Optimizes filter + order operations)
+CREATE INDEX IF NOT EXISTS idx_session_responses_session_question ON session_responses(session_id, question_index);
+
+-- ============================================================================
+-- DATABASE TRIGGERS (Automated Sync to Guarantee candidate_name is NOT NULL)
+-- ============================================================================
+
+-- Trigger 1: Sync candidate_name on interview_sessions from candidates table
+CREATE OR REPLACE FUNCTION sync_session_candidate_name()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.candidate_name IS NULL OR NEW.candidate_name = '' THEN
+    SELECT name INTO NEW.candidate_name
+    FROM candidates
+    WHERE id = NEW.candidate_id;
+  END IF;
+  
+  IF NEW.candidate_name IS NULL THEN
+    NEW.candidate_name := 'Candidate';
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_sync_session_candidate_name
+BEFORE INSERT OR UPDATE ON interview_sessions
+FOR EACH ROW
+EXECUTE FUNCTION sync_session_candidate_name();
+
+-- Trigger 2: Sync candidate_name on all child tables from interview_sessions
+CREATE OR REPLACE FUNCTION sync_child_candidate_name()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.candidate_name IS NULL OR NEW.candidate_name = '' THEN
+    SELECT candidate_name INTO NEW.candidate_name
+    FROM interview_sessions
+    WHERE id = NEW.session_id;
+  END IF;
+  
+  IF NEW.candidate_name IS NULL THEN
+    NEW.candidate_name := 'Candidate';
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_sync_responses_candidate_name
+BEFORE INSERT OR UPDATE ON session_responses
+FOR EACH ROW
+EXECUTE FUNCTION sync_child_candidate_name();
+
+CREATE TRIGGER trigger_sync_reports_candidate_name
+BEFORE INSERT OR UPDATE ON evaluation_reports
+FOR EACH ROW
+EXECUTE FUNCTION sync_child_candidate_name();
+
+CREATE TRIGGER trigger_sync_proctoring_candidate_name
+BEFORE INSERT OR UPDATE ON proctoring_events
+FOR EACH ROW
+EXECUTE FUNCTION sync_child_candidate_name();
+
+CREATE TRIGGER trigger_sync_contradictions_candidate_name
+BEFORE INSERT OR UPDATE ON contradictions
+FOR EACH ROW
+EXECUTE FUNCTION sync_child_candidate_name();
+
+CREATE TRIGGER trigger_sync_validation_candidate_name
+BEFORE INSERT OR UPDATE ON validation_results
+FOR EACH ROW
+EXECUTE FUNCTION sync_child_candidate_name();
 
 -- ============================================================================
 -- THE REPORTING LAYER (PRESENTATION VIEWS)
@@ -171,7 +321,6 @@ JOIN interview_sessions s ON c.id = s.candidate_id
 LEFT JOIN job_posts j ON s.job_post_id = j.id
 LEFT JOIN evaluation_reports e ON s.id = e.session_id;
 
-
 -- View 2: vw_candidate_qa_details (Q&A Breakdown)
 CREATE OR REPLACE VIEW vw_candidate_qa_details WITH (security_invoker = on) AS
 SELECT 
@@ -197,7 +346,6 @@ JOIN interview_sessions s ON r.session_id = s.id
 JOIN candidates c ON s.candidate_id = c.id
 LEFT JOIN job_posts j ON s.job_post_id = j.id;
 
-
 -- View 3: vw_candidate_proctoring (Integrity Log)
 CREATE OR REPLACE VIEW vw_candidate_proctoring WITH (security_invoker = on) AS
 SELECT 
@@ -214,7 +362,6 @@ FROM proctoring_events p
 JOIN interview_sessions s ON p.session_id = s.id
 JOIN candidates c ON s.candidate_id = c.id
 LEFT JOIN job_posts j ON s.job_post_id = j.id;
-
 
 -- View 4: vw_candidate_evaluation (Final Report)
 CREATE OR REPLACE VIEW vw_candidate_evaluation WITH (security_invoker = on) AS
@@ -244,10 +391,7 @@ JOIN interview_sessions s ON e.session_id = s.id
 JOIN candidates c ON s.candidate_id = c.id
 LEFT JOIN job_posts j ON s.job_post_id = j.id;
 
-
 -- View 5: vw_candidate_scoring_breakdown (Audit Trail)
--- This view unpacks the JSON snapshot. It handles a simple key-value breakdown assuming
--- evaluation_weights_snapshot looks like {"technical": 40, "communication": 20, ...}
 CREATE OR REPLACE VIEW vw_candidate_scoring_breakdown WITH (security_invoker = on) AS
 SELECT 
   c.name AS candidate_name,
@@ -259,7 +403,6 @@ JOIN interview_sessions s ON e.session_id = s.id
 JOIN candidates c ON s.candidate_id = c.id
 LEFT JOIN job_posts j ON s.job_post_id = j.id,
 jsonb_each_text(e.evaluation_weights_snapshot) kv;
-
 
 -- View 6: vw_interview_timeline (Chronological History)
 CREATE OR REPLACE VIEW vw_interview_timeline WITH (security_invoker = on) AS
@@ -286,7 +429,6 @@ SELECT candidate_name, timestamp, event_category, description FROM (
 ) timeline
 ORDER BY session_id, timestamp ASC;
 
-
 -- View 7: vw_candidate_report_export (Data Export)
 CREATE OR REPLACE VIEW vw_candidate_report_export WITH (security_invoker = on) AS
 SELECT 
@@ -312,7 +454,7 @@ LEFT JOIN job_posts j ON s.job_post_id = j.id
 LEFT JOIN evaluation_reports e ON s.id = e.session_id;
 
 -- ============================================================================
--- ROW LEVEL SECURITY
+-- ROW LEVEL SECURITY (RLS)
 -- ============================================================================
 ALTER TABLE candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_posts ENABLE ROW LEVEL SECURITY;
@@ -320,6 +462,8 @@ ALTER TABLE interview_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE session_responses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE evaluation_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE proctoring_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contradictions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE validation_results ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "allow_all" ON candidates FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON job_posts FOR ALL USING (true) WITH CHECK (true);
@@ -327,6 +471,8 @@ CREATE POLICY "allow_all" ON interview_sessions FOR ALL USING (true) WITH CHECK 
 CREATE POLICY "allow_all" ON session_responses FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON evaluation_reports FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON proctoring_events FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON contradictions FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON validation_results FOR ALL USING (true) WITH CHECK (true);
 
 -- Grant standard usage permissions for Supabase roles to all created tables
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
@@ -334,5 +480,19 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, anon, authentic
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 
--- SEED DATA
--- (Add any relevant seed data here if needed in the future)
+-- ============================================================================
+-- STORAGE BUCKETS (Consolidated from create_buckets.sql)
+-- ============================================================================
+INSERT INTO storage.buckets (id, name, public)
+VALUES 
+  ('identity-documents', 'identity-documents', true),
+  ('proctoring-snapshots', 'proctoring-snapshots', true),
+  ('proctoring-clips', 'proctoring-clips', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Storage permissive policies for development (Allows upload/read/delete)
+DROP POLICY IF EXISTS "Allow all operations for anon and authenticated" ON storage.objects;
+CREATE POLICY "Allow all operations for anon and authenticated" 
+ON storage.objects FOR ALL 
+USING (bucket_id IN ('identity-documents', 'proctoring-snapshots', 'proctoring-clips')) 
+WITH CHECK (bucket_id IN ('identity-documents', 'proctoring-snapshots', 'proctoring-clips'));

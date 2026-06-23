@@ -349,38 +349,58 @@ export class SupabaseService {
     // ==========================================
     // PROCTORING
     // ==========================================
-    static async saveProctoringReport(sessionId: string, report: any, telemetry: DashboardTelemetry, candidateName?: string) {
+    static async insertProctoringEvents(events: any[]) {
+        if (events.length === 0) return;
+        const { error } = await supabase.from('proctoring_events').insert(events);
+        if (error) {
+            console.error("Supabase insertProctoringEvents Error:", error);
+            throw error;
+        }
+    }
+
+    static async saveProctoringReport(
+        sessionId: string, 
+        report: any, 
+        telemetry: DashboardTelemetry, 
+        candidateName?: string,
+        flushedEventIds: string[] = []
+    ) {
+        const flushedSet = new Set(flushedEventIds);
         const events: any[] = [];
         
         // Convert Violations to Events
         if (report.violations && report.violations.length > 0) {
             report.violations.forEach((v: ProctorViolation) => {
-                events.push({
-                    session_id: sessionId,
-                    candidate_name: candidateName || null,
-                    event_type: v.type,
-                    severity: v.severity > 5 ? 'High' : (v.severity > 2 ? 'Medium' : 'Low'),
-                    risk_points: v.severity > 5 ? 15 : (v.severity > 2 ? 5 : 1),
-                    message: v.message,
-                    snapshot_url: v.snapshot_url,
-                    clip_url: v.clip_url,
-                    occurred_at: new Date(v.timestamp).toISOString()
-                });
+                if (!flushedSet.has(v.id)) {
+                    events.push({
+                        session_id: sessionId,
+                        candidate_name: candidateName || null,
+                        event_type: v.type,
+                        severity: v.severity > 5 ? 'High' : (v.severity > 2 ? 'Medium' : 'Low'),
+                        risk_points: v.severity > 5 ? 15 : (v.severity > 2 ? 5 : 1),
+                        message: v.message,
+                        snapshot_url: v.snapshot_url,
+                        clip_url: v.clip_url,
+                        occurred_at: new Date(v.timestamp).toISOString()
+                    });
+                }
             });
         }
 
         // Convert Timeline to Events
         if (report.timeline && report.timeline.length > 0) {
             report.timeline.forEach((t: TimelineEvent) => {
-                events.push({
-                    session_id: sessionId,
-                    candidate_name: candidateName || null,
-                    event_type: t.event,
-                    severity: t.severity > 5 ? 'High' : (t.severity > 2 ? 'Medium' : 'Low'),
-                    risk_points: t.severity > 5 ? 10 : (t.severity > 2 ? 5 : 1),
-                    message: t.detail || t.event,
-                    occurred_at: new Date(t.timestamp).toISOString()
-                });
+                if (t.id && !flushedSet.has(t.id)) {
+                    events.push({
+                        session_id: sessionId,
+                        candidate_name: candidateName || null,
+                        event_type: t.event,
+                        severity: t.severity > 5 ? 'High' : (t.severity > 2 ? 'Medium' : 'Low'),
+                        risk_points: t.severity > 5 ? 10 : (t.severity > 2 ? 5 : 1),
+                        message: t.detail || t.event,
+                        occurred_at: new Date(t.timestamp).toISOString()
+                    });
+                }
             });
         }
         
@@ -388,7 +408,11 @@ export class SupabaseService {
             // Insert in chunks of 100
             for (let i = 0; i < events.length; i += 100) {
                 const chunk = events.slice(i, i + 100);
-                await supabase.from('proctoring_events').insert(chunk);
+                const { error } = await supabase.from('proctoring_events').insert(chunk);
+                if (error) {
+                    console.error("Supabase Save Proctoring Report Chunk Error:", error);
+                    throw error;
+                }
             }
         }
         

@@ -128,7 +128,13 @@ function App() {
                 savePromises.push(SupabaseService.saveEvaluationReport(sessionId, evalReport, candidate?.name).catch(e => console.error("Eval save failed", e)));
             }
             if (proctoringReport) {
-                savePromises.push(SupabaseService.saveProctoringReport(sessionId, proctoringReport, {} as any, candidate?.name).catch(e => console.error("Proctoring save failed", e)));
+                savePromises.push(SupabaseService.saveProctoringReport(
+                    sessionId, 
+                    proctoringReport, 
+                    {} as any, 
+                    candidate?.name,
+                    proctoringReport.flushedEventIds || []
+                ).catch(e => console.error("Proctoring save failed", e)));
             }
             
             savePromises.push(

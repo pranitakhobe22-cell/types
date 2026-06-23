@@ -1,0 +1,25 @@
+{
+  "aborted": false,
+  "peak_concurrent_ai_requests": 128,
+  "total_ai_calls": 2907,
+  "total_input_tokens": 2919898,
+  "total_output_tokens": 299421,
+  "total_ai_cost": 0.4926235999999946,
+  "avg_cost_per_completed_interview": 0.0013533615384615236,
+  "supabase_failures": {
+    "401": 0,
+    "403": 0,
+    "404": 0,
+    "409": 0,
+    "429": 0,
+    "500": 0,
+    "502": 0,
+    "503": 0,
+    "504": 0,
+    "other": 39
+  },
+  "interview_duration_avg_sec": 45.785714285714285,
+  "interview_duration_p95_sec": 107.0,
+  "interview_duration_p99_sec": 121.37,
+  "completed_interviews": 364
+}

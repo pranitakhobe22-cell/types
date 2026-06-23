@@ -1,0 +1,5 @@
+Method,Name,Error,Occurrences,First Seen,Last Seen
+POST,Supabase - UPSERT candidates,CatchResponseError('Supabase error 0: '),2,2026-06-23T12:01:37Z,2026-06-23T12:01:46Z
+POST,Supabase - INSERT session_responses,CatchResponseError('Supabase error 0: '),35,2026-06-23T12:02:40Z,2026-06-23T12:03:01Z
+POST,Supabase - INSERT proctoring_events,CatchResponseError('Supabase error 0: '),1,2026-06-23T12:02:40Z,2026-06-23T12:02:40Z
+POST,Supabase - UPSERT evaluation_reports,CatchResponseError('Supabase error 0: '),1,2026-06-23T12:02:41Z,2026-06-23T12:02:41Z

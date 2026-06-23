@@ -76,40 +76,40 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
     case 'TAB_HIDDEN': {
       if (now - state.lastViolationTime < VIOLATION_COOLDOWN) return state;
       const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'TAB_HIDDEN', severity: 2, timestamp: now, message: 'Browser tab hidden' };
-      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'TAB_HIDDEN', severity: 2 };
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'TAB_HIDDEN', severity: 2 };
       return { ...state, violations: [...state.violations, v], timeline: [...state.timeline, t], violationScore: state.violationScore + 2, lastViolationTime: now };
     }
 
     case 'FULLSCREEN_EXIT': {
       if (now - state.lastViolationTime < VIOLATION_COOLDOWN) return state;
       const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'FULLSCREEN_EXIT', severity: 3, timestamp: now, message: 'Exited fullscreen mode' };
-      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'FULLSCREEN_EXIT', severity: 3 };
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'FULLSCREEN_EXIT', severity: 3 };
       return { ...state, fullscreenExitEvents: state.fullscreenExitEvents + 1, violations: [...state.violations, v], timeline: [...state.timeline, t], violationScore: state.violationScore + 3, lastViolationTime: now };
     }
 
     case 'COPY_PASTE': {
       if (now - state.lastViolationTime < VIOLATION_COOLDOWN) return state;
       const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'COPY_PASTE', severity: 2, timestamp: now, message: 'Clipboard action detected' };
-      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'COPY_PASTE', severity: 2 };
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'COPY_PASTE', severity: 2 };
       return { ...state, copyPasteEvents: state.copyPasteEvents + 1, violations: [...state.violations, v], timeline: [...state.timeline, t], violationScore: state.violationScore + 2, lastViolationTime: now };
     }
 
     case 'CAMERA_LOST': {
       const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'CAMERA_LOST', severity: 4, timestamp: now, message: 'Camera disconnected' };
-      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'CAMERA_LOST', severity: 4 };
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'CAMERA_LOST', severity: 4 };
       return { ...state, cameraReconnectCount: state.cameraReconnectCount + 1, violations: [...state.violations, v], timeline: [...state.timeline, t], currentRiskScore: state.currentRiskScore + 4, overallRiskScore: state.overallRiskScore + 4 };
     }
 
     case 'MICROPHONE_LOST': {
       if (!state.microphoneHealthy) return state;
       const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'MICROPHONE_LOST', severity: 2, timestamp: now, message: 'Microphone disconnected or muted' };
-      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'MICROPHONE_LOST', severity: 2 };
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'MICROPHONE_LOST', severity: 2 };
       return { ...state, microphoneHealthy: false, violations: [...state.violations, v], timeline: [...state.timeline, t], currentRiskScore: state.currentRiskScore + 2, overallRiskScore: state.overallRiskScore + 2 };
     }
 
     case 'MICROPHONE_RECOVERED': {
       if (state.microphoneHealthy) return state;
-      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'MICROPHONE_RECOVERED', severity: 0 };
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'MICROPHONE_RECOVERED', severity: 0 };
       return { ...state, microphoneHealthy: true, timeline: [...state.timeline, t] };
     }
 
@@ -129,7 +129,7 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
           newState.noFaceState = 'VIOLATION_CREATED';
           if (now - state.lastViolationTime >= VIOLATION_COOLDOWN) {
             const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'NO_FACE', severity: 3, timestamp: now, message: 'No face detected for 15s' };
-            const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'NO_FACE', severity: 3, detail: 'Face missing >15s' };
+            const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'NO_FACE', severity: 3, detail: 'Face missing >15s' };
             newState.violations = [...newState.violations, v];
             newState.timeline = [...newState.timeline, t];
             newState.violationScore += 3;
@@ -138,7 +138,7 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
         }
       } else {
         if (newState.noFaceState === 'VIOLATION_CREATED') {
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'FACE_RECOVERED', severity: 0, detail: 'Face detected' };
+          const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'FACE_RECOVERED', severity: 0, detail: 'Face detected' };
           newState.timeline = [...newState.timeline, t];
         }
         newState.noFaceState = 'FACE_PRESENT';
@@ -154,7 +154,7 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
           newState.multiFaceState = 'VIOLATION_CREATED' as any;
           if (now - state.lastViolationTime >= VIOLATION_COOLDOWN) {
             const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'MULTIPLE_FACES', severity: 5, timestamp: now, message: 'Multiple faces detected for 3s' };
-            const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'MULTIPLE_FACES', severity: 5 };
+            const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'MULTIPLE_FACES', severity: 5 };
             newState.violations = [...newState.violations, v];
             newState.timeline = [...newState.timeline, t];
             newState.violationScore += 5;
@@ -163,7 +163,7 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
         }
       } else {
         if (newState.multiFaceState === 'VIOLATION_CREATED' as any) {
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'MULTIPLE_FACES_RESOLVED', severity: 0, detail: 'Single face restored' };
+          const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'MULTIPLE_FACES_RESOLVED', severity: 0, detail: 'Single face restored' };
           newState.timeline = [...newState.timeline, t];
         }
         newState.multiFaceState = 'SINGLE_FACE';
@@ -182,14 +182,14 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
                          Math.abs(action.frame.headYaw) > 30 ? 'Head turned away' : 
                          `Looking ${action.frame.gazeDirection}`;
           // NO PENALTY YET - Just log the data!
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'GAZE_AWAY_LOG_ONLY', severity: 0, detail: reason };
+          const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'GAZE_AWAY_LOG_ONLY', severity: 0, detail: reason };
           newState.timeline = [...newState.timeline, t];
           newState.totalGazeAwayDurationMs += (now - newState.gazeAwayStartTime);
         }
       } else {
         if (newState.gazeState === 'VIOLATION_CREATED') {
           newState.gazeState = 'COOLDOWN';
-          const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'GAZE_RESOLVED', severity: 0, detail: 'Returned to screen' };
+          const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'GAZE_RESOLVED', severity: 0, detail: 'Returned to screen' };
           newState.timeline = [...newState.timeline, t];
         } else {
           newState.gazeState = 'LOOKING';
@@ -272,6 +272,76 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
   const [toastWarning, setToastWarning] = useState<{ message: string, type: 'warning' | 'danger' } | null>(null);
   const sessionIdRef = useRef<string>(localStorage.getItem('current_session_id') || "");
+
+  const flushedEventIdsRef = useRef<Set<string>>(new Set());
+  const flushQueueRef = useRef<any[]>([]);
+  const isFlushingRef = useRef<boolean>(false);
+
+  const triggerFlush = async () => {
+    if (isFlushingRef.current || flushQueueRef.current.length === 0) return;
+    isFlushingRef.current = true;
+
+    const chunkToFlush = [...flushQueueRef.current];
+    flushQueueRef.current = flushQueueRef.current.slice(chunkToFlush.length);
+
+    try {
+      await SupabaseService.insertProctoringEvents(chunkToFlush);
+      console.log(`[ProctoringFlush] Successfully flushed ${chunkToFlush.length} events to database.`);
+    } catch (err) {
+      console.error("[ProctoringFlush] Failed to flush events, putting back in queue for retry:", err);
+      flushQueueRef.current = [...chunkToFlush, ...flushQueueRef.current];
+    } finally {
+      isFlushingRef.current = false;
+      if (flushQueueRef.current.length >= 5) {
+        triggerFlush();
+      }
+    }
+  };
+
+  const addViolationToQueue = (v: any) => {
+    if (flushedEventIdsRef.current.has(v.id)) return;
+    flushedEventIdsRef.current.add(v.id);
+
+    const payload = {
+      session_id: sessionIdRef.current,
+      candidate_name: candidate.name || 'Candidate',
+      event_type: v.type,
+      severity: v.severity > 5 ? 'High' : (v.severity > 2 ? 'Medium' : 'Low'),
+      risk_points: v.severity > 5 ? 15 : (v.severity > 2 ? 5 : 1),
+      message: v.message,
+      snapshot_url: v.snapshot_url || null,
+      clip_url: v.clip_url || null,
+      occurred_at: new Date(v.timestamp).toISOString()
+    };
+
+    flushQueueRef.current.push(payload);
+    console.log(`[ProctoringQueue] Queued violation: ${v.type}. Queue size: ${flushQueueRef.current.length}`);
+
+    if (flushQueueRef.current.length >= 5) {
+      triggerFlush();
+    }
+  };
+
+  const flushAllRemainingEvents = async () => {
+    while (isFlushingRef.current) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (flushQueueRef.current.length > 0) {
+      isFlushingRef.current = true;
+      const chunkToFlush = [...flushQueueRef.current];
+      flushQueueRef.current = [];
+      try {
+        await SupabaseService.insertProctoringEvents(chunkToFlush);
+        console.log(`[ProctoringFlush] Final flush of ${chunkToFlush.length} events completed successfully.`);
+      } catch (err) {
+        console.error("[ProctoringFlush] Final flush failed, keeping in queue for fallback:", err);
+        flushQueueRef.current = [...chunkToFlush];
+      } finally {
+        isFlushingRef.current = false;
+      }
+    }
+  };
 
   useEffect(() => {
     if (!sessionIdRef.current) {
@@ -425,10 +495,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       const sessionStrId = candidate.email.replace(/[^a-zA-Z0-9]/g, '');
 
       newViolations.forEach(async (violation) => {
+        let snapshotUrl = null;
+        let clipUrl = null;
         try {
-          let snapshotUrl = null;
-          let clipUrl = null;
-
           if (videoElRef.current) {
             const snapshotBlob = await MediaCaptureService.captureSnapshot(videoElRef.current);
             snapshotUrl = await SupabaseService.uploadFile('proctoring-snapshots', `${sessionStrId}_${violation.id}.jpg`, snapshotBlob, 'image/jpeg');
@@ -447,10 +516,61 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
         } catch (err) {
           console.error("Failed to capture violation media:", err);
+        } finally {
+          addViolationToQueue({
+            ...violation,
+            snapshot_url: snapshotUrl || undefined,
+            clip_url: clipUrl || undefined
+          });
         }
       });
     }
   }, [proctoring.violations, candidate.email]);
+
+  // Handle Timeline Events: Queue them as they are logged
+  const prevTimelineLengthRef = useRef(0);
+  useEffect(() => {
+    if (proctoring.timeline.length > prevTimelineLengthRef.current) {
+      const newEvents = proctoring.timeline.slice(prevTimelineLengthRef.current);
+      prevTimelineLengthRef.current = proctoring.timeline.length;
+
+      newEvents.forEach((t: TimelineEvent) => {
+        if (t.id && !flushedEventIdsRef.current.has(t.id)) {
+          flushedEventIdsRef.current.add(t.id);
+
+          const payload = {
+            session_id: sessionIdRef.current,
+            candidate_name: candidate.name || 'Candidate',
+            event_type: t.event,
+            severity: t.severity > 5 ? 'High' : (t.severity > 2 ? 'Medium' : 'Low'),
+            risk_points: t.severity > 5 ? 10 : (t.severity > 2 ? 5 : 1),
+            message: t.detail || t.event,
+            snapshot_url: null,
+            clip_url: null,
+            occurred_at: new Date(t.timestamp).toISOString()
+          };
+
+          flushQueueRef.current.push(payload);
+          console.log(`[ProctoringQueue] Queued timeline event: ${t.event}. Queue size: ${flushQueueRef.current.length}`);
+        }
+      });
+
+      if (flushQueueRef.current.length >= 5) {
+        triggerFlush();
+      }
+    }
+  }, [proctoring.timeline, candidate.name]);
+
+  // Periodic 30-second database flush
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (flushQueueRef.current.length > 0 && !isFlushingRef.current) {
+        console.log(`[ProctoringFlush] 30s periodic flush triggered. Queue size: ${flushQueueRef.current.length}`);
+        triggerFlush();
+      }
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   // 2. Setup System Event Listeners
   useEffect(() => {
@@ -652,6 +772,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             await Promise.allSettled(bgPromises);
 
             setLoadingText("Terminating interview...");
+            await flushAllRemainingEvents();
             const proctoringReport = compileReport();
             let evalReport = null;
             try {
@@ -1034,6 +1155,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       await Promise.allSettled(bgPromises);
 
       setLoadingText("Compiling final decision report...");
+      await flushAllRemainingEvents();
       const proctoringReport = compileReport();
 
       let evalReport = null;
@@ -1067,6 +1189,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       totalGazeAwayDurationMs: proctoring.totalGazeAwayDurationMs,
       violations,
       timeline,
+      flushedEventIds: Array.from(flushedEventIdsRef.current),
       sessionDurationMs: now - proctoring.sessionStartTime,
       monitoringDurationMs: proctoring.monitoringStartTime ? now - proctoring.monitoringStartTime : 0,
       heartbeatCount: proctoring.heartbeatCount,

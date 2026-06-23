@@ -25,7 +25,8 @@ async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live'
           model: "deepseek/deepseek-chat",
           messages: [{ role: "user", content: prompt }],
           temperature: 0.2,
-          response_format: { type: "json_object" }
+          response_format: { type: "json_object" },
+          max_tokens: 1500
         })
       });
 

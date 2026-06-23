@@ -180,92 +180,9 @@ import { supabase } from './supabaseClient';
 
 export const StorageService = {
   // --- Sessions ---
-  getSessions: async (): Promise<InterviewSession[]> => {
-    try {
-      const { data, error } = await supabase
-        .from('interviews')
-        .select('*')
-        .order('date', { ascending: false });
-      
-      if (error) throw error;
-      
-      if (data && data.length > 0) {
-        return data.map(d => {
-          let safeDate = new Date().toISOString();
-          try {
-            const parsed = new Date(d.date);
-            if (!isNaN(parsed.getTime())) {
-              safeDate = parsed.toISOString();
-            } else if (d.created_at) {
-              const createdParsed = new Date(d.created_at);
-              if (!isNaN(createdParsed.getTime())) {
-                safeDate = createdParsed.toISOString();
-              }
-            }
-          } catch(e) {}
-          
-          return {
-            ...d,
-            results: typeof d.results === 'string' ? JSON.parse(d.results) : d.results,
-            warnings: typeof d.warnings === 'string' ? JSON.parse(d.warnings) : d.warnings,
-            date: safeDate,
-            candidate: { 
-              accessId: d.candidate_id, 
-              name: d.candidate_name || 'Candidate', 
-              email: d.candidate_email,
-              position: d.position || 'N/A' 
-            },
-            durationSeconds: d.duration_seconds || 0
-          };
-        }) as unknown as InterviewSession[];
-      }
-      
-      const stored = localStorage.getItem(SESSIONS_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch (e) {
-      console.warn("Supabase fetch failed, falling back to local:", e);
-      const stored = localStorage.getItem(SESSIONS_KEY);
-      return stored ? JSON.parse(stored) : [];
-    }
-  },
-
-  saveSession: async (session: InterviewSession) => {
-    // 1. Try Supabase Sync (Primary)
-    try {
-      const { error } = await supabase.from('interviews').upsert([{
-        id: session.id,
-        candidate_id: session.candidate.accessId,
-        candidate_name: session.candidate.name,
-        position: session.candidate.position,
-        date: session.date,
-        status: session.status,
-        overall_score: session.overallScore,
-        duration_seconds: session.durationSeconds,
-        results: session.results,
-        warnings: session.warnings
-      }]);
-      if (error) throw error;
-      console.log("Session synced to Supabase successfully");
-    } catch (e) {
-      console.warn("Supabase save failed, saving to local only:", e);
-    }
-
-    // 2. Always update Local Storage as a cache/fallback
-    try {
-      const stored = localStorage.getItem(SESSIONS_KEY);
-      const sessions: InterviewSession[] = stored ? JSON.parse(stored) : [];
-      const exists = sessions.findIndex(s => s.id === session.id);
-      let updatedSessions;
-      if (exists >= 0) {
-        updatedSessions = sessions.map(s => s.id === session.id ? session : s);
-      } else {
-        updatedSessions = [session, ...sessions];
-      }
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(updatedSessions));
-    } catch (e) {
-      console.error("Local cache update failed", e);
-    }
-  },
+  // NOTE: Session CRUD is handled by SupabaseService.getAllSessions() / createSession() / completeSession()
+  // which correctly reference the v6 schema table 'interview_sessions'.
+  // Legacy getSessions() and saveSession() referencing a non-existent 'interviews' table were removed.
 
   // --- Config ---
   getConfig: async (): Promise<AdminConfig> => {

@@ -215,6 +215,7 @@ export type ProctorViolation = {
 };
 
 export type TimelineEvent = {
+  id?: string;
   sessionId: string;
   timestamp: number;
   event: string;
@@ -275,6 +276,7 @@ export type ProctoringReport = {
   microphoneLostEvents: number;
   violations: ProctorViolation[];
   timeline: TimelineEvent[];
+  flushedEventIds?: string[];
   sessionDurationMs: number;
   monitoringDurationMs: number;
   heartbeatCount: number;        // Total heartbeats emitted during session
