@@ -464,6 +464,7 @@ class ReincrewUser(HttpUser):
                             "latency_ms": round(call_latency, 1),
                             "timestamp": time.time()
                         })
+                        content = ""
                         try:
                             res_json = response.json()
                             content = res_json["choices"][0]["message"]["content"]
@@ -585,7 +586,12 @@ class ReincrewUser(HttpUser):
             # Think time simulated by Locust wait_time (between questions)
             
             # Exact production evaluation prompt
-            guide_str = "\n".join([f"- {g}" for g in q_data["evaluationGuide"]])
+            guide_list = q_data.get("evaluationGuide", [])
+            if isinstance(guide_list, list):
+                guide_str = "\n".join([f"- {g}" for g in guide_list])
+            else:
+                guide_str = ""
+                
             eval_prompt = EVALUATION_PROMPT.format(
                 question=q_data["question"],
                 ideal_answer=q_data["ideal_answer"],
@@ -640,11 +646,13 @@ class ReincrewUser(HttpUser):
             )
             
             # Keep track of history for contradiction checks
+            q_type = q_data.get("type", "")
+            is_behavioral = "Behavioral" in str(q_type) if q_type else False
             self.transcripts_history.append({
                 "index": idx + 1,
                 "question": q_data["question"],
                 "answer": q_data["answer"],
-                "isBehavioral": "Behavioral" in q_data["type"]
+                "isBehavioral": is_behavioral
             })
             
             # Simulate a follow-up question (20% probability)
