@@ -26,11 +26,11 @@ SHORT_TEST = os.getenv("SHORT_TEST", "false").lower() == "true"
 if SHORT_TEST:
     print("Running in SHORT_TEST mode for quick framework validation.")
     STAGES = [
-        {"users": 10, "ramp_sec": 15, "hold_sec": 30, "name": "10_users"},
-        {"users": 25, "ramp_sec": 30, "hold_sec": 45, "name": "25_users"},
-        {"users": 50, "ramp_sec": 45, "hold_sec": 60, "name": "50_users"},
-        {"users": 100, "ramp_sec": 60, "hold_sec": 90, "name": "100_users"},
-        {"users": 200, "ramp_sec": 90, "hold_sec": 120, "name": "200_users"}
+        {"users": 10, "ramp_sec": 5, "hold_sec": 10, "name": "10_users"},
+        {"users": 25, "ramp_sec": 5, "hold_sec": 15, "name": "25_users"},
+        {"users": 50, "ramp_sec": 10, "hold_sec": 20, "name": "50_users"},
+        {"users": 100, "ramp_sec": 10, "hold_sec": 30, "name": "100_users"},
+        {"users": 200, "ramp_sec": 15, "hold_sec": 40, "name": "200_users"}
     ]
 else:
     STAGES = [
