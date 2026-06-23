@@ -31,3 +31,4 @@ __pycache__/
 
 # Test Results
 performance-tests/results/
+performance-tests/config.env
