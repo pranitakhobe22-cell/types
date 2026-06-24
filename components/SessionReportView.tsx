@@ -368,6 +368,7 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
           {/* Answer Quality Badge */}
           {!hasError && answerQualityVal && (
             <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${
+              answerQualityVal === 'HONEST_UNKNOWN' ? 'bg-slate-100 text-slate-600 border border-slate-200' :
               answerQualityVal === 'KEYWORD_LIST' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
               answerQualityVal === 'SURFACE_LEVEL' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
               answerQualityVal === 'COMPETENT' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
@@ -404,7 +405,7 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
                 </button>
               </div>
               {showAdvanced && (
-                <div className="mt-3 bg-slate-50 p-4 rounded-xl border border-slate-200/60 font-mono text-[11px] text-slate-650 space-y-2">
+                <div className="mt-3 bg-slate-50 p-4 rounded-xl border border-slate-200/60 font-mono text-[11px] text-slate-655 space-y-2">
                   <p className="font-bold text-[10px] text-slate-500 uppercase tracking-wider">How it was calculated:</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-slate-600">
                     <div>Knowledge Score: <span className="font-bold">{knowledgeScoreVal.toFixed(1)}</span></div>
@@ -452,92 +453,121 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
               {item.feedback && (
                 <div className="space-y-2">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mentor Feedback</p>
-                  <p className="text-sm text-slate-750 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-200/60 italic">
+                  <p className="text-sm text-slate-755 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-200/60 italic">
                     "{item.feedback}"
                   </p>
                 </div>
               )}
 
-              {/* 4. Why You Got This Score (What Went Well & Low score reasons) */}
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="bg-emerald-50/20 border border-emerald-100/50 p-4 rounded-2xl space-y-2">
-                  <h5 className="text-xs font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
-                    <CheckCircle size={14} /> What went well
-                  </h5>
-                  <ul className="space-y-1">
-                    {whatWentWell.map((w, i) => (
-                      <li key={i} className="text-xs text-slate-650 font-semibold flex items-start gap-1.5 leading-relaxed">
+              {answerTypeVal === 'honest_unknown' ? (
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="bg-emerald-50/20 border border-emerald-100/50 p-4 rounded-2xl space-y-2">
+                    <h5 className="text-xs font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle size={14} /> Positive Signal
+                    </h5>
+                    <ul className="space-y-1">
+                      <li className="text-xs text-slate-655 font-semibold flex items-center gap-1.5 leading-relaxed">
                         <span className="text-emerald-500 font-bold">✓</span>
-                        {w}
+                        Demonstrated honesty and self-awareness
                       </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="bg-rose-50/20 border border-rose-100/50 p-4 rounded-2xl space-y-2">
-                  <h5 className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1">
-                    <AlertCircle size={14} /> Why the score is low
-                  </h5>
-                  <ul className="space-y-1">
-                    {whyScoreLow.map((w, i) => (
-                      <li key={i} className="text-xs text-slate-650 font-semibold flex items-start gap-1.5 leading-relaxed">
+                    </ul>
+                  </div>
+                  <div className="bg-rose-50/20 border border-rose-100/50 p-4 rounded-2xl space-y-2">
+                    <h5 className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1">
+                      <AlertCircle size={14} /> Knowledge Demonstrated
+                    </h5>
+                    <ul className="space-y-1">
+                      <li className="text-xs text-slate-655 font-semibold flex items-center gap-1.5 leading-relaxed">
                         <span className="text-rose-500 font-bold">✗</span>
-                        {w}
+                        None
                       </li>
-                    ))}
-                  </ul>
+                    </ul>
+                  </div>
                 </div>
-              </div>
-
-              {/* 5. Concepts Identified vs Explained */}
-              {(mentioned.length > 0 || item.missingKeyPoints.length > 0) && (
-                <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <Target size={14} className="text-indigo-500" /> What Recruiters Expected
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Concepts Identified */}
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Concepts Identified</p>
+              ) : (
+                <>
+                  {/* 4. Why You Got This Score (What Went Well & Low score reasons) */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="bg-emerald-50/20 border border-emerald-100/50 p-4 rounded-2xl space-y-2">
+                      <h5 className="text-xs font-bold text-emerald-700 uppercase tracking-wider flex items-center gap-1">
+                        <CheckCircle size={14} /> What went well
+                      </h5>
                       <ul className="space-y-1">
-                        {mentioned.map((pt, i) => (
-                          <li key={i} className="text-xs text-slate-650 font-semibold flex items-center gap-1.5 leading-snug">
+                        {whatWentWell.map((w, i) => (
+                          <li key={i} className="text-xs text-slate-655 font-semibold flex items-start gap-1.5 leading-relaxed">
                             <span className="text-emerald-500 font-bold">✓</span>
-                            <span>{pt}</span>
-                          </li>
-                        ))}
-                        {item.missingKeyPoints.filter(pt => !mentioned.includes(pt)).map((pt, i) => (
-                          <li key={`m-${i}`} className="text-xs text-slate-400 font-semibold flex items-center gap-1.5 leading-snug">
-                            <span className="text-rose-400 font-bold">✗</span>
-                            <span>{pt}</span>
+                            {w}
                           </li>
                         ))}
                       </ul>
                     </div>
-                    {/* Concepts Explained */}
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Concepts Explained</p>
+                    <div className="bg-rose-50/20 border border-rose-100/50 p-4 rounded-2xl space-y-2">
+                      <h5 className="text-xs font-bold text-rose-700 uppercase tracking-wider flex items-center gap-1">
+                        <AlertCircle size={14} /> Why the score is low
+                      </h5>
                       <ul className="space-y-1">
-                        {mentioned.map((pt, i) => {
-                          const wasExplained = explained.includes(pt);
-                          return (
-                            <li key={i} className="text-xs font-semibold flex items-center gap-1.5 leading-snug">
-                              <span className={wasExplained ? 'text-emerald-500 font-bold' : 'text-rose-400 font-bold'}>
-                                {wasExplained ? '✓' : '✗'}
-                              </span>
-                              <span className={wasExplained ? 'text-slate-650' : 'text-slate-400'}>{pt}</span>
-                            </li>
-                          );
-                        })}
-                        {item.missingKeyPoints.filter(pt => !mentioned.includes(pt)).map((pt, i) => (
-                          <li key={`m-${i}`} className="text-xs text-slate-400 font-semibold flex items-center gap-1.5 leading-snug">
-                            <span className="text-rose-400 font-bold">✗</span>
-                            <span>{pt}</span>
+                        {whyScoreLow.map((w, i) => (
+                          <li key={i} className="text-xs text-slate-655 font-semibold flex items-start gap-1.5 leading-relaxed">
+                            <span className="text-rose-500 font-bold">✗</span>
+                            {w}
                           </li>
                         ))}
                       </ul>
                     </div>
                   </div>
-                </div>
+
+                  {/* 5. Concepts Identified vs Explained */}
+                  {(mentioned.length > 0 || item.missingKeyPoints.length > 0) && (
+                    <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Target size={14} className="text-indigo-500" /> What Recruiters Expected
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Concepts Identified */}
+                        <div className="space-y-1.5">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Concepts Identified</p>
+                          <ul className="space-y-1">
+                            {mentioned.map((pt, i) => (
+                              <li key={i} className="text-xs text-slate-655 font-semibold flex items-center gap-1.5 leading-snug">
+                                <span className="text-emerald-500 font-bold">✓</span>
+                                <span>{pt}</span>
+                              </li>
+                            ))}
+                            {item.missingKeyPoints.filter(pt => !mentioned.includes(pt)).map((pt, i) => (
+                              <li key={`m-${i}`} className="text-xs text-slate-400 font-semibold flex items-center gap-1.5 leading-snug">
+                                <span className="text-rose-400 font-bold">✗</span>
+                                <span>{pt}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        {/* Concepts Explained */}
+                        <div className="space-y-1.5">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Concepts Explained</p>
+                          <ul className="space-y-1">
+                            {mentioned.map((pt, i) => {
+                              const wasExplained = explained.includes(pt);
+                              return (
+                                <li key={i} className="text-xs font-semibold flex items-center gap-1.5 leading-snug">
+                                  <span className={wasExplained ? 'text-emerald-500 font-bold' : 'text-rose-400 font-bold'}>
+                                    {wasExplained ? '✓' : '✗'}
+                                  </span>
+                                  <span className={wasExplained ? 'text-slate-655' : 'text-slate-400'}>{pt}</span>
+                                </li>
+                              );
+                            })}
+                            {item.missingKeyPoints.filter(pt => !mentioned.includes(pt)).map((pt, i) => (
+                              <li key={`m-${i}`} className="text-xs text-slate-400 font-semibold flex items-center gap-1.5 leading-snug">
+                                <span className="text-rose-400 font-bold">✗</span>
+                                <span>{pt}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* 6. How To Improve */}
@@ -559,57 +589,59 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
                 </div>
               </div>
 
-              {/* 7. Performance Level */}
-              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Performance Profile</span>
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${performance.color}`}>
-                    {performance.label}
-                  </span>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Stars and Labels */}
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center text-xs font-medium text-slate-600">
-                      <span>Knowledge Demonstrated</span>
-                      <div className="flex items-center gap-2 font-bold text-slate-800">
-                        <span className="text-[10px] text-slate-400 font-medium">({kLabel})</span>
-                        {renderStars(knowledgeScoreVal)}
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center text-xs font-medium text-slate-650">
-                      <span>Problem Solving</span>
-                      <div className="flex items-center gap-2 font-bold text-slate-800">
-                        <span className="text-[10px] text-slate-400 font-medium">({pLabel})</span>
-                        {renderStars(problemSolvingScoreVal)}
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center text-xs font-medium text-slate-600">
-                      <span>Communication</span>
-                      <div className="flex items-center gap-2 font-bold text-slate-800">
-                        <span className="text-[10px] text-slate-400 font-medium">({cLabel})</span>
-                        {renderStars(communicationScoreVal)}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Confidence Alignment info */}
-                  <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-150 flex flex-col justify-center">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">
-                      Confidence Alignment
+              {answerTypeVal !== 'honest_unknown' && (
+                /* 7. Performance Level */
+                <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Performance Profile</span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${performance.color}`}>
+                      {performance.label}
                     </span>
-                    <p className="text-xs text-slate-600 leading-relaxed font-semibold mb-2">
-                      {confidenceGuidance}
-                    </p>
-                    <div className="text-[11px] font-bold text-slate-700">
-                      Status: <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
-                        Math.abs(confidenceGapVal) <= 2 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                      }`}>{confidenceStatus}</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Stars and Labels */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center text-xs font-medium text-slate-655">
+                        <span>Knowledge Demonstrated</span>
+                        <div className="flex items-center gap-2 font-bold text-slate-800">
+                          <span className="text-[10px] text-slate-400 font-medium">({kLabel})</span>
+                          {renderStars(knowledgeScoreVal)}
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center text-xs font-medium text-slate-655">
+                        <span>Problem Solving</span>
+                        <div className="flex items-center gap-2 font-bold text-slate-800">
+                          <span className="text-[10px] text-slate-400 font-medium">({pLabel})</span>
+                          {renderStars(problemSolvingScoreVal)}
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center text-xs font-medium text-slate-655">
+                        <span>Communication</span>
+                        <div className="flex items-center gap-2 font-bold text-slate-800">
+                          <span className="text-[10px] text-slate-400 font-medium">({cLabel})</span>
+                          {renderStars(communicationScoreVal)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Confidence Alignment info */}
+                    <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-150 flex flex-col justify-center">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                        Confidence Alignment
+                      </span>
+                      <p className="text-xs text-slate-600 leading-relaxed font-medium mb-2">
+                        {confidenceGuidance}
+                      </p>
+                      <div className="text-[11px] font-bold text-slate-700">
+                        Status: <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                          Math.abs(confidenceGapVal) <= 2 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                        }`}>{confidenceStatus}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>
@@ -1246,6 +1278,43 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
           <p className="text-slate-700 text-sm leading-relaxed font-semibold italic">
             "{report.executiveSummary?.summary || 'No summary evaluation available.'}"
           </p>
+        </section>
+
+        {/* Honesty & Bluff Risk Metrics */}
+        <section className="bg-white border border-slate-200 rounded-[32px] p-8 shadow-sm space-y-6">
+          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 pb-3 flex items-center gap-2">
+            <Scale size={18} className="text-indigo-600" /> Integrity & Self-Awareness Profile
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Honesty Score</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {report.overallScores?.honestyScore !== undefined ? `${report.overallScores.honestyScore}%` : 'N/A'}
+              </span>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Knowledge Admission</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {report.overallScores?.knowledgeAdmissionScore !== undefined ? `${report.overallScores.knowledgeAdmissionScore}%` : 'N/A'}
+              </span>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Bluff Risk</span>
+              <span className={`inline-block mt-2 px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider border ${
+                report.overallScores?.bluffRisk === 'HIGH' ? 'bg-red-50 text-red-700 border-red-200' :
+                report.overallScores?.bluffRisk === 'MEDIUM' ? 'bg-amber-50 text-amber-700 border-amber-250' :
+                'bg-emerald-50 text-emerald-700 border-emerald-200'
+              }`}>
+                {report.overallScores?.bluffRisk || 'LOW'}
+              </span>
+            </div>
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Bluff Incidents</span>
+              <span className="text-2xl font-black text-slate-800 mt-1 block">
+                {report.overallScores?.bluffIncidents ?? 0}
+              </span>
+            </div>
+          </div>
         </section>
 
         {/* 2. Detailed Dimension Scores */}

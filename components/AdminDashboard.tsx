@@ -2324,6 +2324,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                                                 <span className="font-bold text-slate-650 block mb-0.5">AI Feedback:</span>
                                                                                 <p className="text-slate-500 italic bg-white p-2.5 rounded-xl border border-slate-100 leading-relaxed font-sans">{testResult.feedback}</p>
                                                                             </div>
+                                                                            <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100/85">
+                                                                                <div>
+                                                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Honesty Score</span>
+                                                                                    <span className="font-bold text-slate-700">{testResult.honestyScore !== undefined ? `${testResult.honestyScore}/10` : 'N/A'}</span>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Knowledge Admission</span>
+                                                                                    <span className="font-bold text-slate-700">{testResult.knowledgeAdmissionScore !== undefined ? `${testResult.knowledgeAdmissionScore}/10` : 'N/A'}</span>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Bluff Risk</span>
+                                                                                    <span className={`font-black uppercase text-[10px] ${
+                                                                                        testResult.bluffRisk === 'HIGH' ? 'text-rose-600' :
+                                                                                        testResult.bluffRisk === 'MEDIUM' ? 'text-amber-600' :
+                                                                                        'text-emerald-600'
+                                                                                    }`}>{testResult.bluffRisk || 'LOW'}</span>
+                                                                                </div>
+                                                                            </div>
                                                                             <div className="grid grid-cols-2 gap-2">
                                                                                 <div>
                                                                                     <span className="font-bold text-emerald-700 block mb-1">✓ Concepts Explained:</span>

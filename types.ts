@@ -81,14 +81,17 @@ export interface EvaluationResult {
   grammarScore: number;
   fluencyScore: number;
   communicationScore?: number;
+  honestyScore?: number; // 0-10
+  knowledgeAdmissionScore?: number; // 0-10
+  bluffRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
 
   // Qualitative Analysis
   mentionedConcepts: string[];   // Concepts the candidate named/identified
   explainedConcepts: string[];   // Concepts the candidate actually explained with understanding
   matchedKeyPoints: string[];    // Backward compat: = mentionedConcepts
   missingKeyPoints: string[];
-  answerType: 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
-  answerQuality: 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
+  answerType: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
+  answerQuality: 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
   verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
   feedback: string;
 
@@ -411,6 +414,10 @@ export interface MasterEvaluationReport {
     knowledgeStability: number; // 0-100 (knowledgeStabilityScore)
     reportConfidence: 'High' | 'Medium' | 'Low';
     summary: string;
+    honestyScore?: number; // 0-100%
+    bluffRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
+    bluffIncidents?: number;
+    knowledgeAdmissionScore?: number; // 0-100%
   };
   overallScores: {
     knowledgeScore: number; // 0-100
@@ -425,6 +432,10 @@ export interface MasterEvaluationReport {
     improvementOpportunity?: number; // NEW
     confidenceGap?: number; // NEW
     answerReliabilityScore?: number; // NEW
+    honestyScore?: number; // 0-100%
+    bluffRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
+    bluffIncidents?: number;
+    knowledgeAdmissionScore?: number; // 0-100%
   };
   strengths: string[];
   weaknesses: string[];
@@ -467,8 +478,11 @@ export interface MasterEvaluationReport {
     explainedConcepts?: string[];
     matchedKeyPoints: string[];
     missingKeyPoints: string[];
-    answerType?: 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
-    answerQuality?: 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
+    answerType?: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
+    answerQuality?: 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
+    honestyScore?: number;
+    knowledgeAdmissionScore?: number;
+    bluffRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
     technicalErrors: { error: string; severity: 'low' | 'medium' | 'high' }[];
     analysis: {
       coverage: number; // 0-10

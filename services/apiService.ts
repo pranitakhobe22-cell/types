@@ -310,9 +310,10 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
 
 // Derive answerQuality from answerType primarily, score secondarily
 function deriveAnswerQuality(
-  answerType: 'keyword_list_only' | 'partial_explanation' | 'full_explanation',
+  answerType: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation',
   contentScore: number
-): 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT' {
+): 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT' {
+  if (answerType === 'honest_unknown') return 'HONEST_UNKNOWN';
   // answerType is the primary signal — structure over score
   if (answerType === 'keyword_list_only') return 'KEYWORD_LIST';
   if (answerType === 'partial_explanation') {
@@ -327,6 +328,12 @@ function deriveAnswerQuality(
   return 'SURFACE_LEVEL'; // full_explanation but low score = weak explanation
 }
 
+const honestUnknownPatterns = [
+  "i don't know", "i do not know", "not sure", "haven't learned", "never studied",
+  "don't remember", "not familiar", "no idea", "can't recall", "cannot recall",
+  "haven't worked with", "not confident answering", "don't know much"
+];
+
 export function buildEvaluationResult(
   currentQuestion: Question,
   answer: string,
@@ -335,10 +342,13 @@ export function buildEvaluationResult(
   isBehavioral = false
 ): EvaluationResult {
   // ── 0. Classify answer type ──
-  const answerType: 'keyword_list_only' | 'partial_explanation' | 'full_explanation' =
-    (evalJson.answerType === 'keyword_list_only' || evalJson.answerType === 'partial_explanation' || evalJson.answerType === 'full_explanation')
+  let answerType: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation' =
+    (evalJson.answerType === 'honest_unknown' || evalJson.answerType === 'keyword_list_only' || evalJson.answerType === 'partial_explanation' || evalJson.answerType === 'full_explanation')
       ? evalJson.answerType
       : 'partial_explanation'; // safe default
+
+  const answerLower = answer.toLowerCase().trim();
+  const matchesHonestPattern = honestUnknownPatterns.some(pat => answerLower.includes(pat));
 
   let accuracy = Math.max(0, Math.min(10, evalJson.accuracy ?? 5));
   let conceptCoverage = Math.max(0, Math.min(10, evalJson.conceptCoverage ?? 5));
@@ -359,6 +369,10 @@ export function buildEvaluationResult(
   const curiosity = Math.max(0, Math.min(10, evalJson.curiosity ?? 5));
   const selfCorrection = Math.max(0, Math.min(10, evalJson.selfCorrection ?? 5));
 
+  const rawKnowledgeScore = (accuracy * 0.40) + (conceptCoverage * 0.30) + (conceptUnderstanding * 0.30);
+  
+  const isHonestUnknown = answerType === 'honest_unknown' || (matchesHonestPattern && rawKnowledgeScore <= 2);
+
   // ── 1. KEYWORD-ONLY HARD CAPS (enforced before any scoring) ──
   if (answerType === 'keyword_list_only') {
     accuracy = Math.min(4, accuracy);
@@ -369,8 +383,9 @@ export function buildEvaluationResult(
   }
 
   // ── 2. Word-count heuristic (NEVER overrides answerType) ──
-  const wordCount = answer.trim().split(/\s+/).filter(Boolean).length;
-  if (wordCount < 20 && answerType !== 'full_explanation') {
+  const wordsList = answer.trim().split(/\s+/).filter(Boolean);
+  const wordCount = wordsList.length;
+  if (wordCount < 20 && answerType !== 'full_explanation' && answerType !== 'honest_unknown') {
     // Short answer that isn't a full explanation — apply conservative caps
     conceptUnderstanding = Math.min(3, conceptUnderstanding);
     depth = Math.min(2, depth);
@@ -396,7 +411,7 @@ export function buildEvaluationResult(
 
   // ── 5. Conditional Positive Evidence Bonus (blocked for keyword-only) ──
   let evidenceBonus = 0;
-  if (answerType !== 'keyword_list_only' && (knowledgeScore >= 6 || problemSolvingScore >= 6)) {
+  if (answerType !== 'keyword_list_only' && answerType !== 'honest_unknown' && (knowledgeScore >= 6 || problemSolvingScore >= 6)) {
     if (evalJson.positiveEvidence?.strongExample) evidenceBonus += 0.25;
     if (evalJson.positiveEvidence?.realProject) evidenceBonus += 0.25;
     if (evalJson.positiveEvidence?.tradeoffDiscussion) evidenceBonus += 0.25;
@@ -424,7 +439,7 @@ export function buildEvaluationResult(
   }
 
   // ── 8. Communication Score ──
-  const communicationScore = Math.round(((clarity + structure + confidenceScoreVal + consistency) / 4) * 10) / 10;
+  let communicationScore = Math.round(((clarity + structure + confidenceScoreVal + consistency) / 4) * 10) / 10;
 
   // ── 9. Clamped Confidence Alignment / Gap ──
   let effectiveConfidence = Math.min(confidenceScoreVal, knowledgeScore + 2);
@@ -432,10 +447,58 @@ export function buildEvaluationResult(
   if (answerType === 'keyword_list_only') {
     effectiveConfidence = Math.min(effectiveConfidence, 4);
   }
-  const confidenceGap = effectiveConfidence - knowledgeScore; // range -10 to +10
+  let confidenceGap = effectiveConfidence - knowledgeScore; // range -10 to +10
 
   // ── 10. Constrained Learning Potential ──
-  const learningPotentialScore = (0.40 * curiosity) + (0.30 * reasoning) + (0.30 * selfCorrection);
+  let learningPotentialScore = (0.40 * curiosity) + (0.30 * reasoning) + (0.30 * selfCorrection);
+
+  // ── 10.1 Honesty and Bluff Logic ──
+  let finalHonestyScore = Math.max(0, Math.min(10, evalJson.honestyScore ?? (isHonestUnknown ? 10 : 8.5)));
+  let finalKnowledgeAdmissionScore = Math.max(0, Math.min(10, evalJson.knowledgeAdmissionScore ?? (isHonestUnknown ? 4 : 0)));
+
+  if (isHonestUnknown) {
+    answerType = 'honest_unknown';
+    
+    // Evaluate honestyScore and knowledgeAdmissionScore based on rules
+    if (wordCount <= 3) {
+      // Very short dismissal (e.g. "Don't know")
+      finalHonestyScore = 7.5;
+      finalKnowledgeAdmissionScore = 2.0;
+    } else if (rawKnowledgeScore > 0.5) {
+      // Partial knowledge + admits uncertainty (e.g., Candidate B)
+      finalHonestyScore = 9.5;
+      if (!evalJson.knowledgeAdmissionScore || evalJson.knowledgeAdmissionScore < 5) {
+        finalKnowledgeAdmissionScore = 8.5;
+      }
+    } else {
+      // Pure admission (e.g. "I don't know normalization.")
+      finalHonestyScore = 10;
+      finalKnowledgeAdmissionScore = 4.0;
+    }
+
+    // Force strict scoring guardrail overrides for honest unknowns
+    contentScore = 0;
+    knowledgeScore = 0;
+    problemSolvingScore = 0;
+    learningPotentialScore = 0;
+    confidenceGap = 0;
+    evidenceBonus = 0;
+    communicationScore = 0;
+  }
+
+  let bluffRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
+  if (isHonestUnknown) {
+    bluffRisk = 'LOW';
+  } else {
+    const confidenceGapVal = confidenceScoreVal - (Math.round(knowledgeScore * 10) / 10);
+    if ((confidenceScoreVal >= 7 && knowledgeScore <= 3) || confidenceGapVal >= 4) {
+      bluffRisk = 'HIGH';
+    } else if (confidenceGapVal >= 2) {
+      bluffRisk = 'MEDIUM';
+    } else {
+      bluffRisk = 'LOW';
+    }
+  }
 
   // ── 11. Verdict ──
   let verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
@@ -450,23 +513,27 @@ export function buildEvaluationResult(
 
   // ── 12. Concepts: mentioned vs explained ──
   const mentionedConcepts: string[] = evalJson.mentionedConcepts || evalJson.matchedKeyPoints || [];
-  const explainedConcepts: string[] = evalJson.explainedConcepts || [];
+  const explainedConcepts: string[] = isHonestUnknown ? [] : (evalJson.explainedConcepts || []);
 
   // ── 13. Answer Quality (answerType-primary, score-secondary) ──
   const answerQuality = deriveAnswerQuality(answerType, contentScore);
 
-  // ── 14. Generate feedback if AI didn't provide it (slim prompt mode) ──
-  let feedback = evalJson.feedback || '';
-  if (!feedback) {
-    if (answerType === 'keyword_list_only') {
-      feedback = `The candidate listed relevant concepts (${mentionedConcepts.join(', ') || 'keywords'}) but did not explain their meaning, function, or provide examples. The answer lacks depth and understanding.`;
-    } else if (answerType === 'partial_explanation') {
-      const explained = explainedConcepts.length > 0 ? explainedConcepts.join(', ') : 'some concepts';
-      const missed = (evalJson.missingKeyPoints || []).length > 0 ? (evalJson.missingKeyPoints || []).join(', ') : 'other expected areas';
-      feedback = `The candidate explained ${explained} but did not adequately cover ${missed}. Partial understanding demonstrated.`;
-    } else {
-      feedback = `The candidate provided a comprehensive explanation covering the expected areas.`;
-    }
+  // ── 14. Generate beautiful mentor feedback ──
+  let feedback = '';
+  if (answerType === 'honest_unknown') {
+    const checklist = currentQuestion.evaluationGuide || [];
+    const checklistStr = checklist.length > 0
+      ? checklist.slice(0, 3).map(area => `\n• ${area}`).join('')
+      : '\n• Core fundamentals';
+    feedback = `You correctly identified that this topic was outside your current knowledge. For future interviews, review:${checklistStr}\n\nHonest answers are preferable to confident guesses because they help interviewers accurately assess your strengths and learning needs.`;
+  } else if (answerType === 'keyword_list_only') {
+    feedback = `You listed several relevant terms (${mentionedConcepts.join(', ') || 'keywords'}), but did not explain them. In future discussions, try to elaborate on what these terms mean and how they apply in practice.`;
+  } else if (answerType === 'partial_explanation') {
+    const explained = explainedConcepts.length > 0 ? explainedConcepts.join(', ') : 'some parts';
+    const missed = (evalJson.missingKeyPoints || []).length > 0 ? (evalJson.missingKeyPoints || []).join(', ') : 'other expected areas';
+    feedback = `You explained ${explained} well, but missed key technical concepts like ${missed}. Try to structure your answers to cover both theoretical principles and practical trade-offs.`;
+  } else {
+    feedback = `You provided a clear and well-structured explanation of the concepts. To stand out, try adding examples from your past projects or discussing architectural alternatives.`;
   }
 
   return {
@@ -489,35 +556,38 @@ export function buildEvaluationResult(
     answerQuality,
     verdict,
     feedback,
+    honestyScore: finalHonestyScore,
+    knowledgeAdmissionScore: finalKnowledgeAdmissionScore,
+    bluffRisk,
     analysis: {
-      technicalAccuracy: accuracy,
-      problemSolving: depth,
-      practicalExecution: answerDirectnessScore,
-      communication: communicationScore,
-      coverage: conceptCoverage,
-      understanding: conceptUnderstanding,
-      reasoning,
-      depth,
-      clarity,
-      structure,
-      confidence: confidenceScoreVal,
-      consistency,
-      answerDirectnessScore,
-      tradeoffReasoningScore,
-      curiosity,
-      selfCorrection,
-      learningPotential: Math.round(learningPotentialScore * 10) / 10,
-      technicalErrors: errors
+      technicalAccuracy: isHonestUnknown ? 0 : accuracy,
+      problemSolving: isHonestUnknown ? 0 : depth,
+      practicalExecution: isHonestUnknown ? 0 : answerDirectnessScore,
+      communication: isHonestUnknown ? 0 : communicationScore,
+      coverage: isHonestUnknown ? 0 : conceptCoverage,
+      understanding: isHonestUnknown ? 0 : conceptUnderstanding,
+      reasoning: isHonestUnknown ? 0 : reasoning,
+      depth: isHonestUnknown ? 0 : depth,
+      clarity: isHonestUnknown ? 0 : clarity,
+      structure: isHonestUnknown ? 0 : structure,
+      confidence: isHonestUnknown ? 0 : confidenceScoreVal,
+      consistency: isHonestUnknown ? 0 : consistency,
+      answerDirectnessScore: isHonestUnknown ? 0 : answerDirectnessScore,
+      tradeoffReasoningScore: isHonestUnknown ? 0 : tradeoffReasoningScore,
+      curiosity: isHonestUnknown ? 0 : curiosity,
+      selfCorrection: isHonestUnknown ? 0 : selfCorrection,
+      learningPotential: isHonestUnknown ? 0 : (Math.round(learningPotentialScore * 10) / 10),
+      technicalErrors: isHonestUnknown ? [] : errors
     },
     behavioralMetrics: isBehavioral ? {
-      communication: communicationScore,
-      problemSolving: depth,
-      ownership: accuracy,
-      teamwork: conceptCoverage,
-      adaptability: depth,
-      leadershipPotential: Math.round((accuracy + communicationScore) / 2),
-      responseStructure: structure,
-      evidenceStrength: depth
+      communication: isHonestUnknown ? 0 : communicationScore,
+      problemSolving: isHonestUnknown ? 0 : depth,
+      ownership: isHonestUnknown ? 0 : accuracy,
+      teamwork: isHonestUnknown ? 0 : conceptCoverage,
+      adaptability: isHonestUnknown ? 0 : depth,
+      leadershipPotential: isHonestUnknown ? 0 : Math.round((accuracy + communicationScore) / 2),
+      responseStructure: isHonestUnknown ? 0 : structure,
+      evidenceStrength: isHonestUnknown ? 0 : depth
     } : undefined,
     confidenceScore: visualMetrics?.confidenceLevel ?? 0,
     expressionAnalysis: "Visual analysis processed.",
@@ -540,7 +610,7 @@ export const submitAnswer = async (
     ? currentQuestion.evaluationGuide.map(area => `- ${area}`).join("\n")
     : "- Explain the core concepts of the question.";
 
-  // Slim evaluation prompt: scores + concepts + answerType only.
+  // Slim evaluation prompt: scores + concepts + answerType + honestyScore + knowledgeAdmissionScore only.
   // Narrative feedback is generated locally from the structured data.
   const evalPrompt = `You are evaluating a SPOKEN interview answer (transcribed via speech-to-text).
 The transcript may contain minor speech errors or filler words. Focus on SUBSTANCE, not grammar.
@@ -556,15 +626,36 @@ CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
 === CRITICAL RULE (HIGHEST PRIORITY) ===
 FIRST, classify the answer as one of:
+- "honest_unknown": Candidate admits they do not know or are unfamiliar with the topic/concept.
 - "keyword_list_only": Candidate ONLY lists names/terms without explaining what they mean, how they work, or giving context/examples.
 - "partial_explanation": Candidate explains SOME concepts but not all expected areas.
 - "full_explanation": Candidate explains the concepts with understanding, examples, or reasoning.
+
+IF answerType is "honest_unknown":
+- accuracy, conceptCoverage, conceptUnderstanding, reasoning, depth, clarity, structure, confidence, consistency, and answerDirectnessScore MUST all be 0/10.
+- honestyScore MUST be scored based on:
+  * 10: Polite/structured pure admission of gap (e.g. "I haven't worked with Kafka...").
+  * 9-10: Admitting uncertainty but trying to explain related concepts.
+  * 7-8: Very short dismissals ("don't know").
+- knowledgeAdmissionScore MUST be scored based on:
+  * 8-10: Candidate clearly identifies what they know vs what they don't (e.g. comparing Kafka to RabbitMQ).
+  * 5-7: Moderate attempt to explain related knowledge when admitting a gap.
+  * 1-4: Minimal effort (e.g. pure "don't know").
+  * 0: No gap admitted or bluffing.
 
 IF answerType is "keyword_list_only":
 - accuracy and conceptCoverage MUST NOT exceed 4/10
 - conceptUnderstanding MUST NOT exceed 2/10
 - depth MUST NOT exceed 1/10
 - reasoning MUST NOT exceed 2/10
+
+IF answerType is NOT "honest_unknown":
+- Evaluate honestyScore (0-10):
+  * 9-10: Demonstrates strong self-awareness, calls out areas of uncertainty or limits of their knowledge.
+  * 7-8: Standard answer, no obvious overclaiming but no specific self-awareness.
+  * 3-6: Overstates weak knowledge (weak explanation but confident).
+  * 0-2: Confidently wrong / bluffing.
+- knowledgeAdmissionScore should default to 0 (or low score unless they explicitly admitted a sub-concept gap within a larger answer).
 === END CRITICAL RULE ===
 
 SCORING BANDS:
@@ -582,7 +673,7 @@ A concept in explainedConcepts MUST also appear in mentionedConcepts.
 
 Return strictly the following JSON (no markdown, no extra text):
 {
-  "answerType": "keyword_list_only" | "partial_explanation" | "full_explanation",
+  "answerType": "honest_unknown" | "keyword_list_only" | "partial_explanation" | "full_explanation",
   "accuracy": number,
   "conceptCoverage": number,
   "conceptUnderstanding": number,
@@ -596,6 +687,8 @@ Return strictly the following JSON (no markdown, no extra text):
   "tradeoffReasoningScore": number | null,
   "curiosity": number,
   "selfCorrection": number,
+  "honestyScore": number,
+  "knowledgeAdmissionScore": number,
   "technicalErrors": [{ "error": "string", "severity": "low" | "medium" | "high" }],
   "positiveEvidence": {
     "strongExample": boolean,
@@ -654,15 +747,36 @@ CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
 === CRITICAL RULE (HIGHEST PRIORITY) ===
 FIRST, classify the answer as one of:
+- "honest_unknown": Candidate admits they do not know or are unfamiliar with the topic/concept.
 - "keyword_list_only": Candidate ONLY lists names/terms without explaining what they mean, how they work, or giving context/examples.
 - "partial_explanation": Candidate explains SOME concepts but not all expected areas.
 - "full_explanation": Candidate explains the concepts with understanding, examples, or reasoning.
+
+IF answerType is "honest_unknown":
+- accuracy, conceptCoverage, conceptUnderstanding, reasoning, depth, clarity, structure, confidence, consistency, and answerDirectnessScore MUST all be 0/10.
+- honestyScore MUST be scored based on:
+  * 10: Polite/structured pure admission of gap (e.g. "I haven't worked with Kafka...").
+  * 9-10: Admitting uncertainty but trying to explain related concepts.
+  * 7-8: Very short dismissals ("don't know").
+- knowledgeAdmissionScore MUST be scored based on:
+  * 8-10: Candidate clearly identifies what they know vs what they don't (e.g. comparing Kafka to RabbitMQ).
+  * 5-7: Moderate attempt to explain related knowledge when admitting a gap.
+  * 1-4: Minimal effort (e.g. pure "don't know").
+  * 0: No gap admitted or bluffing.
 
 IF answerType is "keyword_list_only":
 - accuracy and conceptCoverage MUST NOT exceed 4/10
 - conceptUnderstanding MUST NOT exceed 2/10
 - depth MUST NOT exceed 1/10
 - reasoning MUST NOT exceed 2/10
+
+IF answerType is NOT "honest_unknown":
+- Evaluate honestyScore (0-10):
+  * 9-10: Demonstrates strong self-awareness, calls out areas of uncertainty or limits of their knowledge.
+  * 7-8: Standard answer, no obvious overclaiming but no specific self-awareness.
+  * 3-6: Overstates weak knowledge (weak explanation but confident).
+  * 0-2: Confidently wrong / bluffing.
+- knowledgeAdmissionScore should default to 0 (or low score unless they explicitly admitted a sub-concept gap within a larger answer).
 === END CRITICAL RULE ===
 
 SCORING BANDS:
@@ -680,7 +794,7 @@ A concept in explainedConcepts MUST also appear in mentionedConcepts.
 
 Return strictly the following JSON (no markdown, no extra text):
 {
-  "answerType": "keyword_list_only" | "partial_explanation" | "full_explanation",
+  "answerType": "honest_unknown" | "keyword_list_only" | "partial_explanation" | "full_explanation",
   "accuracy": number,
   "conceptCoverage": number,
   "conceptUnderstanding": number,
@@ -694,6 +808,8 @@ Return strictly the following JSON (no markdown, no extra text):
   "tradeoffReasoningScore": number | null,
   "curiosity": number,
   "selfCorrection": number,
+  "honestyScore": number,
+  "knowledgeAdmissionScore": number,
   "technicalErrors": [{ "error": "string", "severity": "low" | "medium" | "high" }],
   "positiveEvidence": {
     "strongExample": boolean,
@@ -720,3 +836,4 @@ Return strictly the following JSON (no markdown, no extra text):
     throw err;
   }
 };
+

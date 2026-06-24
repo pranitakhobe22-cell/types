@@ -861,6 +861,34 @@ Return strictly the following JSON structure:
     // 6. reasoningScore mapping
     const reasoningScore = overallProblemSolvingScore;
 
+    // Calculate honesty overall metrics
+    const honestyScores = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.honestyScore !== undefined)
+      .map(item => item.evaluation.honestyScore);
+    const overallHonestyScore = honestyScores.length > 0
+      ? Math.round((honestyScores.reduce((a, b) => a + b, 0) / honestyScores.length) * 10) // scale to 0-100%
+      : 85;
+
+    const knowledgeAdmissionScores = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.knowledgeAdmissionScore !== undefined)
+      .map(item => item.evaluation.knowledgeAdmissionScore);
+    const overallKnowledgeAdmissionScore = knowledgeAdmissionScores.length > 0
+      ? Math.round((knowledgeAdmissionScores.reduce((a, b) => a + b, 0) / knowledgeAdmissionScores.length) * 10) // scale to 0-100%
+      : 0;
+
+    const bluffRisks = resolvedAnswers
+      .filter(item => !item.evaluation?.evaluationError && item.evaluation?.bluffRisk !== undefined)
+      .map(item => item.evaluation.bluffRisk);
+    
+    let overallBluffRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
+    if (bluffRisks.includes('HIGH')) {
+      overallBluffRisk = 'HIGH';
+    } else if (bluffRisks.includes('MEDIUM')) {
+      overallBluffRisk = 'MEDIUM';
+    }
+
+    const bluffIncidents = bluffRisks.filter(r => r === 'HIGH').length;
+
     // Validation Results
     const validationResults: any[] = [];
     resolvedAnswers.forEach((item, idx) => {
@@ -990,6 +1018,9 @@ Return strictly the following JSON structure (do not include markdown code block
         missingKeyPoints: evalData.missingKeyPoints || [],
         answerType: evalData.answerType || 'partial_explanation',
         answerQuality: evalData.answerQuality || 'SURFACE_LEVEL',
+        honestyScore: evalData.honestyScore,
+        knowledgeAdmissionScore: evalData.knowledgeAdmissionScore,
+        bluffRisk: evalData.bluffRisk,
         technicalErrors: errors,
         analysis: analysisObj,
         transcriptionQualityScore: evalData.evaluationConfidence ?? 80,
@@ -1036,7 +1067,11 @@ Return strictly the following JSON structure (do not include markdown code block
         topicCoverage,
         knowledgeStability: knowledgeStabilityScore,
         reportConfidence,
-        summary: summaryText
+        summary: summaryText,
+        honestyScore: overallHonestyScore,
+        bluffRisk: overallBluffRisk,
+        bluffIncidents,
+        knowledgeAdmissionScore: overallKnowledgeAdmissionScore
       },
       overallScores: {
         knowledgeScore: overallKnowledgeScore,
@@ -1050,7 +1085,11 @@ Return strictly the following JSON structure (do not include markdown code block
         growthPotential,
         improvementOpportunity,
         confidenceGap,
-        answerReliabilityScore
+        answerReliabilityScore,
+        honestyScore: overallHonestyScore,
+        bluffRisk: overallBluffRisk,
+        bluffIncidents,
+        knowledgeAdmissionScore: overallKnowledgeAdmissionScore
       },
       strengths: finalStrengths,
       weaknesses: finalWeaknesses,
