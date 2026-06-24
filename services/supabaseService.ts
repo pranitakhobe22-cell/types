@@ -324,9 +324,9 @@ export class SupabaseService {
             })(),
             feedback: result.feedback || null,
             
-            // Auditable Fields
-            expected_key_points: result.matchedKeyPoints ? [...result.matchedKeyPoints, ...(result.missingKeyPoints || [])] : null,
-            detected_key_points: result.matchedKeyPoints || null,
+            // Auditable Fields — use explainedConcepts (actually demonstrated) for detected, mentionedConcepts for identified
+            expected_key_points: result.mentionedConcepts ? [...result.mentionedConcepts, ...(result.missingKeyPoints || [])] : (result.matchedKeyPoints ? [...result.matchedKeyPoints, ...(result.missingKeyPoints || [])] : null),
+            detected_key_points: result.explainedConcepts?.length ? result.explainedConcepts : (result.matchedKeyPoints || null),
             missing_key_points: result.missingKeyPoints || null,
             
             // We can store confidence score & expression in question_snapshot or ignore them 

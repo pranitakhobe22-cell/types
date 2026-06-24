@@ -248,7 +248,7 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
     confidenceGuidance = "Your answer demonstrated stronger understanding than your delivery suggested.";
   }
 
-  // Gaps and What went well logic
+  // Concepts identified vs explained logic (new model)
   const userAnswerLower = (item.userAnswer || '').toLowerCase();
   const isHonestNo = userAnswerLower.includes("don't know") || 
                      userAnswerLower.includes("do not know") || 
@@ -257,13 +257,21 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
                      userAnswerLower.includes("not sure") ||
                      userAnswerLower.includes("no idea");
 
+  // Use new fields with backward compat
+  const mentioned: string[] = (item as any).mentionedConcepts || item.matchedKeyPoints || [];
+  const explained: string[] = (item as any).explainedConcepts || [];
+  const answerQualityVal: string = (item as any).answerQuality || '';
+  const answerTypeVal: string = (item as any).answerType || '';
+
   const whatWentWell: string[] = [];
   if (item.score <= 2 && isHonestNo) {
     whatWentWell.push("You answered honestly instead of guessing.");
-  } else if (item.matchedKeyPoints && item.matchedKeyPoints.length > 0) {
-    item.matchedKeyPoints.slice(0, 2).forEach(pt => {
+  } else if (explained.length > 0) {
+    explained.slice(0, 2).forEach(pt => {
       whatWentWell.push(`You correctly explained: ${pt}`);
     });
+  } else if (mentioned.length > 0) {
+    whatWentWell.push(`You correctly identified: ${mentioned.slice(0, 3).join(', ')}`);
   } else {
     whatWentWell.push("You attempted the question and kept communication open.");
   }
@@ -274,10 +282,16 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
     whyScoreLow.push("Core concepts were not discussed.");
     whyScoreLow.push("No examples or reasoning were given.");
   } else {
+    if (answerTypeVal === 'keyword_list_only') {
+      whyScoreLow.push("You listed keywords without explaining what they mean.");
+    }
     if (item.missingKeyPoints && item.missingKeyPoints.length > 0) {
       item.missingKeyPoints.slice(0, 2).forEach(pt => {
         whyScoreLow.push(`Missing explanation of: ${pt}`);
       });
+    }
+    if (mentioned.length > 0 && explained.length === 0 && answerTypeVal !== 'keyword_list_only') {
+      whyScoreLow.push("Concepts were mentioned but not explained in depth.");
     }
     if (item.technicalErrors && item.technicalErrors.length > 0) {
       whyScoreLow.push("Your answer contained technical inaccuracies.");
@@ -351,6 +365,19 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          {/* Answer Quality Badge */}
+          {!hasError && answerQualityVal && (
+            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${
+              answerQualityVal === 'KEYWORD_LIST' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
+              answerQualityVal === 'SURFACE_LEVEL' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
+              answerQualityVal === 'COMPETENT' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+              answerQualityVal === 'STRONG' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
+              answerQualityVal === 'EXPERT' ? 'bg-violet-100 text-violet-700 border border-violet-200' :
+              'bg-slate-100 text-slate-600 border border-slate-200'
+            }`}>
+              {answerQualityVal.replace('_', ' ')}
+            </span>
+          )}
           <div className="text-right">
             <span className={`text-2xl font-black ${scoreColor}`}>{scoreText}</span>
             {scoreText !== 'Error' && <span className="text-slate-350 text-xs font-bold">/10</span>}
@@ -461,26 +488,57 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
                 </div>
               </div>
 
-              {/* 5. What Recruiters Expected */}
-              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Target size={14} className="text-indigo-500" /> What Recruiters Expected
-                </p>
-                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {item.matchedKeyPoints.map((pt, i) => (
-                    <li key={i} className="text-xs text-slate-650 font-semibold flex items-center gap-1.5 leading-snug">
-                      <span className="text-emerald-500 font-bold">✓</span>
-                      <span className="line-through text-slate-400">{pt}</span>
-                    </li>
-                  ))}
-                  {item.missingKeyPoints.map((pt, i) => (
-                    <li key={i} className="text-xs text-slate-650 font-semibold flex items-center gap-1.5 leading-snug">
-                      <span className="text-slate-350 font-bold">•</span>
-                      <span>{pt}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              {/* 5. Concepts Identified vs Explained */}
+              {(mentioned.length > 0 || item.missingKeyPoints.length > 0) && (
+                <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Target size={14} className="text-indigo-500" /> What Recruiters Expected
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Concepts Identified */}
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Concepts Identified</p>
+                      <ul className="space-y-1">
+                        {mentioned.map((pt, i) => (
+                          <li key={i} className="text-xs text-slate-650 font-semibold flex items-center gap-1.5 leading-snug">
+                            <span className="text-emerald-500 font-bold">✓</span>
+                            <span>{pt}</span>
+                          </li>
+                        ))}
+                        {item.missingKeyPoints.filter(pt => !mentioned.includes(pt)).map((pt, i) => (
+                          <li key={`m-${i}`} className="text-xs text-slate-400 font-semibold flex items-center gap-1.5 leading-snug">
+                            <span className="text-rose-400 font-bold">✗</span>
+                            <span>{pt}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    {/* Concepts Explained */}
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Concepts Explained</p>
+                      <ul className="space-y-1">
+                        {mentioned.map((pt, i) => {
+                          const wasExplained = explained.includes(pt);
+                          return (
+                            <li key={i} className="text-xs font-semibold flex items-center gap-1.5 leading-snug">
+                              <span className={wasExplained ? 'text-emerald-500 font-bold' : 'text-rose-400 font-bold'}>
+                                {wasExplained ? '✓' : '✗'}
+                              </span>
+                              <span className={wasExplained ? 'text-slate-650' : 'text-slate-400'}>{pt}</span>
+                            </li>
+                          );
+                        })}
+                        {item.missingKeyPoints.filter(pt => !mentioned.includes(pt)).map((pt, i) => (
+                          <li key={`m-${i}`} className="text-xs text-slate-400 font-semibold flex items-center gap-1.5 leading-snug">
+                            <span className="text-rose-400 font-bold">✗</span>
+                            <span>{pt}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* 6. How To Improve */}
               <div className="bg-indigo-50/30 border border-indigo-150 p-5 rounded-3xl space-y-3">

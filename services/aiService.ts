@@ -24,9 +24,9 @@ async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live'
         body: JSON.stringify({
           model: "deepseek/deepseek-chat",
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.2,
+          temperature: 0.1,
           response_format: { type: "json_object" },
-          max_tokens: 1500
+          max_tokens: 800
         })
       });
 
@@ -589,7 +589,37 @@ Return strictly the following JSON structure:
                 evaluationPending: false,
                 evaluationError: err.message || String(err),
                 feedback: `AI Evaluation Failed: ${err.message || err}`,
-                contentScore: 0
+                contentScore: 0,
+                knowledgeScore: 0,
+                problemSolvingScore: 0,
+                learningPotentialScore: 0,
+                confidenceGap: 0,
+                grammarScore: 0,
+                fluencyScore: 0,
+                communicationScore: 0,
+                mentionedConcepts: [],
+                explainedConcepts: [],
+                matchedKeyPoints: [],
+                missingKeyPoints: item.questionData?.evaluationGuide || [],
+                verdict: 'Fail',
+                answerQuality: 'SURFACE_LEVEL',
+                analysis: {
+                  technicalAccuracy: 0,
+                  problemSolving: 0,
+                  practicalExecution: 0,
+                  communication: 0,
+                  coverage: 0,
+                  understanding: 0,
+                  reasoning: 0,
+                  depth: 0,
+                  clarity: 0,
+                  structure: 0,
+                  confidence: 0,
+                  consistency: 0,
+                  answerDirectnessScore: 0,
+                  tradeoffReasoningScore: undefined,
+                  technicalErrors: []
+                }
               }
             };
           }
@@ -685,10 +715,11 @@ Return strictly the following JSON structure:
     for (const item of primaryAnswers) {
       if (item.evaluation?.evaluationError) continue;
       const evalData = item.evaluation || {};
-      const matched = evalData.matchedKeyPoints?.length || 0;
+      // Use explainedConcepts (actually-explained) for topic coverage, not just mentioned
+      const explained = evalData.explainedConcepts?.length || evalData.matchedKeyPoints?.length || 0;
       const missed = evalData.missingKeyPoints?.length || 0;
-      primaryMatchedConcepts += matched;
-      primaryExpectedConcepts += (matched + missed);
+      primaryMatchedConcepts += explained;
+      primaryExpectedConcepts += (explained + missed);
     }
     const topicCoverage = primaryExpectedConcepts > 0 
       ? Math.round((primaryMatchedConcepts / primaryExpectedConcepts) * 100) 
@@ -861,7 +892,9 @@ ${resolvedAnswers.map((item, idx) => `
 Activity ${idx + 1} - Question: "${item.question}"
 Candidate's Spoken Answer: "${item.answer}"
 Assessed Question Score: ${item.evaluation?.contentScore ?? 5}/10
-Key Concepts Covered: ${item.evaluation?.matchedKeyPoints?.join(", ") || "None"}
+Answer Quality: ${item.evaluation?.answerQuality || 'N/A'}
+Concepts Explained: ${item.evaluation?.explainedConcepts?.join(", ") || "None"}
+Concepts Only Mentioned: ${(item.evaluation?.mentionedConcepts || item.evaluation?.matchedKeyPoints || []).filter((c: string) => !(item.evaluation?.explainedConcepts || []).includes(c)).join(", ") || "None"}
 Key Concepts Missed: ${item.evaluation?.missingKeyPoints?.join(", ") || "None"}
 Specific Question Feedback: "${item.evaluation?.feedback || ""}"
 `).join("\n")}
@@ -915,7 +948,7 @@ Return strictly the following JSON structure (do not include markdown code block
       summaryText = `The candidate achieved a technical performance score of ${technicalScore}/100 with topic coverage of ${topicCoverage}%. Their integrity checks scored ${integrityScore}/100, leading to a trust-adjusted score of ${trustAdjustedScore}/100. Overall, they are recommended as a ${recommendation}.`;
     }
     if (finalStrengths.length === 0) {
-      finalStrengths = resolvedAnswers.flatMap(a => a.evaluation?.matchedKeyPoints || []).slice(0, 4).map(s => `Demonstrated understanding of ${s}.`);
+      finalStrengths = resolvedAnswers.flatMap(a => a.evaluation?.explainedConcepts || a.evaluation?.matchedKeyPoints || []).slice(0, 4).map(s => `Demonstrated understanding of ${s}.`);
       if (finalStrengths.length === 0) finalStrengths = ["Showed satisfactory fundamental understanding."];
     }
     if (finalWeaknesses.length === 0) {
@@ -951,8 +984,12 @@ Return strictly the following JSON structure (do not include markdown code block
         confidenceGap: evalData.confidenceGap,
         userAnswer: item.answer || "",
         feedback: evalData.feedback || "",
-        matchedKeyPoints: evalData.matchedKeyPoints || [],
+        mentionedConcepts: evalData.mentionedConcepts || evalData.matchedKeyPoints || [],
+        explainedConcepts: evalData.explainedConcepts || [],
+        matchedKeyPoints: evalData.mentionedConcepts || evalData.matchedKeyPoints || [],
         missingKeyPoints: evalData.missingKeyPoints || [],
+        answerType: evalData.answerType || 'partial_explanation',
+        answerQuality: evalData.answerQuality || 'SURFACE_LEVEL',
         technicalErrors: errors,
         analysis: analysisObj,
         transcriptionQualityScore: evalData.evaluationConfidence ?? 80,

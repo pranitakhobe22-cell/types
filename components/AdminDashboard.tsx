@@ -2326,10 +2326,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                                             </div>
                                                                             <div className="grid grid-cols-2 gap-2">
                                                                                 <div>
-                                                                                    <span className="font-bold text-emerald-700 block mb-1">✓ Areas Met:</span>
-                                                                                    {testResult.matchedKeyPoints?.length > 0 ? (
+                                                                                    <span className="font-bold text-emerald-700 block mb-1">✓ Concepts Explained:</span>
+                                                                                    {(testResult.explainedConcepts?.length > 0 || testResult.matchedKeyPoints?.length > 0) ? (
                                                                                         <ul className="list-disc list-inside text-emerald-600 space-y-0.5 pl-1">
-                                                                                            {testResult.matchedKeyPoints.map((p: string, i: number) => <li key={i}>{p}</li>)}
+                                                                                            {(testResult.explainedConcepts || testResult.matchedKeyPoints).map((p: string, i: number) => <li key={i}>{p}</li>)}
                                                                                         </ul>
                                                                                     ) : (
                                                                                         <span className="text-slate-400 italic text-[10px]">None</span>

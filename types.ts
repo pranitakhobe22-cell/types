@@ -83,8 +83,12 @@ export interface EvaluationResult {
   communicationScore?: number;
 
   // Qualitative Analysis
-  matchedKeyPoints: string[];
+  mentionedConcepts: string[];   // Concepts the candidate named/identified
+  explainedConcepts: string[];   // Concepts the candidate actually explained with understanding
+  matchedKeyPoints: string[];    // Backward compat: = mentionedConcepts
   missingKeyPoints: string[];
+  answerType: 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
+  answerQuality: 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
   verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
   feedback: string;
 
@@ -459,8 +463,12 @@ export interface MasterEvaluationReport {
     score: number; // 0-10
     userAnswer: string;
     feedback: string;
+    mentionedConcepts?: string[];
+    explainedConcepts?: string[];
     matchedKeyPoints: string[];
     missingKeyPoints: string[];
+    answerType?: 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
+    answerQuality?: 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
     technicalErrors: { error: string; severity: 'low' | 'medium' | 'high' }[];
     analysis: {
       coverage: number; // 0-10

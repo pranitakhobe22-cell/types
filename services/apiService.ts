@@ -40,9 +40,9 @@ async function generateWithOpenRouter(prompt: string, maxRetries = 2): Promise<s
         body: JSON.stringify({
           model: "deepseek/deepseek-chat",
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.2,
+          temperature: 0.1,
           response_format: { type: "json_object" },
-          max_tokens: 1500
+          max_tokens: 800
         })
       });
 
@@ -308,6 +308,25 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
 // ANSWER EVALUATION — Simplified prompt, local score computation
 // ============================================================================
 
+// Derive answerQuality from answerType primarily, score secondarily
+function deriveAnswerQuality(
+  answerType: 'keyword_list_only' | 'partial_explanation' | 'full_explanation',
+  contentScore: number
+): 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT' {
+  // answerType is the primary signal — structure over score
+  if (answerType === 'keyword_list_only') return 'KEYWORD_LIST';
+  if (answerType === 'partial_explanation') {
+    if (contentScore >= 8) return 'COMPETENT'; // partial but high-scoring edge case
+    if (contentScore >= 5) return 'SURFACE_LEVEL';
+    return 'SURFACE_LEVEL';
+  }
+  // full_explanation
+  if (contentScore >= 9.5) return 'EXPERT';
+  if (contentScore >= 8) return 'STRONG';
+  if (contentScore >= 6) return 'COMPETENT';
+  return 'SURFACE_LEVEL'; // full_explanation but low score = weak explanation
+}
+
 export function buildEvaluationResult(
   currentQuestion: Question,
   answer: string,
@@ -315,15 +334,21 @@ export function buildEvaluationResult(
   visualMetrics?: VisualMetrics,
   isBehavioral = false
 ): EvaluationResult {
-  const accuracy = Math.max(0, Math.min(10, evalJson.accuracy ?? 5));
-  const conceptCoverage = Math.max(0, Math.min(10, evalJson.conceptCoverage ?? 5));
-  const conceptUnderstanding = Math.max(0, Math.min(10, evalJson.conceptUnderstanding ?? 5));
-  const reasoning = Math.max(0, Math.min(10, evalJson.reasoning ?? 5));
-  const depth = Math.max(0, Math.min(10, evalJson.depth ?? 5));
+  // ── 0. Classify answer type ──
+  const answerType: 'keyword_list_only' | 'partial_explanation' | 'full_explanation' =
+    (evalJson.answerType === 'keyword_list_only' || evalJson.answerType === 'partial_explanation' || evalJson.answerType === 'full_explanation')
+      ? evalJson.answerType
+      : 'partial_explanation'; // safe default
+
+  let accuracy = Math.max(0, Math.min(10, evalJson.accuracy ?? 5));
+  let conceptCoverage = Math.max(0, Math.min(10, evalJson.conceptCoverage ?? 5));
+  let conceptUnderstanding = Math.max(0, Math.min(10, evalJson.conceptUnderstanding ?? 5));
+  let reasoning = Math.max(0, Math.min(10, evalJson.reasoning ?? 5));
+  let depth = Math.max(0, Math.min(10, evalJson.depth ?? 5));
   
   const clarity = Math.max(0, Math.min(10, evalJson.clarity ?? 5));
   const structure = Math.max(0, Math.min(10, evalJson.structure ?? 5));
-  const confidenceScoreVal = Math.max(0, Math.min(10, evalJson.confidence ?? 5));
+  let confidenceScoreVal = Math.max(0, Math.min(10, evalJson.confidence ?? 5));
   const consistency = Math.max(0, Math.min(10, evalJson.consistency ?? 5));
   
   const answerDirectnessScore = Math.max(0, Math.min(10, evalJson.answerDirectnessScore ?? 5));
@@ -334,11 +359,28 @@ export function buildEvaluationResult(
   const curiosity = Math.max(0, Math.min(10, evalJson.curiosity ?? 5));
   const selfCorrection = Math.max(0, Math.min(10, evalJson.selfCorrection ?? 5));
 
-  // 1. Calculate Knowledge & Problem Solving Scores (0-10)
+  // ── 1. KEYWORD-ONLY HARD CAPS (enforced before any scoring) ──
+  if (answerType === 'keyword_list_only') {
+    accuracy = Math.min(4, accuracy);
+    conceptCoverage = Math.min(4, conceptCoverage);
+    conceptUnderstanding = Math.min(2, conceptUnderstanding);
+    depth = Math.min(1, depth);
+    reasoning = Math.min(2, reasoning);
+  }
+
+  // ── 2. Word-count heuristic (NEVER overrides answerType) ──
+  const wordCount = answer.trim().split(/\s+/).filter(Boolean).length;
+  if (wordCount < 20 && answerType !== 'full_explanation') {
+    // Short answer that isn't a full explanation — apply conservative caps
+    conceptUnderstanding = Math.min(3, conceptUnderstanding);
+    depth = Math.min(2, depth);
+  }
+
+  // ── 3. Calculate Knowledge & Problem Solving Scores (0-10) ──
   let knowledgeScore = (accuracy * 0.40) + (conceptCoverage * 0.30) + (conceptUnderstanding * 0.30);
   let problemSolvingScore = (reasoning * 0.40) + (depth * 0.30) + (answerDirectnessScore * 0.30);
 
-  // 2. Anti-Inflation Guardrails & Floor Protection
+  // ── 4. Anti-Inflation Guardrails & Floor Protection ──
   if (accuracy < 4) {
     knowledgeScore = Math.min(5, knowledgeScore);
   }
@@ -352,9 +394,9 @@ export function buildEvaluationResult(
     knowledgeScore = Math.min(4, knowledgeScore);
   }
 
-  // 3. Conditional Positive Evidence Bonus
+  // ── 5. Conditional Positive Evidence Bonus (blocked for keyword-only) ──
   let evidenceBonus = 0;
-  if (knowledgeScore >= 6 || problemSolvingScore >= 6) {
+  if (answerType !== 'keyword_list_only' && (knowledgeScore >= 6 || problemSolvingScore >= 6)) {
     if (evalJson.positiveEvidence?.strongExample) evidenceBonus += 0.25;
     if (evalJson.positiveEvidence?.realProject) evidenceBonus += 0.25;
     if (evalJson.positiveEvidence?.tradeoffDiscussion) evidenceBonus += 0.25;
@@ -362,7 +404,7 @@ export function buildEvaluationResult(
     evidenceBonus = Math.min(1.0, evidenceBonus);
   }
 
-  // 4. Reduced Technical Error Penalties
+  // ── 6. Reduced Technical Error Penalties ──
   const errors = evalJson.technicalErrors || [];
   let errorDeduction = 0;
   for (const err of errors) {
@@ -372,20 +414,30 @@ export function buildEvaluationResult(
   }
   errorDeduction = Math.min(1.5, errorDeduction);
 
-  // 5. Final Adjusted Content Score
+  // ── 7. Final Adjusted Content Score with HARD CAP for keyword-only ──
   const rawContent = (0.60 * knowledgeScore) + (0.40 * problemSolvingScore);
-  const contentScore = Math.round(Math.max(0, Math.min(10, rawContent + evidenceBonus - errorDeduction)) * 10) / 10;
+  let contentScore = Math.round(Math.max(0, Math.min(10, rawContent + evidenceBonus - errorDeduction)) * 10) / 10;
 
-  // 6. Communication Score
+  // HARD CAP: keyword-only answers can never exceed 4.0 regardless of bonuses
+  if (answerType === 'keyword_list_only') {
+    contentScore = Math.min(4.0, contentScore);
+  }
+
+  // ── 8. Communication Score ──
   const communicationScore = Math.round(((clarity + structure + confidenceScoreVal + consistency) / 4) * 10) / 10;
 
-  // 7. Clamped Confidence Alignment / Gap
-  const effectiveConfidence = Math.min(confidenceScoreVal, knowledgeScore + 2);
+  // ── 9. Clamped Confidence Alignment / Gap ──
+  let effectiveConfidence = Math.min(confidenceScoreVal, knowledgeScore + 2);
+  // Safety: keyword-only answers — cap confidence so buzzword-reciters don't appear aligned
+  if (answerType === 'keyword_list_only') {
+    effectiveConfidence = Math.min(effectiveConfidence, 4);
+  }
   const confidenceGap = effectiveConfidence - knowledgeScore; // range -10 to +10
 
-  // 8. Constrained Learning Potential
+  // ── 10. Constrained Learning Potential ──
   const learningPotentialScore = (0.40 * curiosity) + (0.30 * reasoning) + (0.30 * selfCorrection);
 
+  // ── 11. Verdict ──
   let verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
   if (contentScore >= 8) verdict = 'Excellent';
   else if (contentScore >= 6) verdict = 'Good';
@@ -395,6 +447,27 @@ export function buildEvaluationResult(
   const evaluationConfidence = Math.round(
     (conceptCoverage * 0.3 + conceptUnderstanding * 0.3 + reasoning * 0.2 + consistency * 0.2) * 10
   );
+
+  // ── 12. Concepts: mentioned vs explained ──
+  const mentionedConcepts: string[] = evalJson.mentionedConcepts || evalJson.matchedKeyPoints || [];
+  const explainedConcepts: string[] = evalJson.explainedConcepts || [];
+
+  // ── 13. Answer Quality (answerType-primary, score-secondary) ──
+  const answerQuality = deriveAnswerQuality(answerType, contentScore);
+
+  // ── 14. Generate feedback if AI didn't provide it (slim prompt mode) ──
+  let feedback = evalJson.feedback || '';
+  if (!feedback) {
+    if (answerType === 'keyword_list_only') {
+      feedback = `The candidate listed relevant concepts (${mentionedConcepts.join(', ') || 'keywords'}) but did not explain their meaning, function, or provide examples. The answer lacks depth and understanding.`;
+    } else if (answerType === 'partial_explanation') {
+      const explained = explainedConcepts.length > 0 ? explainedConcepts.join(', ') : 'some concepts';
+      const missed = (evalJson.missingKeyPoints || []).length > 0 ? (evalJson.missingKeyPoints || []).join(', ') : 'other expected areas';
+      feedback = `The candidate explained ${explained} but did not adequately cover ${missed}. Partial understanding demonstrated.`;
+    } else {
+      feedback = `The candidate provided a comprehensive explanation covering the expected areas.`;
+    }
+  }
 
   return {
     questionId: Number(currentQuestion.id),
@@ -408,10 +481,14 @@ export function buildEvaluationResult(
     grammarScore: 0,
     fluencyScore: 0,
     communicationScore,
-    matchedKeyPoints: evalJson.matchedKeyPoints || [],
+    mentionedConcepts,
+    explainedConcepts,
+    matchedKeyPoints: mentionedConcepts, // backward compat
     missingKeyPoints: evalJson.missingKeyPoints || [],
+    answerType,
+    answerQuality,
     verdict,
-    feedback: evalJson.feedback || "Answer recorded.",
+    feedback,
     analysis: {
       technicalAccuracy: accuracy,
       problemSolving: depth,
@@ -463,119 +540,72 @@ export const submitAnswer = async (
     ? currentQuestion.evaluationGuide.map(area => `- ${area}`).join("\n")
     : "- Explain the core concepts of the question.";
 
-  const difficulty = settings?.difficulty ?? "Medium";
-  
-  // Revised scoring guidelines mapping to new bands
-  const scoringGuidelines = `SCORING GUIDELINES (IMPORTANT):
-
-1. GROWTH-ORIENTED SCORING BANDS (RECALIBRATED):
-    * Exceptional (9-10/10): Candidates showing deep, flawless understanding with practical nuance.
-    * Strong candidate (8-9/10): Good understanding, depth, and details.
-    * Industry-ready fundamentals (6-7/10): Award this range if the candidate demonstrates genuine basic understanding of the concepts with minor gaps (do not penalize average answers down to 4-5).
-    * Early learner (4-5/10): Shows basic, limited, or partial credit.
-    * Very weak understanding (0-3/10): Significant inaccuracies, empty answers, or pure guess/bluff.
-2. CONCEPT OVER KEYWORDS:
-    If the candidate demonstrates correct conceptual understanding in their own words, award reasonable marks even if exact keywords or textbook terminology are missing.
-3. REAL-WORLD INTERVIEW STANDARD:
-    Evaluate like an experienced interviewer, not an exam checker. Candidates may use simple language, informal phrasing, or imperfect grammar while still demonstrating understanding.
-4. LEARNING POTENTIAL RUBRIC:
-    Evaluate:
-    - Curiosity: Does the candidate show an interest in details, edge cases, or broader context?
-    - Reasoning: Can they trace logic and derive answers systematically?
-    - Self-Correction: Do they acknowledge gaps or self-correct when realizing mistakes?
-5. AVOID OVER-PENALIZATION:
-    Minor omissions, communication mistakes, stuttering, or imperfect wording should not significantly reduce scores if the core concept is correct.
-
-Maintain evidence-based evaluation, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
-
+  // Slim evaluation prompt: scores + concepts + answerType only.
+  // Narrative feedback is generated locally from the structured data.
   const evalPrompt = `You are evaluating a SPOKEN interview answer (transcribed via speech-to-text).
-IMPORTANT: The transcript may contain minor speech errors, informal phrasing, or filler words. Focus on the SUBSTANCE of what was said, not grammar or polish.
+The transcript may contain minor speech errors or filler words. Focus on SUBSTANCE, not grammar.
 
 QUESTION: "${currentQuestion.question}"
 ${currentQuestion.ideal_answer ? `IDEAL/REFERENCE ANSWER: "${currentQuestion.ideal_answer}"` : ''}
 TYPE: ${currentQuestion.type || 'Technical'}
 
-EVALUATION GUIDE CHECKLIST AREAS TO CHECK:
+EVALUATION CHECKLIST (expected areas):
 ${guideStr}
 
 CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
-${scoringGuidelines}
+=== CRITICAL RULE (HIGHEST PRIORITY) ===
+FIRST, classify the answer as one of:
+- "keyword_list_only": Candidate ONLY lists names/terms without explaining what they mean, how they work, or giving context/examples.
+- "partial_explanation": Candidate explains SOME concepts but not all expected areas.
+- "full_explanation": Candidate explains the concepts with understanding, examples, or reasoning.
 
-INTERNAL RUBRICS (Aligned with Scoring Calibration):
-- Coverage:
-  8-10 = Explains almost all expected checklist areas correctly, showing clear coverage.
-  6-8 = Explains most expected checklist areas, with minor gaps or omission of non-critical details.
-  4-6 = Explains some expected checklist areas correctly (partial credit), showing partial coverage.
-  2-4 = Only mentions or superficially covers areas without explaining them (limited coverage).
-  0-2 = No relevant areas mentioned or answered.
-- Understanding:
-  8-10 = Explains core ideas in their own words clearly with examples, showing excellent understanding.
-  6-8 = Demonstrates good understanding, can explain key details but has minor gaps.
-  4-6 = Shows partial understanding, understands basic terms but struggles to explain deeply.
-  2-4 = Superficial mentions or copy-pasted terms without explaining what they mean.
-  0-2 = Incorrect information or total misunderstanding of the concept.
-- Reasoning:
-  8-10 = Core reasoning is solid, logical, and supports design choices or tradeoffs.
-  6-8 = Clear reasoning with minor logical gaps or incomplete pros/cons.
-  4-6 = Partial reasoning, some logic is present but has notable holes.
-  2-4 = Limited logical connection, unstructured or vague logic.
-  0-2 = Confused reasoning, technical contradictions, or irrelevant logic.
-- Depth:
-  8-10 = Provides excellent detail and nuance; explains design tradeoffs, examples, or practical applications.
-  6-8 = Substantial detail and context provided, but misses some advanced nuances.
-  4-6 = Basic details provided; answers the question directly but lacks elaboration.
-  2-4 = Very surface-level, lists keywords without elaboration.
-  0-2 = No depth, incorrect assertions, or empty answer.
+IF answerType is "keyword_list_only":
+- accuracy and conceptCoverage MUST NOT exceed 4/10
+- conceptUnderstanding MUST NOT exceed 2/10
+- depth MUST NOT exceed 1/10
+- reasoning MUST NOT exceed 2/10
+=== END CRITICAL RULE ===
 
-CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
-If the candidate's answer simply lists the names of the expected areas or keywords without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
-In this case, you MUST penalize the scores strictly:
-- "conceptUnderstanding" MUST NOT exceed 2/10.
-- "depth" MUST NOT exceed 1/10.
-- "reasoning" MUST NOT exceed 2/10.
-- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10.
-- State in the "feedback" that the candidate only listed the concepts without explaining them.
+SCORING BANDS:
+* 9-10: Deep, flawless understanding with practical nuance
+* 8-9: Good understanding, depth, and details
+* 6-7: Genuine understanding with minor gaps
+* 4-5: Basic or limited understanding, partial credit
+* 0-3: Significant inaccuracies, empty, or pure keyword listing
 
-Evaluate the candidate's answer against the expected checklist areas and rubrics.
-Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
-Provide score for answerDirectnessScore (0-10) which measures how directly they answered the question without keyword stuffing or bluffing.
-Provide tradeoffReasoningScore (0-10 or null) which evaluates how well they discuss design tradeoffs, pros/cons, or alternative approaches (return null if not applicable to this question).
+Evaluate like an experienced interviewer, not an exam checker. If the candidate demonstrates correct understanding in their own words, award reasonable marks even without exact terminology. But listing keywords without explanation is NOT understanding.
 
-EVALUATE EVIDENCE OF POSITIVE MOMENTS:
-Set the following positiveEvidence flags to true if the candidate explicitly demonstrates:
-- strongExample: provides a clear, valid real-world example or code demonstration.
-- realProject: mentions a concrete professional/academic project they worked on related to this topic.
-- tradeoffDiscussion: explicitly discusses pros/cons, design tradeoffs, or alternatives.
-- practicalExperience: references hands-on practical troubleshooting, deployment, or execution.
+For mentionedConcepts: list concepts the candidate NAMED or IDENTIFIED (even without explaining).
+For explainedConcepts: list ONLY concepts the candidate actually EXPLAINED with understanding (stated what it means, how it works, or gave an example).
+A concept in explainedConcepts MUST also appear in mentionedConcepts.
 
-Return strictly the following JSON structure:
+Return strictly the following JSON (no markdown, no extra text):
 {
-  "accuracy": number, // 0-10
-  "conceptCoverage": number, // 0-10
-  "conceptUnderstanding": number, // 0-10
-  "reasoning": number, // 0-10
-  "depth": number, // 0-10
-  "clarity": number, // 0-10
-  "structure": number, // 0-10
-  "confidence": number, // 0-10
-  "consistency": number, // 0-10
-  "answerDirectnessScore": number, // 0-10
-  "tradeoffReasoningScore": number | null, // 0-10 or null
-  "curiosity": number, // 0-10 (measure of candidate details/edge-case exploration)
-  "selfCorrection": number, // 0-10 (capacity to adjust and self-correct)
-  "technicalErrors": [
-    { "error": "description of incorrect or hallucinated statement", "severity": "low" | "medium" | "high" }
-  ],
+  "answerType": "keyword_list_only" | "partial_explanation" | "full_explanation",
+  "accuracy": number,
+  "conceptCoverage": number,
+  "conceptUnderstanding": number,
+  "reasoning": number,
+  "depth": number,
+  "clarity": number,
+  "structure": number,
+  "confidence": number,
+  "consistency": number,
+  "answerDirectnessScore": number,
+  "tradeoffReasoningScore": number | null,
+  "curiosity": number,
+  "selfCorrection": number,
+  "technicalErrors": [{ "error": "string", "severity": "low" | "medium" | "high" }],
   "positiveEvidence": {
     "strongExample": boolean,
     "realProject": boolean,
     "tradeoffDiscussion": boolean,
     "practicalExperience": boolean
   },
-  "matchedKeyPoints": ["areas from the evaluation guide checklist that the candidate covered"],
-  "missingKeyPoints": ["areas from the evaluation guide checklist that the candidate missed"],
-  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what expected areas they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
+  "mentionedConcepts": ["concepts the candidate named/identified"],
+  "explainedConcepts": ["concepts the candidate actually explained with understanding"],
+  "missingKeyPoints": ["expected areas the candidate did not cover at all"]
 }`;
 
   const generateEval = async (prompt: string): Promise<EvaluationResult> => {
@@ -609,116 +639,71 @@ export const retryEvaluation = async (
 
   const isBehavioral = question.type?.startsWith("Behavioral");
 
-  const scoringGuidelines = `SCORING GUIDELINES (IMPORTANT):
-
-1. GROWTH-ORIENTED SCORING BANDS (RECALIBRATED):
-    * Exceptional (9-10/10): Candidates showing deep, flawless understanding with practical nuance.
-    * Strong candidate (8-9/10): Good understanding, depth, and details.
-    * Industry-ready fundamentals (6-7/10): Award this range if the candidate demonstrates genuine basic understanding of the concepts with minor gaps (do not penalize average answers down to 4-5).
-    * Early learner (4-5/10): Shows basic, limited, or partial credit.
-    * Very weak understanding (0-3/10): Significant inaccuracies, empty answers, or pure guess/bluff.
-2. CONCEPT OVER KEYWORDS:
-    If the candidate demonstrates correct conceptual understanding in their own words, award reasonable marks even if exact keywords or textbook terminology are missing.
-3. REAL-WORLD INTERVIEW STANDARD:
-    Evaluate like an experienced interviewer, not an exam checker. Candidates may use simple language, informal phrasing, or imperfect grammar while still demonstrating understanding.
-4. LEARNING POTENTIAL RUBRIC:
-    Evaluate:
-    - Curiosity: Does the candidate show an interest in details, edge cases, or broader context?
-    - Reasoning: Can they trace logic and derive answers systematically?
-    - Self-Correction: Do they acknowledge gaps or self-correct when realizing mistakes?
-5. AVOID OVER-PENALIZATION:
-    Minor omissions, communication mistakes, stuttering, or imperfect wording should not significantly reduce scores if the core concept is correct.
-
-Maintain evidence-based evaluation, but do not be excessively strict when the candidate demonstrates genuine conceptual understanding.`;
-
+  // Same slim prompt as submitAnswer
   const prompt = `You are evaluating a SPOKEN interview answer (transcribed via speech-to-text).
-IMPORTANT: The transcript may contain minor speech errors, informal phrasing, or filler words. Focus on the SUBSTANCE of what was said, not grammar or polish.
+The transcript may contain minor speech errors or filler words. Focus on SUBSTANCE, not grammar.
 
 QUESTION: "${question.question}"
 ${question.ideal_answer ? `IDEAL/REFERENCE ANSWER: "${question.ideal_answer}"` : ''}
 TYPE: ${question.type || 'Technical'}
 
-EVALUATION GUIDE CHECKLIST AREAS TO CHECK:
+EVALUATION CHECKLIST (expected areas):
 ${guideStr}
 
-ANSWER: "${answer}"
+CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
-${scoringGuidelines}
+=== CRITICAL RULE (HIGHEST PRIORITY) ===
+FIRST, classify the answer as one of:
+- "keyword_list_only": Candidate ONLY lists names/terms without explaining what they mean, how they work, or giving context/examples.
+- "partial_explanation": Candidate explains SOME concepts but not all expected areas.
+- "full_explanation": Candidate explains the concepts with understanding, examples, or reasoning.
 
-INTERNAL RUBRICS (Aligned with Scoring Calibration):
-- Coverage:
-  8-10 = Explains almost all expected checklist areas correctly, showing clear coverage.
-  6-8 = Explains most expected checklist areas, with minor gaps or omission of non-critical details.
-  4-6 = Explains some expected checklist areas correctly (partial credit), showing partial coverage.
-  2-4 = Only mentions or superficially covers areas without explaining them (limited coverage).
-  0-2 = No relevant areas mentioned or answered.
-- Understanding:
-  8-10 = Explains core ideas in their own words clearly with examples, showing excellent understanding.
-  6-8 = Demonstrates good understanding, can explain key details but has minor gaps.
-  4-6 = Shows partial understanding, understands basic terms but struggles to explain deeply.
-  2-4 = Superficial mentions or copy-pasted terms without explaining what they mean.
-  0-2 = Incorrect information or total misunderstanding of the concept.
-- Reasoning:
-  8-10 = Core reasoning is solid, logical, and supports design choices or tradeoffs.
-  6-8 = Clear reasoning with minor logical gaps or incomplete pros/cons.
-  4-6 = Partial reasoning, some logic is present but has notable holes.
-  2-4 = Limited logical connection, unstructured or vague logic.
-  0-2 = Confused reasoning, technical contradictions, or irrelevant logic.
-- Depth:
-  8-10 = Provides excellent detail and nuance; explains design tradeoffs, examples, or practical applications.
-  6-8 = Substantial detail and context provided, but misses some advanced nuances.
-  4-6 = Basic details provided; answers the question directly but lacks elaboration.
-  2-4 = Very surface-level, lists keywords without elaboration.
-  0-2 = No depth, incorrect assertions, or empty answer.
+IF answerType is "keyword_list_only":
+- accuracy and conceptCoverage MUST NOT exceed 4/10
+- conceptUnderstanding MUST NOT exceed 2/10
+- depth MUST NOT exceed 1/10
+- reasoning MUST NOT exceed 2/10
+=== END CRITICAL RULE ===
 
-CRITICAL RULE ON KEYWORD LISTING / SHORT UNEXPLAINED ANSWERS:
-If the candidate's answer simply lists the names of the expected areas or keywords without actually explaining what they mean, how they function, or giving any context/examples, the answer is NOT complete.
-In this case, you MUST penalize the scores strictly:
-- "conceptUnderstanding" MUST NOT exceed 2/10.
-- "depth" MUST NOT exceed 1/10.
-- "reasoning" MUST NOT exceed 2/10.
-- "accuracy" and "conceptCoverage" MUST NOT exceed 4/10.
-- State in the "feedback" that the candidate only listed the concepts without explaining them.
+SCORING BANDS:
+* 9-10: Deep, flawless understanding with practical nuance
+* 8-9: Good understanding, depth, and details
+* 6-7: Genuine understanding with minor gaps
+* 4-5: Basic or limited understanding, partial credit
+* 0-3: Significant inaccuracies, empty, or pure keyword listing
 
-Evaluate the candidate's answer against the expected checklist areas and rubrics.
-Check for any hallucinated, factually incorrect, or contradictory technical statements and return them as technicalErrors with severity (low, medium, or high).
-Provide score for answerDirectnessScore (0-10) which measures how directly they answered the question without keyword stuffing or bluffing.
-Provide tradeoffReasoningScore (0-10 or null) which evaluates how well they discuss design tradeoffs, pros/cons, or alternative approaches (return null if not applicable to this question).
+Evaluate like an experienced interviewer. If the candidate demonstrates correct understanding in their own words, award reasonable marks. But listing keywords without explanation is NOT understanding.
 
-EVALUATE EVIDENCE OF POSITIVE MOMENTS:
-Set the following positiveEvidence flags to true if the candidate explicitly demonstrates:
-- strongExample: provides a clear, valid real-world example or code demonstration.
-- realProject: mentions a concrete professional/academic project they worked on related to this topic.
-- tradeoffDiscussion: explicitly discusses pros/cons, design tradeoffs, or alternatives.
-- practicalExperience: references hands-on practical troubleshooting, deployment, or execution.
+For mentionedConcepts: list concepts the candidate NAMED or IDENTIFIED.
+For explainedConcepts: list ONLY concepts the candidate actually EXPLAINED with understanding.
+A concept in explainedConcepts MUST also appear in mentionedConcepts.
 
-Return strictly the following JSON structure:
+Return strictly the following JSON (no markdown, no extra text):
 {
-  "accuracy": number, // 0-10
-  "conceptCoverage": number, // 0-10
-  "conceptUnderstanding": number, // 0-10
-  "reasoning": number, // 0-10
-  "depth": number, // 0-10
-  "clarity": number, // 0-10
-  "structure": number, // 0-10
-  "confidence": number, // 0-10
-  "consistency": number, // 0-10
-  "answerDirectnessScore": number, // 0-10
-  "tradeoffReasoningScore": number | null, // 0-10 or null
-  "curiosity": number, // 0-10
-  "selfCorrection": number, // 0-10
-  "technicalErrors": [
-    { "error": "description of incorrect or hallucinated statement", "severity": "low" | "medium" | "high" }
-  ],
+  "answerType": "keyword_list_only" | "partial_explanation" | "full_explanation",
+  "accuracy": number,
+  "conceptCoverage": number,
+  "conceptUnderstanding": number,
+  "reasoning": number,
+  "depth": number,
+  "clarity": number,
+  "structure": number,
+  "confidence": number,
+  "consistency": number,
+  "answerDirectnessScore": number,
+  "tradeoffReasoningScore": number | null,
+  "curiosity": number,
+  "selfCorrection": number,
+  "technicalErrors": [{ "error": "string", "severity": "low" | "medium" | "high" }],
   "positiveEvidence": {
     "strongExample": boolean,
     "realProject": boolean,
     "tradeoffDiscussion": boolean,
     "practicalExperience": boolean
   },
-  "matchedKeyPoints": [],
-  "missingKeyPoints": [],
-  "feedback": "2-sentence objective, evidence-based feedback focusing strictly on the candidate's actual response. State exactly what expected areas they explained correctly and what they missed or got wrong in their words. Avoid generic praise, boilerplate, or explaining the ideal answer in general."
+  "mentionedConcepts": ["concepts the candidate named/identified"],
+  "explainedConcepts": ["concepts the candidate actually explained with understanding"],
+  "missingKeyPoints": ["expected areas the candidate did not cover at all"]
 }`;
 
   try {
