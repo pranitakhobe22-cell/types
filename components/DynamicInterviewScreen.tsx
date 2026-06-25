@@ -15,6 +15,7 @@ import {
 } from '../types';
 import { getDeviceFingerprint } from '../services/deviceFingerprint';
 import { ErrorLogService } from '../services/errorLogService';
+import { TelemetryService } from '../services/telemetryService';
 
 // Speech Recognition Types removed, using useSpeech hook
 import { ProctoringState, ProctoringAction } from '../types';
@@ -271,6 +272,16 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   };
 
   const synthRef = useRef<SpeechSynthesis | null>(typeof window !== 'undefined' ? window.speechSynthesis : null);
+
+  const activeRequestControllerRef = useRef<AbortController | null>(null);
+  const transitionStartRef = useRef<number>(0);
+  const llmDurationRef = useRef<number>(0);
+  const ttsStartRef = useRef<number>(0);
+  const sttDurationRef = useRef<number>(0);
+  const sttStartTimeRef = useRef<number | null>(null);
+  const sttCapturedDurationRef = useRef<number>(0);
+  const activeQuestionIdRef = useRef<string | number>("");
+  const isTransitioningRef = useRef<boolean>(false);
 
 
 
@@ -731,10 +742,13 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     initInterview();
   }, [hasStarted, candidate.role, proctoring.engineState, questions.length]);
 
-  // Cancel speech synthesis on component unmount
+  // Cancel speech synthesis on component unmount and abort any active requests
   useEffect(() => {
     return () => {
       synthRef.current?.cancel();
+      if (activeRequestControllerRef.current) {
+        activeRequestControllerRef.current.abort();
+      }
     };
   }, []);
 
@@ -946,8 +960,8 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     }
   }, [toastWarning]);
 
-  const speakQuestion = (text: string) => {
-    speak(text);
+  const speakQuestion = (text: string, onEnd?: () => void) => {
+    speak(text, { onEnd });
   };
 
   const toggleMic = () => {
@@ -957,8 +971,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         return;
     }
     if (isListening) {
+      if (sttStartTimeRef.current !== null) {
+        sttCapturedDurationRef.current = performance.now() - sttStartTimeRef.current;
+        sttStartTimeRef.current = null;
+      }
       stopListening();
     } else {
+      sttStartTimeRef.current = performance.now();
+      sttCapturedDurationRef.current = 0;
       startListening(currentQ?.id);
     }
   };
@@ -973,11 +993,35 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
     isProcessingRef.current = true;
     setIsProcessing(true);
+
+    // Stop recording and finalize STT duration
+    if (isListening && sttStartTimeRef.current !== null) {
+      sttCapturedDurationRef.current = performance.now() - sttStartTimeRef.current;
+      sttStartTimeRef.current = null;
+    }
+    sttDurationRef.current = sttCapturedDurationRef.current;
+    sttCapturedDurationRef.current = 0; // reset
+
     stopListening();
 
     const currentQ = questions[currentIndex];
+
+    // Set timing markers
+    transitionStartRef.current = performance.now();
+    activeQuestionIdRef.current = currentQ.id;
+    isTransitioningRef.current = true;
+
+    // Abort any active requests
+    if (activeRequestControllerRef.current) {
+      activeRequestControllerRef.current.abort();
+    }
+    activeRequestControllerRef.current = new AbortController();
+    const signal = activeRequestControllerRef.current.signal;
+
     const capturedTranscript = transcript;
     const capturedIndex = currentIndex;
+
+    const llmStart = performance.now();
 
     // 1. Calculate local evaluation immediately
     const local = localEvaluate(capturedTranscript, currentQ as any);
@@ -1070,10 +1114,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
       const evalPromise = (async () => {
         try {
-          const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
+          const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current, 'live', signal);
           return result.evaluation;
         } catch (err: any) {
-          console.error(`Synchronous evaluation failed:`, err);
+          if (err.name === 'AbortError') {
+            console.log(`Evaluation request aborted for question ${currentQ.id}`);
+          } else {
+            console.error(`Synchronous evaluation failed:`, err);
+          }
           throw err;
         }
       })();
@@ -1223,7 +1271,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       updateHistory(newHistory);
       const bgPromise = (async () => {
         try {
-          const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current);
+          const result = await submitAnswer(candidate as any, currentQ as any, capturedTranscript, undefined, undefined, sessionIdRef.current, 'eval', signal);
           const realEval = result.evaluation;
 
           if (currentQ.isFollowUp) {
@@ -1246,6 +1294,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
           await SupabaseService.saveResponse(sessionIdRef.current, currentHistoryLength, realEval, currentQ.ideal_answer, candidate.name);
           return realEval;
         } catch (bgErr: any) {
+          if (bgErr.name === 'AbortError') {
+            console.log(`Background evaluation request aborted for question ${currentQ.id}`);
+            throw bgErr;
+          }
           console.error(`Background evaluation failed:`, bgErr);
           const errorEval = {
             ...localEvalResult,
@@ -1326,7 +1378,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       setLoadingText("Generating validation question...");
       setLoading(true);
       try {
-        const followUpQ = await AIService.generateFollowUpQuestion(currentQ, capturedTranscript);
+        const followUpQ = await AIService.generateFollowUpQuestion(currentQ, capturedTranscript, signal);
         const updatedQuestions = [...questions];
         updatedQuestions.splice(capturedIndex + 1, 0, followUpQ);
         setQuestions(updatedQuestions);
@@ -1337,13 +1389,34 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         setLoading(false);
         setIsProcessing(false);
         isProcessingRef.current = false;
+        
+        llmDurationRef.current = performance.now() - llmStart;
+        ttsStartRef.current = performance.now();
         setTimeout(() => {
-          speakQuestion(followUpQ.question);
+          speakQuestion(followUpQ.question, () => {
+            if (isTransitioningRef.current) {
+              isTransitioningRef.current = false;
+              const ttsEnd = performance.now();
+              const ttsDurationMs = ttsEnd - ttsStartRef.current;
+              const totalTransitionMs = ttsEnd - transitionStartRef.current;
+              TelemetryService.recordLatency({
+                questionId: activeQuestionIdRef.current,
+                sttDurationMs: sttDurationRef.current,
+                llmDurationMs: llmDurationRef.current,
+                ttsDurationMs: ttsDurationMs,
+                totalTransitionMs: totalTransitionMs
+              });
+            }
+          });
         }, 300);
         return;
       } catch (err: any) {
-        console.error("Failed to generate follow-up:", err);
-        ErrorLogService.logError('interview', `Failed to generate follow-up question for parent ${currentQ.id}: ${err.message || err}`, err, sessionIdRef.current, candidate.name);
+        if (err.name === 'AbortError') {
+          console.log(`Follow-up generation aborted for question ${currentQ.id}`);
+        } else {
+          console.error("Failed to generate follow-up:", err);
+          ErrorLogService.logError('interview', `Failed to generate follow-up question for parent ${currentQ.id}: ${err.message || err}`, err, sessionIdRef.current, candidate.name);
+        }
       }
     }
 
@@ -1388,10 +1461,38 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       setLoading(false);
       setIsProcessing(false);
       isProcessingRef.current = false;
+      
+      llmDurationRef.current = performance.now() - llmStart;
+      ttsStartRef.current = performance.now();
       setTimeout(() => {
-        speakQuestion(updatedQuestions[nextIdx].question);
+        speakQuestion(updatedQuestions[nextIdx].question, () => {
+          if (isTransitioningRef.current) {
+            isTransitioningRef.current = false;
+            const ttsEnd = performance.now();
+            const ttsDurationMs = ttsEnd - ttsStartRef.current;
+            const totalTransitionMs = ttsEnd - transitionStartRef.current;
+            TelemetryService.recordLatency({
+              questionId: activeQuestionIdRef.current,
+              sttDurationMs: sttDurationRef.current,
+              llmDurationMs: llmDurationRef.current,
+              ttsDurationMs: ttsDurationMs,
+              totalTransitionMs: totalTransitionMs
+            });
+          }
+        });
       }, 300);
     } else {
+      if (isTransitioningRef.current) {
+        isTransitioningRef.current = false;
+        TelemetryService.recordLatency({
+          questionId: activeQuestionIdRef.current,
+          sttDurationMs: sttDurationRef.current,
+          llmDurationMs: performance.now() - llmStart,
+          ttsDurationMs: 0,
+          totalTransitionMs: performance.now() - transitionStartRef.current
+        });
+      }
+
       setLoadingText("Awaiting background evaluations...");
       setLoading(true);
 

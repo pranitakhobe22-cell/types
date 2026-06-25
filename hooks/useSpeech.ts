@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { normalizeSpeechText } from '../services/speechDictionary';
+import { normalizeSpeechText, logLowConfidenceSTT } from '../services/speechDictionary';
 
 // Polyfill definitions for browser speech API
 interface SpeechRecognition extends EventTarget {
@@ -197,20 +197,28 @@ export const useSpeech = (activeQuestionId?: string | number) => {
           }
 
           if (result.isFinal) {
-            // Confidence threshold filtering
-            if (confidence !== undefined && confidence > 0 && confidence < 0.6) {
+            // Lower confidence threshold filter to 0.45 to prevent discarding valid tech jargon
+            if (confidence !== undefined && confidence > 0 && confidence < 0.45) {
               if (import.meta.env.DEV) {
-                console.log(`[STT-DEBUG] Discarding low confidence final result (${confidence}): "${result[0].transcript}"`);
+                console.log(`[STT-DEBUG] Discarding extremely low confidence final result (${confidence}): "${result[0].transcript}"`);
               }
               lastProcessedIndex = i + 1;
               continue;
             }
 
-            let text = result[0].transcript.trim();
-            if (text) {
-              text = normalizeSpeechText(text);
-              if (text) {
-                finalChunksRef.current.push(text);
+            const rawText = result[0].transcript.trim();
+            if (rawText) {
+              const normalized = normalizeSpeechText(rawText);
+              
+              // Log unknown low-confidence technical words (confidence between 0.45 and 0.6 and no dictionary replacement happened)
+              if (confidence !== undefined && confidence >= 0.45 && confidence < 0.6) {
+                if (normalized.toLowerCase() === rawText.toLowerCase()) {
+                  logLowConfidenceSTT(rawText, normalized, confidence, activeQuestionIdRef.current);
+                }
+              }
+
+              if (normalized) {
+                finalChunksRef.current.push(normalized);
               }
             }
             lastProcessedIndex = i + 1;

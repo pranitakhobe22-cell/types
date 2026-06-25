@@ -22,11 +22,19 @@ const getOpenRouterKey = () => {
   return (import.meta.env?.VITE_OPENROUTER_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_OPENROUTER_API_KEY : "") || "";
 };
 
-async function generateWithOpenRouter(prompt: string, maxRetries = 2): Promise<string> {
+async function generateWithOpenRouter(
+  prompt: string,
+  maxRetries = 2,
+  purpose: 'live' | 'eval' | 'report' = 'eval',
+  signal?: AbortSignal
+): Promise<string> {
   const apiKey = getOpenRouterKey();
   if (!apiKey) {
     throw new Error("OpenRouter API key not configured. Please set VITE_OPENROUTER_API_KEY.");
   }
+
+  const fastModel = (import.meta.env?.VITE_FAST_MODEL) || "google/gemini-2.5-flash";
+  const evalModel = (import.meta.env?.VITE_EVAL_MODEL) || "deepseek/deepseek-chat";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -39,12 +47,13 @@ async function generateWithOpenRouter(prompt: string, maxRetries = 2): Promise<s
           "X-Title": "Reincrew AI"
         },
         body: JSON.stringify({
-          model: "deepseek/deepseek-chat",
+          model: purpose === 'live' ? fastModel : evalModel,
           messages: [{ role: "user", content: prompt }],
           temperature: 0.1,
           response_format: { type: "json_object" },
           max_tokens: 800
-        })
+        }),
+        signal
       });
 
       if (!response.ok) {
@@ -67,16 +76,19 @@ async function generateWithOpenRouter(prompt: string, maxRetries = 2): Promise<s
 
       return data.choices[0].message.content;
     } catch (err: any) {
-      console.warn(`OpenRouter DeepSeek attempt ${attempt + 1} failed:`, err);
+      if (err.name === 'AbortError') {
+        throw err;
+      }
+      console.warn(`OpenRouter generateWithOpenRouter attempt ${attempt + 1} failed:`, err);
       if (attempt < maxRetries) {
         await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
-      ErrorLogService.logError('api', `OpenRouter DeepSeek API call failed: ${err.message || err}`, err);
+      ErrorLogService.logError('api', `OpenRouter API call failed: ${err.message || err}`, err);
       throw err;
     }
   }
-  throw new Error("Failed to generate content with OpenRouter DeepSeek.");
+  throw new Error("Failed to generate content with OpenRouter.");
 }
 
 // Simple string hash → consistent key per session
@@ -788,7 +800,9 @@ export const submitAnswer = async (
   answer: string,
   visualMetrics?: VisualMetrics,
   settings?: RoleSettings,
-  sessionId?: string
+  sessionId?: string,
+  purpose: 'live' | 'eval' = 'eval',
+  signal?: AbortSignal
 ): Promise<{ evaluation: EvaluationResult; nextQuestion: Question | null }> => {
 
   const isBehavioral = currentQuestion.type?.startsWith("Behavioral");
@@ -906,7 +920,7 @@ Return strictly the following JSON (no markdown, no extra text):
 }`;
 
   const generateEval = async (prompt: string): Promise<EvaluationResult> => {
-    let cleanText = await generateWithOpenRouter(prompt);
+    let cleanText = await generateWithOpenRouter(prompt, 2, purpose, signal);
     cleanText = cleanText.trim();
     if (cleanText.startsWith('```json')) cleanText = cleanText.replace(/^```json/, '').replace(/```$/, '');
     else if (cleanText.startsWith('```')) cleanText = cleanText.replace(/^```/, '').replace(/```$/, '');

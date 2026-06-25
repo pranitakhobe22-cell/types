@@ -6,7 +6,15 @@ const getOpenRouterKey = () => {
   return (import.meta.env?.VITE_OPENROUTER_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_OPENROUTER_API_KEY : "") || "";
 };
 
-async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live' | 'eval' | 'report' = 'eval'): Promise<string> {
+export const FAST_MODEL = (import.meta.env?.VITE_FAST_MODEL) || "google/gemini-2.5-flash";
+export const EVAL_MODEL = (import.meta.env?.VITE_EVAL_MODEL) || "deepseek/deepseek-chat";
+
+async function resilientGenerate(
+  prompt: string,
+  maxRetries = 2,
+  purpose: 'live' | 'eval' | 'report' = 'eval',
+  signal?: AbortSignal
+): Promise<string> {
   const apiKey = getOpenRouterKey();
   if (!apiKey) {
     throw new Error("OpenRouter API key not configured. Please set VITE_OPENROUTER_API_KEY.");
@@ -23,12 +31,13 @@ async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live'
           "X-Title": "Reincrew AI"
         },
         body: JSON.stringify({
-          model: "deepseek/deepseek-chat",
+          model: purpose === 'live' ? FAST_MODEL : EVAL_MODEL,
           messages: [{ role: "user", content: prompt }],
           temperature: 0.1,
           response_format: { type: "json_object" },
           max_tokens: 800
-        })
+        }),
+        signal
       });
 
       if (!response.ok) {
@@ -51,7 +60,10 @@ async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live'
 
       return data.choices[0].message.content;
     } catch (err: any) {
-      console.warn(`OpenRouter DeepSeek attempt ${attempt + 1} failed:`, err);
+      if (err.name === 'AbortError') {
+        throw err;
+      }
+      console.warn(`OpenRouter resilientGenerate attempt ${attempt + 1} failed:`, err);
       if (attempt < maxRetries) {
         // Wait briefly before retry (exponential backoff)
         await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
@@ -60,7 +72,7 @@ async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live'
       throw new Error(`AI service is currently unavailable. details: ${err?.message || err}`);
     }
   }
-  throw new Error("Failed to generate content with OpenRouter DeepSeek.");
+  throw new Error("Failed to generate content with OpenRouter AI.");
 }
 
 import { Question } from "../types";
@@ -291,7 +303,7 @@ export const AIService = {
     return [...arr].sort(() => 0.5 - Math.random()).slice(0, n);
   },
 
-  async generateFollowUpQuestion(parentQuestion: Question, userAnswer: string): Promise<Question> {
+  async generateFollowUpQuestion(parentQuestion: Question, userAnswer: string, signal?: AbortSignal): Promise<Question> {
     const prompt = `You are an expert interviewer. The candidate has answered a technical question.
 Generate a short follow-up question to validate their depth of understanding or detect if they are bluffing.
 The follow-up question MUST be at the same difficulty level ("${parentQuestion.difficulty ?? 'medium'}").
@@ -313,7 +325,7 @@ Return strictly the following JSON structure:
 }`;
 
     try {
-      let text = await resilientGenerate(prompt, 1, 'live');
+      let text = await resilientGenerate(prompt, 1, 'live', signal);
       text = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error("Invalid follow-up response format");
