@@ -11,7 +11,7 @@ import { MediaCaptureService, RollingRecorder } from '../services/mediaCaptureSe
 import { 
   InterviewMediaResources, RawDetectionFrame, ProctorViolation, TimelineEvent, 
   HeartbeatMetrics, ProctoringEngineState, ProctoringReport, DashboardTelemetry,
-  Question
+  Question, DEFAULT_PROCTORING_SETTINGS
 } from '../types';
 import { getDeviceFingerprint } from '../services/deviceFingerprint';
 import { ErrorLogService } from '../services/errorLogService';
@@ -45,7 +45,10 @@ const createInitialState = (): ProctoringState => ({
   violationScore: 0,
   integrityScore: 100,
   totalGazeAwayDurationMs: 0,
-  lastViolationTime: 0
+  lastViolationTime: 0,
+  settings: DEFAULT_PROCTORING_SETTINGS,
+  cameraOffStartTime: null,
+  micOffStartTime: null
 });
 
 const generateViolationId = () => Math.random().toString(36).substring(2, 9);
@@ -54,6 +57,7 @@ const VIOLATION_COOLDOWN = 5000;
 const baseReducer = (state: ProctoringState, action: ProctoringAction): ProctoringState => {
   const now = Date.now();
   switch (action.type) {
+    case 'SET_SETTINGS': return { ...state, settings: action.settings };
     case 'SET_UNSUPPORTED_BROWSER': return { ...state, engineState: 'UNSUPPORTED_BROWSER' };
     case 'SET_PERMISSION_DENIED': return { ...state, engineState: 'PERMISSION_DENIED' };
     case 'ENGINE_READY': return { ...state, engineState: 'READY', monitoringStartTime: state.monitoringStartTime || now };
@@ -125,11 +129,12 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
         if (newState.noFaceState === 'FACE_PRESENT') {
           newState.noFaceState = 'NO_FACE_START';
           newState.noFaceStartTime = now;
-        } else if (newState.noFaceState === 'NO_FACE_START' && newState.noFaceStartTime && now - newState.noFaceStartTime > 15000) {
+        } else if (newState.noFaceState === 'NO_FACE_START' && newState.noFaceStartTime && now - newState.noFaceStartTime > (state.settings?.faceMissingWarningSec ?? 10) * 1000) {
           newState.noFaceState = 'VIOLATION_CREATED';
           if (now - state.lastViolationTime >= VIOLATION_COOLDOWN) {
-            const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'NO_FACE', severity: 3, timestamp: now, message: 'No face detected for 15s' };
-            const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'NO_FACE', severity: 3, detail: 'Face missing >15s' };
+            const warnSec = state.settings?.faceMissingWarningSec ?? 10;
+            const v: ProctorViolation = { id: generateViolationId(), sessionId: '', type: 'NO_FACE', severity: 3, timestamp: now, message: `No face detected for ${warnSec}s` };
+            const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'NO_FACE', severity: 3, detail: `Face missing >${warnSec}s` };
             newState.violations = [...newState.violations, v];
             newState.timeline = [...newState.timeline, t];
             newState.violationScore += 3;
@@ -272,6 +277,31 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
   const [toastWarning, setToastWarning] = useState<{ message: string, type: 'warning' | 'danger' } | null>(null);
   const sessionIdRef = useRef<string>(localStorage.getItem('current_session_id') || "");
+
+  // Load proctoring settings once on mount
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const settings = await SupabaseService.getSystemSettings('proctoring_settings');
+        if (settings) {
+          console.log("[DynamicInterview] Loaded system proctoring settings:", settings);
+          dispatch({ type: 'SET_SETTINGS', settings });
+        } else {
+          console.log("[DynamicInterview] No system proctoring settings found. Using client defaults.");
+        }
+      } catch (err) {
+        console.error("[DynamicInterview] Failed to load proctoring settings:", err);
+      }
+    };
+    fetchSettings();
+  }, []);
+
+  // Refs for tracking camera/mic off states and warning triggers to bypass tab throttling
+  const cameraOffStartTimeRef = useRef<number | null>(null);
+  const micOffStartTimeRef = useRef<number | null>(null);
+  const warnedNoFaceRef = useRef(false);
+  const warnedCameraOffRef = useRef(false);
+  const warnedMicOffRef = useRef(false);
 
   const flushedEventIdsRef = useRef<Set<string>>(new Set());
   const flushQueueRef = useRef<any[]>([]);
@@ -757,44 +787,164 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     return () => window.removeEventListener('offline', handleOffline);
   }, []);
 
-  // Handle Warning and Termination Logic
-  useEffect(() => {
-     if (proctoring.violationScore >= 15 && !isProcessingRef.current && hasStarted) {
-        setToastWarning({ message: "Interview Terminated: Multiple integrity violations detected.", type: 'danger' });
-        setIsProcessing(true);
-        isProcessingRef.current = true;
-        setLoadingText("Awaiting background evaluations...");
-        setLoading(true);
-        stopListening();
-        
-        setTimeout(async () => {
-            const bgPromises = Object.values(bgEvalsRef.current);
-            await Promise.allSettled(bgPromises);
+  const triggerTermination = async (reason: string) => {
+    if (isProcessingRef.current) return;
+    setToastWarning({ message: `Interview Terminated: ${reason}`, type: 'danger' });
+    setIsProcessing(true);
+    isProcessingRef.current = true;
+    setLoadingText("Awaiting background evaluations...");
+    setLoading(true);
+    stopListening();
+    
+    setTimeout(async () => {
+        const bgPromises = Object.values(bgEvalsRef.current);
+        await Promise.allSettled(bgPromises);
 
-            setLoadingText("Terminating interview...");
-            await flushAllRemainingEvents();
-            const proctoringReport = compileReport();
-            let evalReport = null;
-            try {
-              evalReport = await AIService.evaluateInterview(historyRef.current, sessionIdRef.current, proctoringReport);
-            } catch (e) {
-              console.error("Evaluation failed during termination:", e);
-            }
-            onComplete(historyRef.current, proctoringReport, evalReport);
-        }, 100);
-     } else if (proctoring.violationScore >= 10 && proctoring.violationScore < 15 && hasStarted) {
-        setToastWarning({ message: `Severe Warning: Integrity violations detected. Score: ${proctoring.violationScore}/15. Further violations will terminate the interview.`, type: 'danger' });
-     } else if (proctoring.violationScore >= 5 && proctoring.violationScore < 10 && hasStarted) {
-        setToastWarning({ message: `Warning: Please remain focused on the interview. Score: ${proctoring.violationScore}/15.`, type: 'warning' });
-     }
-  }, [proctoring.violationScore, hasStarted, history]);
+        setLoadingText("Terminating interview...");
+        await flushAllRemainingEvents();
+        const proctoringReport = compileReport();
+        let evalReport = null;
+        try {
+          evalReport = await AIService.evaluateInterview(historyRef.current, sessionIdRef.current, proctoringReport);
+        } catch (e) {
+          console.error("Evaluation failed during termination:", e);
+        }
+        onComplete(historyRef.current, proctoringReport, evalReport);
+    }, 100);
+  };
 
+  const checkProctoringThresholds = () => {
+    if (!hasStarted || isProcessingRef.current) return;
+    const settings = proctoring.settings || DEFAULT_PROCTORING_SETTINGS;
+
+    // 1. Count-based checks
+    const tabSwitchCount = proctoring.violations.filter(v => v.type === 'TAB_HIDDEN').length;
+    const multipleFacesCount = proctoring.violations.filter(v => v.type === 'MULTIPLE_FACES').length;
+    const fullscreenExitCount = proctoring.violations.filter(v => v.type === 'FULLSCREEN_EXIT').length;
+
+    // 2. Duration-based checks
+    const faceMissingDuration = proctoring.noFaceStartTime ? (Date.now() - proctoring.noFaceStartTime) / 1000 : 0;
+    const cameraOffDuration = cameraOffStartTimeRef.current ? (Date.now() - cameraOffStartTimeRef.current) / 1000 : 0;
+    const micOffDuration = micOffStartTimeRef.current ? (Date.now() - micOffStartTimeRef.current) / 1000 : 0;
+
+    // --- TERMINATION CHECKS ---
+    if (tabSwitchCount >= settings.tabSwitchTerminateCount) {
+      triggerTermination(`Too many tab switches (${tabSwitchCount}/${settings.tabSwitchTerminateCount}).`);
+      return;
+    }
+    if (multipleFacesCount >= settings.multipleFacesTerminateCount) {
+      triggerTermination(`Multiple faces detected too many times (${multipleFacesCount}/${settings.multipleFacesTerminateCount}).`);
+      return;
+    }
+    if (fullscreenExitCount >= settings.fullscreenExitTerminateCount) {
+      triggerTermination(`Exited fullscreen mode too many times (${fullscreenExitCount}/${settings.fullscreenExitTerminateCount}).`);
+      return;
+    }
+    if (faceMissingDuration >= settings.faceMissingTerminateSec) {
+      triggerTermination(`Face missing for more than ${settings.faceMissingTerminateSec} seconds.`);
+      return;
+    }
+    if (cameraOffDuration >= settings.cameraOffTerminateSec) {
+      triggerTermination(`Camera disconnected/turned off for more than ${settings.cameraOffTerminateSec} seconds.`);
+      return;
+    }
+    if (micOffDuration >= settings.micOffTerminateSec) {
+      triggerTermination(`Microphone muted/turned off for more than ${settings.micOffTerminateSec} seconds.`);
+      return;
+    }
+
+    // --- WARNING CHECKS ---
+    if (tabSwitchCount >= settings.tabSwitchWarningCount) {
+      setToastWarning({
+        message: `Warning: Tab switch detected. Total: ${tabSwitchCount}/${settings.tabSwitchTerminateCount}. Please focus on the screen.`,
+        type: 'danger'
+      });
+    }
+    else if (multipleFacesCount >= settings.multipleFacesWarningCount) {
+      setToastWarning({
+        message: `Warning: Multiple faces detected. Total: ${multipleFacesCount}/${settings.multipleFacesTerminateCount}. Only you should be in the frame.`,
+        type: 'danger'
+      });
+    }
+    else if (fullscreenExitCount >= settings.fullscreenExitWarningCount) {
+      setToastWarning({
+        message: `Warning: Fullscreen mode exited. Total: ${fullscreenExitCount}/${settings.fullscreenExitTerminateCount}. Please return to fullscreen.`,
+        type: 'danger'
+      });
+    }
+    else if (faceMissingDuration >= settings.faceMissingWarningSec && !warnedNoFaceRef.current) {
+      setToastWarning({
+        message: `Warning: Please make sure your face is clearly visible. Face missing for ${Math.round(faceMissingDuration)}s.`,
+        type: 'warning'
+      });
+      warnedNoFaceRef.current = true;
+    }
+    else if (cameraOffDuration >= settings.cameraOffWarningSec && !warnedCameraOffRef.current) {
+      setToastWarning({
+        message: `Warning: Camera turned off or feed blocked for ${Math.round(cameraOffDuration)}s. Please turn your camera back on.`,
+        type: 'warning'
+      });
+      warnedCameraOffRef.current = true;
+    }
+    else if (micOffDuration >= settings.micOffWarningSec && !warnedMicOffRef.current) {
+      setToastWarning({
+        message: `Warning: Microphone is off or muted for ${Math.round(micOffDuration)}s. Please unmute your microphone.`,
+        type: 'warning'
+      });
+      warnedMicOffRef.current = true;
+    }
+  };
+
+  // Periodic 1-second check for camera/mic off and general proctoring warnings/terminations
   useEffect(() => {
-     if (toastWarning && toastWarning.type !== 'danger' && proctoring.violationScore < 15) {
-        const t = setTimeout(() => setToastWarning(null), 5000);
-        return () => clearTimeout(t);
-     }
-  }, [toastWarning, proctoring.violationScore]);
+    if (!hasStarted) return;
+    
+    const interval = setInterval(() => {
+      // 1. Check camera track state
+      const videoTrack = mediaRef.current?.videoTrack;
+      const isCameraOff = !videoTrack || !videoTrack.enabled || videoTrack.readyState === 'ended' || (videoTrack as any).muted;
+      
+      if (isCameraOff) {
+        if (cameraOffStartTimeRef.current === null) {
+          cameraOffStartTimeRef.current = Date.now();
+        }
+      } else {
+        cameraOffStartTimeRef.current = null;
+        warnedCameraOffRef.current = false;
+      }
+
+      // 2. Check microphone track state
+      const audioTrack = mediaRef.current?.audioTrack;
+      const isMicOff = !audioTrack || !audioTrack.enabled || audioTrack.readyState === 'ended' || audioTrack.muted;
+      
+      if (isMicOff) {
+        if (micOffStartTimeRef.current === null) {
+          micOffStartTimeRef.current = Date.now();
+        }
+      } else {
+        micOffStartTimeRef.current = null;
+        warnedMicOffRef.current = false;
+      }
+
+      // 3. Reset face missing warning ref if face is present
+      if (proctoring.noFaceStartTime === null) {
+        warnedNoFaceRef.current = false;
+      }
+
+      // 4. Run warning and termination checks against settings
+      checkProctoringThresholds();
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [hasStarted, proctoring.noFaceStartTime, proctoring.violations, proctoring.settings]);
+
+  // Auto-clear warnings
+  useEffect(() => {
+    if (toastWarning && toastWarning.type !== 'danger') {
+      const t = setTimeout(() => setToastWarning(null), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [toastWarning]);
 
   const speakQuestion = (text: string) => {
     speak(text);

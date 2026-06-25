@@ -2,7 +2,8 @@ import { supabase } from './supabaseClient';
 import { 
     Candidate, JobPost, Question, RoleSettings, 
     EvaluationResult, InterviewSession, ProctoringReport, 
-    ProctorViolation, TimelineEvent, DashboardTelemetry
+    ProctorViolation, TimelineEvent, DashboardTelemetry,
+    ProctoringSettings, DEFAULT_PROCTORING_SETTINGS
 } from '../types';
 import { ErrorLogService } from './errorLogService';
 import { CSE_QUESTION_BANK, ECE_QUESTION_BANK, APTITUDE_QUESTION_BANK } from './questionBank';
@@ -243,7 +244,8 @@ export class SupabaseService {
                     })),
                     evaluation_logic: sessionReport ? sessionReport.evaluation_logic : null,
                     final_verdict: sessionReport ? sessionReport.final_verdict : null,
-                    verdict_justification: sessionReport ? sessionReport.verdict_justification : null
+                    verdict_justification: sessionReport ? sessionReport.verdict_justification : null,
+                    is_deleted: record.is_deleted
                 };
             });
         } catch (e) {
@@ -262,7 +264,8 @@ export class SupabaseService {
                 questions_asked: record.questions_asked,
                 questions_answered: record.questions_answered,
                 strengths: record.strengths || [],
-                weaknesses: record.weaknesses || []
+                weaknesses: record.weaknesses || [],
+                is_deleted: record.is_deleted
             }));
         }
     }
@@ -565,5 +568,166 @@ export class SupabaseService {
         
         const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path);
         return urlData.publicUrl;
+    }
+
+    // ==========================================
+    // SYSTEM SETTINGS & METRICS
+    // ==========================================
+    static async getSystemSettings(key: string): Promise<any | null> {
+        try {
+            if (!supabase) return null;
+            const { data, error } = await supabase
+                .from('system_settings')
+                .select('value')
+                .eq('key', key)
+                .single();
+            if (error) {
+                if (error.code === 'PGRST116') return null; // Row not found
+                throw error;
+            }
+            return data?.value || null;
+        } catch (e) {
+            console.error(`Failed to get system settings for key ${key}:`, e);
+            return null;
+        }
+    }
+
+    static async saveSystemSettings(key: string, value: any, updatedBy: string = 'Super Admin'): Promise<boolean> {
+        try {
+            if (!supabase) return false;
+            const { error } = await supabase
+                .from('system_settings')
+                .upsert({
+                    key,
+                    value,
+                    updated_at: new Date().toISOString(),
+                    updated_by: updatedBy
+                }, { onConflict: 'key' });
+            if (error) throw error;
+            return true;
+        } catch (e) {
+            console.error(`Failed to save system settings for key ${key}:`, e);
+            return false;
+        }
+    }
+
+    static async getSystemSettingsMetadata(key: string): Promise<{ updated_at: string, updated_by: string } | null> {
+        try {
+            if (!supabase) return null;
+            const { data, error } = await supabase
+                .from('system_settings')
+                .select('updated_at, updated_by')
+                .eq('key', key)
+                .single();
+            if (error) throw error;
+            return data;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    static async incrementSystemUsageStats(promptTokens: number, completionTokens: number): Promise<boolean> {
+        try {
+            if (!supabase) return false;
+            const { error } = await supabase.rpc('increment_usage_stats', {
+                p_prompt_tokens: promptTokens,
+                p_completion_tokens: completionTokens
+            });
+            if (error) throw error;
+            return true;
+        } catch (e) {
+            console.error("Failed to increment system usage stats:", e);
+            return false;
+        }
+    }
+
+    static async getSystemUsageStats(): Promise<{ prompt_tokens: number, completion_tokens: number, total_tokens: number, total_calls: number } | null> {
+        try {
+            if (!supabase) return null;
+            const { data, error } = await supabase
+                .from('system_usage_stats')
+                .select('*')
+                .eq('key', 'openrouter_usage')
+                .single();
+            if (error) {
+                if (error.code === 'PGRST116') return { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, total_calls: 0 };
+                throw error;
+            }
+            return {
+                prompt_tokens: Number(data.prompt_tokens || 0),
+                completion_tokens: Number(data.completion_tokens || 0),
+                total_tokens: Number(data.total_tokens || 0),
+                total_calls: Number(data.total_calls || 0)
+            };
+        } catch (e) {
+            console.error("Failed to get system usage stats:", e);
+            return null;
+        }
+    }
+
+    static async softDeleteSession(sessionId: string): Promise<boolean> {
+        try {
+            if (!supabase) return false;
+            const { error } = await supabase
+                .from('interview_sessions')
+                .update({
+                    is_deleted: true,
+                    deleted_at: new Date().toISOString()
+                })
+                .eq('id', sessionId);
+            if (error) throw error;
+            return true;
+        } catch (e) {
+            console.error(`Failed to soft delete session ${sessionId}:`, e);
+            return false;
+        }
+    }
+
+    static async restoreSession(sessionId: string): Promise<boolean> {
+        try {
+            if (!supabase) return false;
+            const { error } = await supabase
+                .from('interview_sessions')
+                .update({
+                    is_deleted: false,
+                    deleted_at: null
+                })
+                .eq('id', sessionId);
+            if (error) throw error;
+            return true;
+        } catch (e) {
+            console.error(`Failed to restore session ${sessionId}:`, e);
+            return false;
+        }
+    }
+
+    static async hardDeleteSession(sessionId: string): Promise<boolean> {
+        try {
+            if (!supabase) return false;
+            const { error } = await supabase
+                .from('interview_sessions')
+                .delete()
+                .eq('id', sessionId);
+            if (error) throw error;
+            return true;
+        } catch (e) {
+            console.error(`Failed to hard delete session ${sessionId}:`, e);
+            return false;
+        }
+    }
+
+    static async initializeSystemSettings(): Promise<boolean> {
+        try {
+            if (!supabase) return false;
+            const settings = await SupabaseService.getSystemSettings('proctoring_settings');
+            if (!settings) {
+                console.log("Seeding default proctoring settings in system_settings table...");
+                await SupabaseService.saveSystemSettings('proctoring_settings', DEFAULT_PROCTORING_SETTINGS, 'System Initializer');
+            }
+            return true;
+        } catch (e) {
+            console.error("Failed to initialize system settings:", e);
+            return false;
+        }
     }
 }

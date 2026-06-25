@@ -8,6 +8,7 @@ import { AdminLoginModal, isAdminSessionActive, clearAdminSession } from './comp
 import { HealthService, SystemHealth } from './services/healthService';
 import { SupabaseService } from './services/supabaseService';
 import { getDeviceFingerprint } from './services/deviceFingerprint';
+import { setSupabaseAdminMode } from './services/supabaseClient';
 import { AlertTriangle, Server, Database, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 
 function App() {
@@ -26,13 +27,13 @@ function App() {
 
   // On load: check URL for admin route AND check for existing session
   useEffect(() => {
-    // If navigated directly to /admin, auto-show the login modal (or bypass if session exists)
-    if (window.location.pathname.startsWith('/admin')) {
-      if (isAdminSessionActive()) {
+    if (isAdminSessionActive()) {
+      setSupabaseAdminMode(true);
+      if (window.location.pathname.startsWith('/admin')) {
         setIsAdminAuthenticated(true);
-      } else {
-        setShowAdminLoginModal(true);
       }
+    } else if (window.location.pathname.startsWith('/admin')) {
+      setShowAdminLoginModal(true);
     }
 
     // Run health check
@@ -43,8 +44,9 @@ function App() {
       if (h.database) {
         try {
           await SupabaseService.seedDefaultJobsIfMissing();
+          await SupabaseService.initializeSystemSettings();
         } catch (seedErr) {
-          console.error("Auto-seeding CSE/ECE job posts failed:", seedErr);
+          console.error("Auto-seeding database assets failed:", seedErr);
         }
       }
       setIsCheckingHealth(false);
@@ -63,6 +65,7 @@ function App() {
   }, []);
 
   const handleAdminLoginSuccess = () => {
+    setSupabaseAdminMode(true);
     setShowAdminLoginModal(false);
     setIsAdminAuthenticated(true);
     // Push /admin to URL so refresh keeps the admin view
@@ -70,6 +73,7 @@ function App() {
   };
 
   const handleAdminLogout = () => {
+    setSupabaseAdminMode(false);
     clearAdminSession();
     setIsAdminAuthenticated(false);
     window.history.pushState({}, '', '/');

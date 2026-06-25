@@ -1,5 +1,6 @@
 import { CSE_QUESTION_BANK, ECE_QUESTION_BANK, APTITUDE_QUESTION_BANK } from "./questionBank";
 import { retryEvaluation, localEvaluate } from "./apiService";
+import { SupabaseService } from "./supabaseService";
 
 const getOpenRouterKey = () => {
   return (import.meta.env?.VITE_OPENROUTER_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_OPENROUTER_API_KEY : "") || "";
@@ -38,6 +39,16 @@ async function resilientGenerate(prompt: string, maxRetries = 2, purpose: 'live'
       if (!data.choices || data.choices.length === 0) {
         throw new Error("OpenRouter API returned no choices.");
       }
+
+      // Track token usage
+      if (data.usage) {
+        const promptTokens = data.usage.prompt_tokens || 0;
+        const completionTokens = data.usage.completion_tokens || 0;
+        SupabaseService.incrementSystemUsageStats(promptTokens, completionTokens).catch(e => {
+          console.error("Failed to log system metric:", e);
+        });
+      }
+
       return data.choices[0].message.content;
     } catch (err: any) {
       console.warn(`OpenRouter DeepSeek attempt ${attempt + 1} failed:`, err);

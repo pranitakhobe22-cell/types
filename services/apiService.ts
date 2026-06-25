@@ -1,6 +1,7 @@
 import { Candidate, EvaluationResult, Question, RoleSettings, VisualMetrics } from "../types";
 import { StorageService } from "./storageService";
 import { ErrorLogService } from "./errorLogService";
+import { SupabaseService } from "./supabaseService";
 
 export const DEFAULT_SETTINGS: RoleSettings = {
   difficulty: 'Medium',
@@ -54,6 +55,16 @@ async function generateWithOpenRouter(prompt: string, maxRetries = 2): Promise<s
       if (!data.choices || data.choices.length === 0) {
         throw new Error("OpenRouter API returned no choices.");
       }
+
+      // Track token usage
+      if (data.usage) {
+        const promptTokens = data.usage.prompt_tokens || 0;
+        const completionTokens = data.usage.completion_tokens || 0;
+        SupabaseService.incrementSystemUsageStats(promptTokens, completionTokens).catch(e => {
+          console.error("Failed to log system metric:", e);
+        });
+      }
+
       return data.choices[0].message.content;
     } catch (err: any) {
       console.warn(`OpenRouter DeepSeek attempt ${attempt + 1} failed:`, err);

@@ -28,6 +28,7 @@ export interface Candidate {
   jobPostId?: string;
   customTopic?: string; // For Mini Demo Mode
   isDemo?: boolean;
+  role?: string;
 
   // Identity Verification Fields
   email?: string;
@@ -325,6 +326,9 @@ export type ProctoringState = {
   integrityScore: number;
   totalGazeAwayDurationMs: number;
   lastViolationTime: number;
+  settings?: ProctoringSettings;
+  cameraOffStartTime?: number | null;
+  micOffStartTime?: number | null;
 };
 
 export type ProctoringAction = 
@@ -343,7 +347,8 @@ export type ProctoringAction =
   | { type: 'DECAY_RISK' }
   | { type: 'SET_UNSUPPORTED_BROWSER' }
   | { type: 'SET_PERMISSION_DENIED' }
-  | { type: 'UPDATE_VIOLATION_MEDIA'; id: string; snapshotUrl: string | null; clipUrl: string | null };
+  | { type: 'UPDATE_VIOLATION_MEDIA'; id: string; snapshotUrl: string | null; clipUrl: string | null }
+  | { type: 'SET_SETTINGS'; settings: ProctoringSettings };
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -356,6 +361,10 @@ export interface InterviewSession {
   results: EvaluationResult[];
   warnings: WarningEvent[];
   durationSeconds: number;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  evaluationReport?: any;
+  proctoringReport?: any;
 }
 
 export interface AdminConfig {
@@ -547,4 +556,34 @@ export interface ErrorLog {
   details?: string;
   sessionId?: string;
   candidateName?: string;
-}
+}
+
+export interface ProctoringSettings {
+  faceMissingWarningSec: number;
+  faceMissingTerminateSec: number;
+  tabSwitchWarningCount: number;
+  tabSwitchTerminateCount: number;
+  multipleFacesWarningCount: number;
+  multipleFacesTerminateCount: number;
+  cameraOffWarningSec: number;
+  cameraOffTerminateSec: number;
+  micOffWarningSec: number;
+  micOffTerminateSec: number;
+  fullscreenExitWarningCount: number;
+  fullscreenExitTerminateCount: number;
+}
+
+export const DEFAULT_PROCTORING_SETTINGS: ProctoringSettings = {
+  faceMissingWarningSec: 10,
+  faceMissingTerminateSec: 30,
+  tabSwitchWarningCount: 2,
+  tabSwitchTerminateCount: 5,
+  multipleFacesWarningCount: 1,
+  multipleFacesTerminateCount: 3,
+  cameraOffWarningSec: 10,
+  cameraOffTerminateSec: 30,
+  micOffWarningSec: 10,
+  micOffTerminateSec: 30,
+  fullscreenExitWarningCount: 1,
+  fullscreenExitTerminateCount: 3,
+};

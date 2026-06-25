@@ -5,7 +5,7 @@ import {
     Users, LogOut, Search, Shield, Edit, Plus, Save, X, Trash2, Play,
     Activity, ToggleLeft, ToggleRight, ChevronRight, Link, Copy, CheckCircle,
     Server, Database, AlertTriangle, Terminal, CheckCircle2, BookOpen, RefreshCw, FileText,
-    Download, Sliders, Upload
+    Download, Sliders, Upload, MoreVertical, LayoutDashboard, ShieldAlert, Archive, Lock
 } from 'lucide-react';
 
 import { SystemHealth } from '../services/healthService';
@@ -22,7 +22,7 @@ interface AdminDashboardProps {
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health }) => {
     // Tab state
-    const [activeTab, setActiveTab] = useState<'candidates' | 'questions' | 'system' | 'errors'>('candidates');
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'candidates' | 'questions' | 'proctoring' | 'system' | 'errors'>('dashboard');
 
     // Candidate Sessions state
     const [sessions, setSessions] = useState<InterviewSession[]>([]);
@@ -87,6 +87,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
     const [testResult, setTestResult] = useState<any | null>(null);
     const [isTesting, setIsTesting] = useState(false);
 
+    // New Dashboard / Evaluation Filters / Proctoring Settings states
+    const [filterType, setFilterType] = useState<'all' | 'top' | 'flagged' | 'completed' | 'errors' | 'archived'>('all');
+    const [dateRangeFilter, setDateRangeFilter] = useState<'all' | '24h' | '7d' | '30d'>('all');
+    const [activeDropdownId, setActiveDropdownId] = useState<string | null>(null);
+    const [proctorSettings, setProctorSettings] = useState<any>({
+      faceMissingWarningSec: 10,
+      faceMissingTerminateSec: 30,
+      tabSwitchWarningCount: 2,
+      tabSwitchTerminateCount: 5,
+      multipleFacesWarningCount: 1,
+      multipleFacesTerminateCount: 3,
+      cameraOffWarningSec: 10,
+      cameraOffTerminateSec: 30,
+      micOffWarningSec: 10,
+      micOffTerminateSec: 30,
+      fullscreenExitWarningCount: 1,
+      fullscreenExitTerminateCount: 3,
+    });
+    const [proctorMetadata, setProctorMetadata] = useState<{ updated_at: string; updated_by: string } | null>(null);
+    const [isSavingProctor, setIsSavingProctor] = useState(false);
+    const [proctorSuccessMsg, setProctorSuccessMsg] = useState<string | null>(null);
+    const [tokenStats, setTokenStats] = useState<any>({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, total_calls: 0 });
+    
+    // Modal states for delete confirmation
+    const [showConfirmModal, setShowConfirmModal] = useState<'archive' | 'delete' | 'restore' | null>(null);
+    const [sessionToConfirm, setSessionToConfirm] = useState<InterviewSession | null>(null);
+
     useEffect(() => {
         setTestAnswer('');
         setTestResult(null);
@@ -140,6 +167,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                     status: rs.session_status,
                     date: rs.session_date,
                     overallScore: rs.total_score || 0,
+                    isDeleted: rs.is_deleted || false,
                     proctoringReport: {
                         violations: rs.all_proctoring_events ? rs.all_proctoring_events.map((v: any) => ({
                             type: v.type || v.event_type,
@@ -175,6 +203,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                 });
                 setSessions(sortedSessions);
             }
+            // Load Proctoring Settings & Metadata
+            const proSettings = await SupabaseService.getSystemSettings('proctoring_settings');
+            if (proSettings) {
+                setProctorSettings(proSettings);
+            }
+            const proMeta = await SupabaseService.getSystemSettingsMetadata('proctoring_settings');
+            if (proMeta) {
+                setProctorMetadata(proMeta);
+            }
+
+            // Load Token Stats
+            const stats = await SupabaseService.getSystemUsageStats();
+            if (stats) {
+                setTokenStats(stats);
+            }
         } catch (err) {
             console.error("Failed to load sessions:", err);
             ErrorLogService.logError('system', "Failed to load interview sessions on admin dashboard", err);
@@ -192,6 +235,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
 
     // Load Questions when selectedRole changes
     useEffect(() => {
+        setQuestionsFilter('all');
         const loadQuestions = async () => {
             setIsLoading(true);
             try {
@@ -358,12 +402,104 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
         }
     };
 
-    // CSV Candidate export helper
+    const downloadReportPDF = (s: InterviewSession) => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+            alert("Pop-up blocked. Please allow pop-ups to print the report.");
+            return;
+        }
+
+        const verdictColor = s.evaluationReport?.final_verdict === 'STRONG HIRE' || s.evaluationReport?.final_verdict === 'HIRE' ? '#10B981' : 
+                             s.evaluationReport?.final_verdict === 'BORDERLINE' ? '#F59E0B' : '#EF4444';
+
+        const content = `
+            <html>
+                <head>
+                    <title>Evaluation Report - ${s.candidate.name}</title>
+                    <style>
+                        body { font-family: 'Inter', system-ui, sans-serif; color: #1E293B; line-height: 1.5; padding: 40px; background: white; }
+                        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #E2E8F0; padding-bottom: 20px; margin-bottom: 30px; }
+                        .title { font-size: 24px; font-weight: 800; color: #0F172A; }
+                        .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 30px; }
+                        .meta-item { background: #F8FAFC; padding: 15px; border-radius: 12px; border: 1px solid #F1F5F9; }
+                        .meta-label { font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748B; }
+                        .meta-val { font-size: 14px; font-weight: 600; color: #334155; margin-top: 4px; }
+                        .verdict { font-size: 18px; font-weight: 800; color: ${verdictColor}; }
+                        .section-title { font-size: 16px; font-weight: 700; color: #0F172A; margin-top: 30px; margin-bottom: 15px; border-bottom: 1px solid #E2E8F0; padding-bottom: 8px; }
+                        .q-card { background: #FFFFFF; border: 1px solid #E2E8F0; padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+                        .q-text { font-weight: 700; font-size: 14px; color: #1E293B; }
+                        .ans-text { font-size: 13px; color: #475569; background: #F8FAFC; padding: 12px; border-radius: 8px; margin-top: 10px; border-left: 4px solid #6366F1; }
+                        .feedback-text { font-size: 13px; color: #475569; margin-top: 10px; font-style: italic; }
+                        .score-badge { display: inline-block; padding: 4px 8px; background: #EEF2FF; color: #4F46E5; font-size: 12px; font-weight: 700; border-radius: 6px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <div>
+                            <div class="title">REINCREW AI EVALUATION REPORT</div>
+                            <div style="font-size: 13px; color: #64748B; margin-top: 4px;">Candidate Assessment Verification</div>
+                        </div>
+                    </div>
+
+                    <div class="meta-grid">
+                        <div class="meta-item">
+                            <div class="meta-label">Candidate Name</div>
+                            <div class="meta-val">${s.candidate.name}</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Email Address</div>
+                            <div class="meta-val">${s.candidate.email}</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Role Assessment</div>
+                            <div class="meta-val">${s.candidate.role}</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Conducted On</div>
+                            <div class="meta-val">${new Date(s.date).toLocaleString()}</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Overall Evaluation Score</div>
+                            <div class="meta-val" style="font-size: 20px; color: #4F46E5;">${Math.round(s.overallScore)}%</div>
+                        </div>
+                        <div class="meta-item">
+                            <div class="meta-label">Final Verdict Recommendation</div>
+                            <div class="meta-val verdict">${s.evaluationReport?.final_verdict || 'COMPLETED'}</div>
+                        </div>
+                    </div>
+
+                    <div class="section-title">Assessment Question & Responses</div>
+                    ${s.results && s.results.length > 0 ? s.results.map((r, i) => `
+                        <div class="q-card">
+                            <div style="display: flex; justify-content: space-between; align-items: start;">
+                                <div class="q-text">Q${i+1}: ${r.questionText}</div>
+                                <div class="score-badge">Score: ${r.contentScore}/10</div>
+                            </div>
+                            <div class="ans-text"><strong>Response:</strong> ${r.userAnswer || 'No response provided.'}</div>
+                            ${r.feedback ? `<div class="feedback-text"><strong>Evaluator Feedback:</strong> ${r.feedback}</div>` : ''}
+                        </div>
+                    `).join('') : '<p>No question transcripts recorded.</p>'}
+
+                    <script>
+                        window.onload = function() {
+                            window.print();
+                            setTimeout(() => window.close(), 500);
+                        }
+                    </script>
+                </body>
+            </html>
+        `;
+
+        printWindow.document.write(content);
+        printWindow.document.close();
+    };
+
+    // CSV Candidate export helper (restricted to currently filtered sessions!)
     const handleDownloadCSV = () => {
-        if (sessions.length === 0) return;
+        if (filteredSessions.length === 0) return;
         
         const headers = ['Candidate Name', 'Email', 'Role', 'Date', 'Status', 'Overall Score'];
-        const rows = sessions.map(s => [
+        const rows = filteredSessions.map(s => [
             s.candidate.name,
             s.candidate.email,
             s.candidate.role,
@@ -381,7 +517,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.setAttribute('href', url);
-        link.setAttribute('download', `reicrew_candidates_${new Date().toISOString().split('T')[0]}.csv`);
+        link.setAttribute('download', `reicrew_candidates_${filterType}_${new Date().toISOString().split('T')[0]}.csv`);
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
@@ -389,15 +525,61 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
     };
 
     // Filters candidate session search
-    const filteredSessions = sessions.filter(s =>
-        s.candidate.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.candidate.email?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredSessions = sessions.filter(s => {
+        // 1. Search Query
+        const query = searchTerm.toLowerCase();
+        const matchesSearch = s.candidate.name.toLowerCase().includes(query) ||
+                              (s.candidate.email && s.candidate.email.toLowerCase().includes(query));
+        if (!matchesSearch) return false;
+
+        // 2. Type Filter (Active vs Archived)
+        if (filterType === 'archived') {
+            if (!s.isDeleted) return false;
+        } else {
+            // By default, only show non-archived sessions
+            if (s.isDeleted) return false;
+
+            if (filterType === 'top') {
+                if (s.overallScore < 80) return false;
+            } else if (filterType === 'flagged') {
+                const hasViolations = s.proctoringReport?.violations?.length > 0;
+                const isTerminated = s.status === 'TERMINATED';
+                const isLowScore = s.overallScore < 70;
+                if (!hasViolations && !isTerminated && !isLowScore) return false;
+            } else if (filterType === 'completed') {
+                if (s.status !== 'COMPLETED') return false;
+            } else if (filterType === 'errors') {
+                const hasError = s.status === 'TERMINATED' || s.overallScore === 0;
+                if (!hasError) return false;
+            }
+        }
+
+        // 3. Date Range Filter
+        if (s.date) {
+            const sessionTime = new Date(s.date).getTime();
+            const now = Date.now();
+            if (dateRangeFilter === '24h') {
+                if (now - sessionTime > 24 * 60 * 60 * 1000) return false;
+            } else if (dateRangeFilter === '7d') {
+                if (now - sessionTime > 7 * 24 * 60 * 60 * 1000) return false;
+            } else if (dateRangeFilter === '30d') {
+                if (now - sessionTime > 30 * 24 * 60 * 60 * 1000) return false;
+            }
+        }
+
+        return true;
+    });
 
     // Full multi-layered filtering
     const filteredQuestions = questionsList.filter(q => {
-        // Stage filter
-        if (questionsFilter !== 'all' && q.type !== questionsFilter) return false;
+        // Stage/Section filter
+        if (questionsFilter !== 'all') {
+            if (selectedRole === 'APTITUDE') {
+                if (q.category !== questionsFilter) return false;
+            } else {
+                if (q.type !== questionsFilter) return false;
+            }
+        }
         // Search query
         if (questionSearchQuery) {
             const query = questionSearchQuery.toLowerCase();
@@ -847,6 +1029,68 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
         return questionsList.filter(q => q.type === type).length;
     };
 
+    const getInterviewsPerDayData = () => {
+        const last7Days = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            return d.toISOString().split('T')[0];
+        }).reverse();
+
+        const counts = last7Days.reduce((acc, dateStr) => {
+            acc[dateStr] = 0;
+            return acc;
+        }, {} as Record<string, number>);
+
+        sessions.forEach(s => {
+            if (s.date) {
+                const dateStr = new Date(s.date).toISOString().split('T')[0];
+                if (counts[dateStr] !== undefined) {
+                    counts[dateStr]++;
+                }
+            }
+        });
+
+        return last7Days.map(dateStr => {
+            const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const d = new Date(dateStr);
+            const label = `${monthNames[d.getMonth()]} ${d.getDate()}`;
+            return {
+                label,
+                count: counts[dateStr]
+            };
+        });
+    };
+
+    const InterviewsChart = () => {
+        const data = getInterviewsPerDayData();
+        const maxCount = Math.max(...data.map(d => d.count), 1);
+
+        return (
+            <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800 mb-6">Interviews Conducted Per Day (Last 7 Days)</h3>
+                <div className="h-64 flex items-end gap-6 pt-4 border-b border-l border-slate-200 pl-4 pb-2">
+                    {data.map((d, index) => {
+                        const heightPercent = (d.count / maxCount) * 100;
+                        return (
+                            <div key={index} className="flex-1 flex flex-col items-center gap-2 group h-full justify-end">
+                                <div className="relative w-full flex justify-center">
+                                    <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none shadow">
+                                        {d.count} {d.count === 1 ? 'interview' : 'interviews'}
+                                    </div>
+                                    <div 
+                                        style={{ height: `${Math.max(heightPercent, 4)}%` }}
+                                        className="w-12 bg-gradient-to-t from-indigo-600 to-indigo-400 rounded-t-lg transition-all duration-500 hover:from-indigo-500 hover:to-indigo-300 cursor-pointer shadow-md hover:shadow-lg shadow-indigo-500/10 hover:shadow-indigo-500/20"
+                                    />
+                                </div>
+                                <span className="text-[10px] font-semibold text-slate-500 tracking-tight mt-1">{d.label}</span>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="h-screen w-screen flex bg-[#F8FAFC] overflow-hidden font-sans text-slate-900 selection:bg-indigo-500/10">
             {/* Sidebar */}
@@ -861,10 +1105,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
 
                 <nav className="flex-1 p-4 space-y-1.5">
                     {[
+                        { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
                         { id: 'candidates', icon: FileText, label: 'Evaluation Reports' },
                         { id: 'questions', icon: BookOpen, label: 'Interview Flow Editor' },
+                        { id: 'proctoring', icon: ShieldAlert, label: 'Proctoring Settings' },
                         { id: 'system', icon: Activity, label: 'System Health' },
-                        { id: 'errors', icon: AlertTriangle, label: 'System Error Logs' }
+                        { id: 'errors', icon: AlertTriangle, label: 'Error Logs' }
                     ].map((item) => (
                         <button
                             key={item.id}
@@ -896,10 +1142,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                 <header className="h-20 bg-white border-b border-slate-200/80 px-8 flex items-center justify-between shrink-0 shadow-sm z-10">
                     <div className="flex items-center gap-3">
                         <h2 className="text-xl font-bold text-slate-800 tracking-tight">
+                            {activeTab === 'dashboard' && 'Dashboard Overview'}
                             {activeTab === 'candidates' && (selectedSession ? `Session Report: ${selectedSession.candidate.name}` : 'Evaluation Reports & History')}
                             {activeTab === 'questions' && `Questions & Flow Editor: ${selectedRole}`}
+                            {activeTab === 'proctoring' && 'Proctoring Settings'}
                             {activeTab === 'system' && 'Infrastructure & System Health'}
-                            {activeTab === 'errors' && 'Structured Error Logs'}
+                            {activeTab === 'errors' && 'Error Logs'}
                         </h2>
                     </div>
 
@@ -915,14 +1163,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
 
                 <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50">
                     
-                    {/* TAB 1: EVALUATION REPORTS / SESSION HISTORY */}
-                    {activeTab === 'candidates' && !selectedSession && (
+                    {/* TAB 0: DASHBOARD OVERVIEW */}
+                    {activeTab === 'dashboard' && (
                         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
                             {/* Summary Metrics */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                                 <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
                                     <div>
-                                        <p className="text-3xl font-black text-slate-800">{sessions.length}</p>
+                                        <p className="text-3xl font-black text-slate-800">{sessions.filter(s => !s.isDeleted).length}</p>
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Total Interviews</p>
                                     </div>
                                     <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
@@ -932,8 +1180,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                 <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
                                     <div>
                                         <p className="text-3xl font-black text-slate-800">
-                                            {sessions.length > 0 
-                                                ? `${Math.round(sessions.reduce((acc, s) => acc + s.overallScore, 0) / sessions.length)}%` 
+                                            {sessions.filter(s => !s.isDeleted && (s.status === 'TERMINATED' || s.proctoringReport?.violations?.length > 0)).length}
+                                        </p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Flagged Candidates</p>
+                                    </div>
+                                    <div className="p-3 bg-rose-50 text-rose-600 rounded-xl">
+                                        <AlertTriangle size={24} />
+                                    </div>
+                                </div>
+                                <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+                                    <div>
+                                        <p className="text-3xl font-black text-slate-800">
+                                            {sessions.filter(s => !s.isDeleted).length > 0
+                                                ? `${Math.round(sessions.filter(s => !s.isDeleted).reduce((acc, s) => acc + s.overallScore, 0) / sessions.filter(s => !s.isDeleted).length)}%`
                                                 : '0%'}
                                         </p>
                                         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Average Score</p>
@@ -944,14 +1203,83 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                 </div>
                                 <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
                                     <div>
-                                        <p className="text-3xl font-black text-slate-800">
-                                            {sessions.reduce((acc, s) => acc + (s.proctoringReport?.violations?.length || 0), 0)}
-                                        </p>
-                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Integrity Flags</p>
+                                        <p className="text-lg font-black text-emerald-600 uppercase tracking-wider">Operational</p>
+                                        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">System Status</p>
                                     </div>
-                                    <div className="p-3 bg-rose-50 text-rose-600 rounded-xl">
-                                        <AlertTriangle size={24} />
+                                    <div className="p-3 bg-teal-50 text-teal-600 rounded-xl">
+                                        <Activity size={24} />
                                     </div>
+                                </div>
+                            </div>
+
+                            {/* Chart */}
+                            <InterviewsChart />
+                        </div>
+                    )}
+
+                    {/* TAB 1: EVALUATION REPORTS / SESSION HISTORY */}
+                    {activeTab === 'candidates' && !selectedSession && (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                            {/* Dynamic Filters Bar */}
+                            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm space-y-4">
+                                <div className="flex flex-wrap items-center justify-between gap-4">
+                                    {/* Search */}
+                                    <div className="flex items-center gap-3 bg-slate-50 border border-slate-200/60 px-4 py-2.5 rounded-xl w-full sm:max-w-xs focus-within:bg-white focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/5 transition-all">
+                                        <Search size={18} className="text-slate-400 shrink-0" />
+                                        <input
+                                            placeholder="Search candidate..."
+                                            className="bg-transparent outline-none text-sm w-full text-slate-800 placeholder:text-slate-400"
+                                            value={searchTerm}
+                                            onChange={e => setSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+                                    
+                                    {/* Filter Tabs */}
+                                    <div className="flex flex-wrap gap-2">
+                                        {[
+                                            { id: 'all', label: 'All' },
+                                            { id: 'top', label: 'Top Candidates' },
+                                            { id: 'flagged', label: 'Flagged' },
+                                            { id: 'completed', label: 'Completed' },
+                                            { id: 'errors', label: 'Error Reports' },
+                                            { id: 'archived', label: 'Archived Reports' }
+                                        ].map(f => (
+                                            <button
+                                                key={f.id}
+                                                onClick={() => setFilterType(f.id as any)}
+                                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                                    filterType === f.id 
+                                                        ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/10' 
+                                                        : 'bg-slate-100 hover:bg-slate-200/80 text-slate-600'
+                                                }`}
+                                            >
+                                                {f.label}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    {/* Date Filter */}
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Date:</span>
+                                        <select
+                                            value={dateRangeFilter}
+                                            onChange={e => setDateRangeFilter(e.target.value as any)}
+                                            className="bg-slate-50 border border-slate-200/80 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 outline-none focus:border-indigo-500 transition-all cursor-pointer"
+                                        >
+                                            <option value="all">All Time</option>
+                                            <option value="24h">Last 24 Hours</option>
+                                            <option value="7d">Last 7 Days</option>
+                                            <option value="30d">Last 30 Days</option>
+                                        </select>
+                                    </div>
+
+                                    {/* Export */}
+                                    <button 
+                                        onClick={handleDownloadCSV}
+                                        className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm shrink-0 active:scale-[0.98]"
+                                    >
+                                        <Download size={14} className="shrink-0" /> EXPORT CSV
+                                    </button>
                                 </div>
                             </div>
 
@@ -996,7 +1324,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                 filteredSessions.map((s) => (
                                                     <tr key={s.id} className="hover:bg-slate-50/40 transition-colors">
                                                         <td className="px-6 py-4">
-                                                            <div className="font-semibold text-slate-800">{s.candidate.name}</div>
+                                                            <div 
+                                                                onClick={() => setSelectedSession(s)}
+                                                                className="font-semibold text-slate-800 hover:text-indigo-600 cursor-pointer transition-colors hover:underline"
+                                                                title="Click to view report"
+                                                            >
+                                                                {s.candidate.name}
+                                                            </div>
                                                             <div className="text-xs text-slate-400 mt-0.5">{s.candidate.email}</div>
                                                         </td>
                                                         <td className="px-6 py-4 text-slate-600 font-medium">
@@ -1021,13 +1355,83 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                                 {s.status}
                                                             </span>
                                                         </td>
-                                                        <td className="px-6 py-4 text-right">
-                                                            <button 
-                                                                onClick={() => setSelectedSession(s)} 
-                                                                className="px-4 py-2 border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 bg-white rounded-lg text-xs font-bold transition-all shadow-sm"
-                                                            >
-                                                                View Report
-                                                            </button>
+                                                        <td className="px-6 py-4 text-right relative">
+                                                            <div className="inline-block text-left">
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setActiveDropdownId(activeDropdownId === s.id ? null : s.id);
+                                                                    }}
+                                                                    className="p-2 border border-slate-200 hover:border-indigo-500 hover:text-indigo-600 bg-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center"
+                                                                >
+                                                                    <MoreVertical size={16} />
+                                                                </button>
+                                                                {activeDropdownId === s.id && (
+                                                                    <>
+                                                                        <div 
+                                                                            className="fixed inset-0 z-10" 
+                                                                            onClick={() => setActiveDropdownId(null)}
+                                                                        />
+                                                                        <div className="absolute right-0 mt-2 w-48 rounded-xl bg-white shadow-xl border border-slate-200 py-1.5 z-20 animate-in fade-in slide-in-from-top-2 duration-150 text-left">
+                                                                            {!s.isDeleted ? (
+                                                                                <>
+                                                                                    <button
+                                                                                        onClick={() => {
+                                                                                            setSelectedSession(s);
+                                                                                            setActiveDropdownId(null);
+                                                                                        }}
+                                                                                        className="w-full px-4 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-2"
+                                                                                    >
+                                                                                        <FileText size={14} /> View Report
+                                                                                    </button>
+                                                                                    <button
+                                                                                        onClick={() => {
+                                                                                            downloadReportPDF(s);
+                                                                                            setActiveDropdownId(null);
+                                                                                        }}
+                                                                                        className="w-full px-4 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-2"
+                                                                                    >
+                                                                                        <Download size={14} /> Download PDF
+                                                                                    </button>
+                                                                                    <button
+                                                                                        onClick={() => {
+                                                                                            setSessionToConfirm(s);
+                                                                                            setShowConfirmModal('archive');
+                                                                                            setActiveDropdownId(null);
+                                                                                        }}
+                                                                                        className="w-full px-4 py-2 text-xs font-bold text-amber-600 hover:bg-amber-50 transition-colors flex items-center gap-2 border-t border-slate-100"
+                                                                                    >
+                                                                                        <Archive size={14} /> Archive Report
+                                                                                    </button>
+                                                                                </>
+                                                                            ) : (
+                                                                                <>
+                                                                                    <button
+                                                                                        onClick={() => {
+                                                                                            setSessionToConfirm(s);
+                                                                                            setShowConfirmModal('restore');
+                                                                                            setActiveDropdownId(null);
+                                                                                        }}
+                                                                                        className="w-full px-4 py-2 text-xs font-bold text-indigo-600 hover:bg-indigo-50 transition-colors flex items-center gap-2"
+                                                                                    >
+                                                                                        <RefreshCw size={14} /> Restore Report
+                                                                                    </button>
+                                                                                    <button
+                                                                                        onClick={() => {
+                                                                                            setSessionToConfirm(s);
+                                                                                            setShowConfirmModal('delete');
+                                                                                            setActiveDropdownId(null);
+                                                                                        }}
+                                                                                        className="w-full px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors flex items-center gap-2 border-t border-slate-100"
+                                                                                    >
+                                                                                        <Trash2 size={14} /> Permanent Delete
+                                                                                    </button>
+                                                                                </>
+                                                                            )}
+                                                                        </div>
+                                                                    </>
+                                                                )}
+                                                            </div>
                                                         </td>
                                                     </tr>
                                                 ))
@@ -1146,123 +1550,222 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                     <div className="bg-white p-8 rounded-3xl border border-slate-200/80 shadow-sm space-y-6">
                                         <div className="space-y-1">
                                             <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
-                                                <Sliders size={20} className="text-indigo-500" /> Active Adaptive Interview Flow
+                                                <Sliders size={20} className="text-indigo-500" /> {selectedRole === 'APTITUDE' ? 'Active Aptitude Test Section Flow' : 'Active Adaptive Interview Flow'}
                                             </h3>
-                                            <p className="text-xs text-slate-400">Click on any stage in the path below to filter and edit its questions.</p>
+                                            <p className="text-xs text-slate-400">
+                                                {selectedRole === 'APTITUDE' 
+                                                    ? 'Click on any section in the path below to filter and edit its questions.' 
+                                                    : 'Click on any stage in the path below to filter and edit its questions.'}
+                                            </p>
                                         </div>
 
                                         <div className="flex flex-col xl:flex-row items-stretch gap-3 pt-4">
-                                            {/* Stage 1 */}
-                                            <div 
-                                                onClick={() => setQuestionsFilter('Fundamentals')}
-                                                className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
-                                                    questionsFilter === 'Fundamentals' 
-                                                        ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
-                                                        : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
-                                                }`}
-                                            >
-                                                <div>
-                                                    <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 1</span>
-                                                    <h4 className="font-bold text-sm text-slate-800 mt-1">Fundamentals</h4>
-                                                    <p className="text-[11px] text-slate-400 mt-1">Basic concepts & entry-level questions.</p>
-                                                </div>
-                                                <div className="mt-4 flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">Q1 of 5</span>
-                                                    <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Fundamentals').length} Qs</span>
-                                                </div>
-                                            </div>
+                                            {selectedRole === 'APTITUDE' ? (
+                                                <>
+                                                    {/* Section 1: Quantitative */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Quantitative')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Quantitative' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Section 1</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Quantitative</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Numerical and mathematical reasoning.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">Part 1</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.category === 'Quantitative').length} Qs</span>
+                                                        </div>
+                                                    </div>
 
-                                            {/* Arrow */}
-                                            <div className="hidden xl:flex items-center text-slate-300">→</div>
+                                                    {/* Arrow */}
+                                                    <div className="hidden xl:flex items-center text-slate-300">→</div>
 
-                                            {/* Stage 2 */}
-                                            <div 
-                                                onClick={() => setQuestionsFilter('Core')}
-                                                className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
-                                                    questionsFilter === 'Core' 
-                                                        ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
-                                                        : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
-                                                }`}
-                                            >
-                                                <div>
-                                                    <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 2</span>
-                                                    <h4 className="font-bold text-sm text-slate-800 mt-1">Core Tech (Adaptive)</h4>
-                                                    <p className="text-[11px] text-slate-400 mt-1">Core details; splits dynamically by difficulty.</p>
-                                                </div>
-                                                <div className="mt-4 flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Q2 of 5</span>
-                                                    <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Core').length} Qs</span>
-                                                </div>
-                                            </div>
+                                                    {/* Section 2: Logical */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Logical')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Logical' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Section 2</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Logical Reasoning</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Pattern recognition and logical deduction.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Part 2</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.category === 'Logical').length} Qs</span>
+                                                        </div>
+                                                    </div>
 
-                                            {/* Arrow */}
-                                            <div className="hidden xl:flex items-center text-slate-300">→</div>
+                                                    {/* Arrow */}
+                                                    <div className="hidden xl:flex items-center text-slate-300">→</div>
 
-                                            {/* Stage 3 */}
-                                            <div 
-                                                onClick={() => setQuestionsFilter('Scenario')}
-                                                className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
-                                                    questionsFilter === 'Scenario' 
-                                                        ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
-                                                        : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
-                                                }`}
-                                            >
-                                                <div>
-                                                    <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 3</span>
-                                                    <h4 className="font-bold text-sm text-slate-800 mt-1">Scenario/Case Study</h4>
-                                                    <p className="text-[11px] text-slate-400 mt-1">Practical problem solving scenario.</p>
-                                                </div>
-                                                <div className="mt-4 flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Q3 of 5</span>
-                                                    <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Scenario').length} Qs</span>
-                                                </div>
-                                            </div>
+                                                    {/* Section 3: Analytical */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Analytical')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Analytical' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Section 3</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Analytical Ability</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Data interpretation and critical thinking.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Part 3</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.category === 'Analytical').length} Qs</span>
+                                                        </div>
+                                                    </div>
 
-                                            {/* Arrow */}
-                                            <div className="hidden xl:flex items-center text-slate-300">→</div>
+                                                    {/* Arrow */}
+                                                    <div className="hidden xl:flex items-center text-slate-300">→</div>
 
-                                            {/* Stage 4 */}
-                                            <div 
-                                                onClick={() => setQuestionsFilter('Behavioral Experience')}
-                                                className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
-                                                    questionsFilter === 'Behavioral Experience' 
-                                                        ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
-                                                        : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
-                                                }`}
-                                            >
-                                                <div>
-                                                    <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 4</span>
-                                                    <h4 className="font-bold text-sm text-slate-800 mt-1">Behavioral Exp</h4>
-                                                    <p className="text-[11px] text-slate-400 mt-1">Evaluates past candidate experience.</p>
-                                                </div>
-                                                <div className="mt-4 flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Q4 of 5</span>
-                                                    <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Behavioral Experience').length} Qs</span>
-                                                </div>
-                                            </div>
+                                                    {/* Section 4: Verbal */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Verbal')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Verbal' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Section 4</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Verbal Ability</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">English language and comprehension.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Part 4</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.category === 'Verbal').length} Qs</span>
+                                                        </div>
+                                                    </div>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    {/* Stage 1 */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Fundamentals')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Fundamentals' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 1</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Fundamentals</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Basic concepts & entry-level questions.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">Q1 of 5</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Fundamentals').length} Qs</span>
+                                                        </div>
+                                                    </div>
 
-                                            {/* Arrow */}
-                                            <div className="hidden xl:flex items-center text-slate-300">→</div>
+                                                    {/* Arrow */}
+                                                    <div className="hidden xl:flex items-center text-slate-300">→</div>
 
-                                            {/* Stage 5 */}
-                                            <div 
-                                                onClick={() => setQuestionsFilter('Behavioral Situation')}
-                                                className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
-                                                    questionsFilter === 'Behavioral Situation' 
-                                                        ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
-                                                        : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
-                                                }`}
-                                            >
-                                                <div>
-                                                    <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 5</span>
-                                                    <h4 className="font-bold text-sm text-slate-800 mt-1">Behavioral Situation</h4>
-                                                    <p className="text-[11px] text-slate-400 mt-1">Evaluates scenario-based behavior.</p>
-                                                </div>
-                                                <div className="mt-4 flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Q5 of 5</span>
-                                                    <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Behavioral Situation').length} Qs</span>
-                                                </div>
-                                            </div>
+                                                    {/* Stage 2 */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Core')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Core' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 2</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Core Tech (Adaptive)</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Core details; splits dynamically by difficulty.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Q2 of 5</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Core').length} Qs</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Arrow */}
+                                                    <div className="hidden xl:flex items-center text-slate-300">→</div>
+
+                                                    {/* Stage 3 */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Scenario')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Scenario' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 3</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Scenario/Case Study</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Practical problem solving scenario.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded">Q3 of 5</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Scenario').length} Qs</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Arrow */}
+                                                    <div className="hidden xl:flex items-center text-slate-300">→</div>
+
+                                                    {/* Stage 4 */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Behavioral Experience')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Behavioral Experience' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 4</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Behavioral Exp</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Evaluates past candidate experience.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Q4 of 5</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Behavioral Experience').length} Qs</span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Arrow */}
+                                                    <div className="hidden xl:flex items-center text-slate-300">→</div>
+
+                                                    {/* Stage 5 */}
+                                                    <div 
+                                                        onClick={() => setQuestionsFilter('Behavioral Situation')}
+                                                        className={`flex-1 p-5 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                                                            questionsFilter === 'Behavioral Situation' 
+                                                                ? 'bg-indigo-50/70 border-indigo-500 shadow-md ring-2 ring-indigo-500/5' 
+                                                                : 'bg-slate-50/50 hover:bg-slate-50 border-slate-200/80'
+                                                        }`}
+                                                    >
+                                                        <div>
+                                                            <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">Stage 5</span>
+                                                            <h4 className="font-bold text-sm text-slate-800 mt-1">Behavioral Situation</h4>
+                                                            <p className="text-[11px] text-slate-400 mt-1">Evaluates scenario-based behavior.</p>
+                                                        </div>
+                                                        <div className="mt-4 flex items-center justify-between">
+                                                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Q5 of 5</span>
+                                                            <span className="text-xs font-black text-slate-500">{questionsList.filter(q => q.type === 'Behavioral Situation').length} Qs</span>
+                                                        </div>
+                                                    </div>
+                                                </>
+                                            )}
                                         </div>
 
                                         {questionsFilter !== 'all' && (
@@ -1319,7 +1822,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                 {/* Stage Type filter info indicator */}
                                                 {questionsFilter !== 'all' && (
                                                     <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 font-semibold">
-                                                        Stage: {questionsFilter}
+                                                        {selectedRole === 'APTITUDE' ? 'Section' : 'Stage'}: {questionsFilter}
                                                         <button onClick={() => setQuestionsFilter('all')} className="text-indigo-400 hover:text-indigo-700 font-black">✕</button>
                                                     </div>
                                                 )}
@@ -1346,7 +1849,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                             question: "",
                                                             difficulty: 'medium',
                                                             type: 'Fundamentals',
-                                                            category: "Quantitative",
+                                                            category: questionsFilter !== 'all' ? questionsFilter : "Quantitative",
                                                             options: ["", "", "", ""],
                                                             answer: "A",
                                                             explanation: "",
@@ -1427,7 +1930,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                             />
                                                         </th>
                                                         <th className="px-6 py-4 w-[60%]">Question</th>
-                                                        <th className="px-6 py-4 w-36">Stage</th>
+                                                        <th className="px-6 py-4 w-36">{selectedRole === 'APTITUDE' ? 'Section' : 'Stage'}</th>
                                                         <th className="px-6 py-4 w-28">Difficulty</th>
                                                         <th className="px-6 py-4 w-28 text-right">Actions</th>
                                                     </tr>
@@ -1463,7 +1966,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                                         </div>
                                                                     </td>
                                                                     <td className="px-6 py-4">
-                                                                        <span className="text-xs text-slate-600 font-medium">{q.type}</span>
+                                                                        <span className="text-xs text-slate-600 font-medium">{selectedRole === 'APTITUDE' ? q.category : q.type}</span>
                                                                     </td>
                                                                     <td className="px-6 py-4">
                                                                         <span className={`px-2 py-0.5 rounded text-[9px] font-black tracking-wider uppercase ${
@@ -1642,125 +2145,260 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                             <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
                                                 <Activity size={20} className="text-indigo-500" /> Question Bank Coverage Analytics & Balancing
                                             </h3>
-                                            <p className="text-xs text-slate-400">View overall question distribution across interview stages and difficulty skewness.</p>
+                                            <p className="text-xs text-slate-400">
+                                                {selectedRole === 'APTITUDE' 
+                                                    ? 'View overall question distribution across aptitude sections and difficulty skewness.' 
+                                                    : 'View overall question distribution across interview stages and difficulty skewness.'}
+                                            </p>
                                         </div>
 
-                                        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-                                            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                                <div className="text-2xl font-black text-slate-800">{questionsList.length}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Total Questions</div>
-                                            </div>
-                                            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                                <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Fundamentals').length}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Fundamentals</div>
-                                            </div>
-                                            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 relative group">
-                                                <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Core').length}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Core Tech</div>
-                                                <div className="text-[9px] text-slate-500 font-semibold mt-1">
-                                                    E: {questionsList.filter(q => q.type === 'Core' && q.difficulty === 'easy').length} | 
-                                                    M: {questionsList.filter(q => q.type === 'Core' && q.difficulty === 'medium').length} | 
-                                                    H: {questionsList.filter(q => q.type === 'Core' && q.difficulty === 'hard').length}
+                                        {selectedRole === 'APTITUDE' ? (
+                                            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Total Questions</div>
                                                 </div>
-                                            </div>
-                                            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                                <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Scenario').length}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Scenario / Cases</div>
-                                                <div className="text-[9px] text-slate-500 font-semibold mt-1">
-                                                    E: {questionsList.filter(q => q.type === 'Scenario' && q.difficulty === 'easy').length} | 
-                                                    M: {questionsList.filter(q => q.type === 'Scenario' && q.difficulty === 'medium').length} | 
-                                                    H: {questionsList.filter(q => q.type === 'Scenario' && q.difficulty === 'hard').length}
-                                                </div>
-                                            </div>
-                                            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                                <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Behavioral Experience').length}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Behavioral Exp</div>
-                                            </div>
-                                            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                                <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Behavioral Situation').length}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Behavioral Sit</div>
-                                            </div>
-                                        </div>
-
-                                        {/* Auto balance trigger alerts for both Core and Scenario stage difficulty metrics */}
-                                        {['Core', 'Scenario'].map(stage => {
-                                            const easy = questionsList.filter(q => q.type === stage && q.difficulty === 'easy').length;
-                                            const medium = questionsList.filter(q => q.type === stage && q.difficulty === 'medium').length;
-                                            const hard = questionsList.filter(q => q.type === stage && q.difficulty === 'hard').length;
-                                            
-                                            const min = Math.min(easy, medium, hard);
-                                            const max = Math.max(easy, medium, hard);
-                                            const isImbalanced = min < 5 || (max - min) > 3;
-
-                                            return (
-                                                <div key={stage} className={`p-5 rounded-2xl border ${isImbalanced ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200/60'} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}>
-                                                    <div className="space-y-1">
-                                                        <h4 className="text-sm font-bold text-slate-800">{stage} Stage Distribution</h4>
-                                                        <p className="text-xs text-slate-500">Current: Easy: <span className="font-semibold text-slate-700">{easy}</span> | Medium: <span className="font-semibold text-slate-700">{medium}</span> | Hard: <span className="font-semibold text-slate-700">{hard}</span></p>
-                                                        {isImbalanced ? (
-                                                            <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1"><AlertTriangle size={13} /> Imbalanced (recommended 10/10/10 split for robust adaptive testing).</p>
-                                                        ) : (
-                                                            <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1"><CheckCircle2 size={13} /> Well balanced difficulty distribution.</p>
-                                                        )}
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 relative group">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.category === 'Quantitative').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Quantitative</div>
+                                                    <div className="text-[9px] text-slate-500 font-semibold mt-1">
+                                                        E: {questionsList.filter(q => q.category === 'Quantitative' && q.difficulty === 'easy').length} | 
+                                                        M: {questionsList.filter(q => q.category === 'Quantitative' && q.difficulty === 'medium').length} | 
+                                                        H: {questionsList.filter(q => q.category === 'Quantitative' && q.difficulty === 'hard').length}
                                                     </div>
-                                                    {isImbalanced && (
-                                                        <button 
-                                                            onClick={() => {
-                                                                const stageQs = questionsList.filter(q => q.type === stage);
-                                                                const target = Math.round(stageQs.length / 3);
-                                                                const counts = {
-                                                                    easy: { count: easy, list: stageQs.filter(q => q.difficulty === 'easy') },
-                                                                    medium: { count: medium, list: stageQs.filter(q => q.difficulty === 'medium') },
-                                                                    hard: { count: hard, list: stageQs.filter(q => q.difficulty === 'hard') }
-                                                                };
-                                                                
-                                                                const targetDiffs = { easy: target, medium: target, hard: target };
-                                                                const diffSum = target * 3;
-                                                                if (diffSum < stageQs.length) {
-                                                                    targetDiffs.medium += (stageQs.length - diffSum);
-                                                                } else if (diffSum > stageQs.length) {
-                                                                    targetDiffs.easy -= (diffSum - stageQs.length);
-                                                                }
-
-                                                                const keys = ['easy', 'medium', 'hard'] as const;
-                                                                const suggestionsList: typeof balanceSuggestions = [];
-                                                                
-                                                                let iters = 0;
-                                                                while (iters < 50) {
-                                                                    const underKey = keys.find(k => counts[k].count < targetDiffs[k]);
-                                                                    const overKey = keys.find(k => counts[k].count > targetDiffs[k]);
-                                                                    if (!underKey || !overKey) break;
-
-                                                                    const qToShift = counts[overKey].list.pop();
-                                                                    if (qToShift) {
-                                                                        suggestionsList.push({
-                                                                            id: qToShift.id,
-                                                                            text: qToShift.question,
-                                                                            current: overKey,
-                                                                            suggested: underKey
-                                                                        });
-                                                                        counts[overKey].count--;
-                                                                        counts[underKey].count++;
-                                                                    }
-                                                                    iters++;
-                                                                }
-
-                                                                if (suggestionsList.length > 0) {
-                                                                    setBalanceSuggestions(suggestionsList);
-                                                                    setQuestionsFilter(stage); // Set filter to match suggestion stage context
-                                                                    setBalanceModalOpen(true);
-                                                                } else {
-                                                                    alert("Could not generate balancing suggestions automatically. Please edit difficulties manually.");
-                                                                }
-                                                            }}
-                                                            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black tracking-wider uppercase transition-all shadow-sm shrink-0 active:scale-[0.98]"
-                                                        >
-                                                            Suggest Auto-Balance
-                                                        </button>
-                                                    )}
                                                 </div>
-                                            );
-                                        })}
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 relative group">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.category === 'Logical').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Logical</div>
+                                                    <div className="text-[9px] text-slate-500 font-semibold mt-1">
+                                                        E: {questionsList.filter(q => q.category === 'Logical' && q.difficulty === 'easy').length} | 
+                                                        M: {questionsList.filter(q => q.category === 'Logical' && q.difficulty === 'medium').length} | 
+                                                        H: {questionsList.filter(q => q.category === 'Logical' && q.difficulty === 'hard').length}
+                                                    </div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 relative group">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.category === 'Analytical').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Analytical</div>
+                                                    <div className="text-[9px] text-slate-500 font-semibold mt-1">
+                                                        E: {questionsList.filter(q => q.category === 'Analytical' && q.difficulty === 'easy').length} | 
+                                                        M: {questionsList.filter(q => q.category === 'Analytical' && q.difficulty === 'medium').length} | 
+                                                        H: {questionsList.filter(q => q.category === 'Analytical' && q.difficulty === 'hard').length}
+                                                    </div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 relative group">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.category === 'Verbal').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Verbal</div>
+                                                    <div className="text-[9px] text-slate-500 font-semibold mt-1">
+                                                        E: {questionsList.filter(q => q.category === 'Verbal' && q.difficulty === 'easy').length} | 
+                                                        M: {questionsList.filter(q => q.category === 'Verbal' && q.difficulty === 'medium').length} | 
+                                                        H: {questionsList.filter(q => q.category === 'Verbal' && q.difficulty === 'hard').length}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Total Questions</div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Fundamentals').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Fundamentals</div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 relative group">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Core').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Core Tech</div>
+                                                    <div className="text-[9px] text-slate-500 font-semibold mt-1">
+                                                        E: {questionsList.filter(q => q.type === 'Core' && q.difficulty === 'easy').length} | 
+                                                        M: {questionsList.filter(q => q.type === 'Core' && q.difficulty === 'medium').length} | 
+                                                        H: {questionsList.filter(q => q.type === 'Core' && q.difficulty === 'hard').length}
+                                                    </div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Scenario').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Scenario / Cases</div>
+                                                    <div className="text-[9px] text-slate-500 font-semibold mt-1">
+                                                        E: {questionsList.filter(q => q.type === 'Scenario' && q.difficulty === 'easy').length} | 
+                                                        M: {questionsList.filter(q => q.type === 'Scenario' && q.difficulty === 'medium').length} | 
+                                                        H: {questionsList.filter(q => q.type === 'Scenario' && q.difficulty === 'hard').length}
+                                                    </div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Behavioral Experience').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Behavioral Exp</div>
+                                                </div>
+                                                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                                    <div className="text-2xl font-black text-slate-800">{questionsList.filter(q => q.type === 'Behavioral Situation').length}</div>
+                                                    <div className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Behavioral Sit</div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {selectedRole === 'APTITUDE' ? (
+                                            <>
+                                                {/* Auto balance trigger alerts for all Aptitude sections */}
+                                                {['Quantitative', 'Logical', 'Analytical', 'Verbal'].map(sec => {
+                                                    const easy = questionsList.filter(q => q.category === sec && q.difficulty === 'easy').length;
+                                                    const medium = questionsList.filter(q => q.category === sec && q.difficulty === 'medium').length;
+                                                    const hard = questionsList.filter(q => q.category === sec && q.difficulty === 'hard').length;
+                                                    
+                                                    const min = Math.min(easy, medium, hard);
+                                                    const max = Math.max(easy, medium, hard);
+                                                    const isImbalanced = min < 3 || (max - min) > 4;
+
+                                                    return (
+                                                        <div key={sec} className={`p-5 rounded-2xl border ${isImbalanced ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200/60'} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}>
+                                                            <div className="space-y-1">
+                                                                <h4 className="text-sm font-bold text-slate-800">{sec} Section Distribution</h4>
+                                                                <p className="text-xs text-slate-500">Current: Easy: <span className="font-semibold text-slate-700">{easy}</span> | Medium: <span className="font-semibold text-slate-700">{medium}</span> | Hard: <span className="font-semibold text-slate-700">{hard}</span></p>
+                                                                {isImbalanced ? (
+                                                                    <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1"><AlertTriangle size={13} /> Imbalanced (recommended at least 3-5 questions per difficulty).</p>
+                                                                ) : (
+                                                                    <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1"><CheckCircle2 size={13} /> Well balanced difficulty distribution.</p>
+                                                                )}
+                                                            </div>
+                                                            {isImbalanced && (
+                                                                <button 
+                                                                    onClick={() => {
+                                                                        const secQs = questionsList.filter(q => q.category === sec);
+                                                                        const target = Math.round(secQs.length / 3);
+                                                                        const counts = {
+                                                                            easy: { count: easy, list: secQs.filter(q => q.difficulty === 'easy') },
+                                                                            medium: { count: medium, list: secQs.filter(q => q.difficulty === 'medium') },
+                                                                            hard: { count: hard, list: secQs.filter(q => q.difficulty === 'hard') }
+                                                                        };
+                                                                        
+                                                                        const targetDiffs = { easy: target, medium: target, hard: target };
+                                                                        const diffSum = target * 3;
+                                                                        if (diffSum < secQs.length) {
+                                                                            targetDiffs.medium += (secQs.length - diffSum);
+                                                                        } else if (diffSum > secQs.length) {
+                                                                            targetDiffs.easy -= (diffSum - secQs.length);
+                                                                        }
+
+                                                                        const keys = ['easy', 'medium', 'hard'] as const;
+                                                                        const suggestionsList: typeof balanceSuggestions = [];
+                                                                        
+                                                                        let iters = 0;
+                                                                        while (iters < 50) {
+                                                                            const underKey = keys.find(k => counts[k].count < targetDiffs[k]);
+                                                                            const overKey = keys.find(k => counts[k].count > targetDiffs[k]);
+                                                                            if (!underKey || !overKey) break;
+
+                                                                            const qToShift = counts[overKey].list.pop();
+                                                                            if (qToShift) {
+                                                                                suggestionsList.push({
+                                                                                    id: qToShift.id,
+                                                                                    text: qToShift.question,
+                                                                                    current: overKey,
+                                                                                    suggested: underKey
+                                                                                });
+                                                                                counts[overKey].count--;
+                                                                                counts[underKey].count++;
+                                                                            }
+                                                                            iters++;
+                                                                        }
+
+                                                                        if (suggestionsList.length > 0) {
+                                                                            setBalanceSuggestions(suggestionsList);
+                                                                            setQuestionsFilter(sec); // Set filter to match suggestion category context
+                                                                            setBalanceModalOpen(true);
+                                                                        } else {
+                                                                            alert("Could not generate balancing suggestions automatically. Please edit difficulties manually.");
+                                                                        }
+                                                                    }}
+                                                                    className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black tracking-wider uppercase transition-all shadow-sm shrink-0 active:scale-[0.98]"
+                                                                >
+                                                                    Suggest Auto-Balance
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </>
+                                        ) : (
+                                            <>
+                                                {/* Auto balance trigger alerts for both Core and Scenario stage difficulty metrics */}
+                                                {['Core', 'Scenario'].map(stage => {
+                                                    const easy = questionsList.filter(q => q.type === stage && q.difficulty === 'easy').length;
+                                                    const medium = questionsList.filter(q => q.type === stage && q.difficulty === 'medium').length;
+                                                    const hard = questionsList.filter(q => q.type === stage && q.difficulty === 'hard').length;
+                                                    
+                                                    const min = Math.min(easy, medium, hard);
+                                                    const max = Math.max(easy, medium, hard);
+                                                    const isImbalanced = min < 5 || (max - min) > 3;
+
+                                                    return (
+                                                        <div key={stage} className={`p-5 rounded-2xl border ${isImbalanced ? 'bg-amber-50/50 border-amber-200' : 'bg-slate-50/50 border-slate-200/60'} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4`}>
+                                                            <div className="space-y-1">
+                                                                <h4 className="text-sm font-bold text-slate-800">{stage} Stage Distribution</h4>
+                                                                <p className="text-xs text-slate-500">Current: Easy: <span className="font-semibold text-slate-700">{easy}</span> | Medium: <span className="font-semibold text-slate-700">{medium}</span> | Hard: <span className="font-semibold text-slate-700">{hard}</span></p>
+                                                                {isImbalanced ? (
+                                                                    <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1"><AlertTriangle size={13} /> Imbalanced (recommended 10/10/10 split for robust adaptive testing).</p>
+                                                                ) : (
+                                                                    <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1"><CheckCircle2 size={13} /> Well balanced difficulty distribution.</p>
+                                                                )}
+                                                            </div>
+                                                            {isImbalanced && (
+                                                                <button 
+                                                                    onClick={() => {
+                                                                        const stageQs = questionsList.filter(q => q.type === stage);
+                                                                        const target = Math.round(stageQs.length / 3);
+                                                                        const counts = {
+                                                                            easy: { count: easy, list: stageQs.filter(q => q.difficulty === 'easy') },
+                                                                            medium: { count: medium, list: stageQs.filter(q => q.difficulty === 'medium') },
+                                                                            hard: { count: hard, list: stageQs.filter(q => q.difficulty === 'hard') }
+                                                                        };
+                                                                        
+                                                                        const targetDiffs = { easy: target, medium: target, hard: target };
+                                                                        const diffSum = target * 3;
+                                                                        if (diffSum < stageQs.length) {
+                                                                            targetDiffs.medium += (stageQs.length - diffSum);
+                                                                        } else if (diffSum > stageQs.length) {
+                                                                            targetDiffs.easy -= (diffSum - stageQs.length);
+                                                                        }
+
+                                                                        const keys = ['easy', 'medium', 'hard'] as const;
+                                                                        const suggestionsList: typeof balanceSuggestions = [];
+                                                                        
+                                                                        let iters = 0;
+                                                                        while (iters < 50) {
+                                                                            const underKey = keys.find(k => counts[k].count < targetDiffs[k]);
+                                                                            const overKey = keys.find(k => counts[k].count > targetDiffs[k]);
+                                                                            if (!underKey || !overKey) break;
+
+                                                                            const qToShift = counts[overKey].list.pop();
+                                                                            if (qToShift) {
+                                                                                suggestionsList.push({
+                                                                                    id: qToShift.id,
+                                                                                    text: qToShift.question,
+                                                                                    current: overKey,
+                                                                                    suggested: underKey
+                                                                                });
+                                                                                counts[overKey].count--;
+                                                                                counts[underKey].count++;
+                                                                            }
+                                                                            iters++;
+                                                                        }
+
+                                                                        if (suggestionsList.length > 0) {
+                                                                            setBalanceSuggestions(suggestionsList);
+                                                                            setQuestionsFilter(stage); // Set filter to match suggestion stage context
+                                                                            setBalanceModalOpen(true);
+                                                                        } else {
+                                                                            alert("Could not generate balancing suggestions automatically. Please edit difficulties manually.");
+                                                                        }
+                                                                    }}
+                                                                    className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black tracking-wider uppercase transition-all shadow-sm shrink-0 active:scale-[0.98]"
+                                                                >
+                                                                    Suggest Auto-Balance
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             )}
@@ -1779,8 +2417,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                         </div>
                                         
                                         <p className="text-xs text-slate-500">
-                                            The following shifts are suggested to reach target balance of approximately equal distribution in Stage {questionsFilter} (Recommended: 10 Easy, 10 Medium, 10 Hard). Select the ones you approve.
-                                        </p>
+                                             The following shifts are suggested to reach target balance of approximately equal distribution in {selectedRole === 'APTITUDE' ? `Section ${questionsFilter}` : `Stage ${questionsFilter}`} (Recommended: equal split of Easy, Medium, Hard). Select the ones you approve.
+                                         </p>
 
                                         <div className="space-y-3 flex-1 overflow-y-auto max-h-[40vh] pr-2">
                                             {balanceSuggestions.map(sugg => (
@@ -2406,13 +3044,304 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                         </div>
                     )}
 
+                    {/* TAB: PROCTORING SETTINGS */}
+                    {activeTab === 'proctoring' && (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300 pb-20">
+                            <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
+                                <div className="space-y-1">
+                                    <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                                        <ShieldAlert className="text-indigo-500" size={22} /> Proctoring Settings & Violations Thresholds
+                                    </h3>
+                                    <p className="text-xs text-slate-400">Configure real-time warning and automatic termination rules for candidates.</p>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={async () => {
+                                            if (window.confirm("Reset proctoring thresholds to standard defaults?")) {
+                                                const { DEFAULT_PROCTORING_SETTINGS } = await import('../types');
+                                                setProctorSettings(DEFAULT_PROCTORING_SETTINGS);
+                                            }
+                                        }}
+                                        className="px-4 py-2 border border-slate-200 hover:border-slate-350 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl transition-all shadow-sm"
+                                    >
+                                        Reset to Defaults
+                                    </button>
+                                    <button
+                                        onClick={async () => {
+                                            setIsSavingProctor(true);
+                                            setProctorSuccessMsg(null);
+                                            const ok = await SupabaseService.saveSystemSettings('proctoring_settings', proctorSettings, 'Super Admin');
+                                            if (ok) {
+                                                setProctorSuccessMsg("Proctoring configuration updated successfully!");
+                                                const proMeta = await SupabaseService.getSystemSettingsMetadata('proctoring_settings');
+                                                if (proMeta) setProctorMetadata(proMeta);
+                                                setTimeout(() => setProctorSuccessMsg(null), 4000);
+                                            } else {
+                                                alert("Failed to save settings. Please verify database connection.");
+                                            }
+                                            setIsSavingProctor(false);
+                                        }}
+                                        disabled={isSavingProctor}
+                                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white rounded-xl text-xs font-black transition-all shadow-md active:scale-[0.98]"
+                                    >
+                                        {isSavingProctor ? "Saving..." : "Save Configuration"}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {proctorSuccessMsg && (
+                                <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 px-5 py-3 rounded-xl text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-250">
+                                    ✓ {proctorSuccessMsg}
+                                </div>
+                            )}
+
+                            {/* Badge/Metadata Card */}
+                            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 rounded-2xl text-white flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-indigo-900/40 shadow-md">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-indigo-500/20 rounded-xl flex items-center justify-center border border-indigo-500/35">
+                                        <CheckCircle2 size={20} className="text-indigo-400" />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">Current Active Configuration</h4>
+                                        <p className="text-[11px] text-slate-400 mt-0.5">Enforced globally across all active candidate interviews</p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-4 md:gap-8 text-xs font-medium">
+                                    <div>
+                                        <span className="text-slate-400 block text-[9px] uppercase tracking-widest font-bold">Last Updated</span>
+                                        <span className="text-slate-200 font-mono mt-0.5 block">
+                                            {proctorMetadata ? (() => {
+                                                const date = new Date(proctorMetadata.updated_at);
+                                                const day = date.getDate();
+                                                const months = ["June", "July", "August", "September", "October", "November", "December", "January", "February", "March", "April", "May"]; // simple lookup map or system locale
+                                                const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+                                                const month = monthNames[date.getMonth()];
+                                                const year = date.getFullYear();
+                                                let hours = date.getHours();
+                                                const minutes = String(date.getMinutes()).padStart(2, '0');
+                                                const ampm = hours >= 12 ? 'PM' : 'AM';
+                                                hours = hours % 12;
+                                                hours = hours ? hours : 12;
+                                                return `${day} ${month} ${year} ${hours}:${minutes} ${ampm}`;
+                                            })() : '25 June 2026 12:45 PM'}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-slate-400 block text-[9px] uppercase tracking-widest font-bold">Admin</span>
+                                        <span className="text-slate-200 mt-0.5 block">{proctorMetadata?.updated_by || 'Super Admin'}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Face Missing Rules */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+                                    <h4 className="font-bold text-slate-800 text-sm border-b border-slate-100 pb-3 flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500" /> Face Detection
+                                    </h4>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Warning Duration Threshold</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.faceMissingWarningSec} seconds</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="3" max="30" step="1"
+                                                value={proctorSettings.faceMissingWarningSec}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, faceMissingWarningSec: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Termination Duration Threshold</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.faceMissingTerminateSec} seconds</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="10" max="120" step="5"
+                                                value={proctorSettings.faceMissingTerminateSec}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, faceMissingTerminateSec: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Tab Switches Rules */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+                                    <h4 className="font-bold text-slate-800 text-sm border-b border-slate-100 pb-3 flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500" /> Tab Switches
+                                    </h4>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Warning Count Limit</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.tabSwitchWarningCount} switches</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="1" max="5" step="1"
+                                                value={proctorSettings.tabSwitchWarningCount}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, tabSwitchWarningCount: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Termination Count Limit</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.tabSwitchTerminateCount} switches</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="2" max="10" step="1"
+                                                value={proctorSettings.tabSwitchTerminateCount}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, tabSwitchTerminateCount: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Fullscreen Exit Rules */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+                                    <h4 className="font-bold text-slate-800 text-sm border-b border-slate-100 pb-3 flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500" /> Fullscreen Exit (Aptitude Assessment)
+                                    </h4>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Warning Count Limit</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.fullscreenExitWarningCount} exits</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="0" max="3" step="1"
+                                                value={proctorSettings.fullscreenExitWarningCount}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, fullscreenExitWarningCount: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Termination Count Limit</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.fullscreenExitTerminateCount} exits</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="1" max="5" step="1"
+                                                value={proctorSettings.fullscreenExitTerminateCount}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, fullscreenExitTerminateCount: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Multiple Faces Rules */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+                                    <h4 className="font-bold text-slate-800 text-sm border-b border-slate-100 pb-3 flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500" /> Multiple Faces Detection
+                                    </h4>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Warning Count Limit</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.multipleFacesWarningCount} detections</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="1" max="5" step="1"
+                                                value={proctorSettings.multipleFacesWarningCount}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, multipleFacesWarningCount: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Termination Count Limit</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.multipleFacesTerminateCount} detections</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="1" max="10" step="1"
+                                                value={proctorSettings.multipleFacesTerminateCount}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, multipleFacesTerminateCount: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Camera Off Rules */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+                                    <h4 className="font-bold text-slate-800 text-sm border-b border-slate-100 pb-3 flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500" /> Camera Disconnection
+                                    </h4>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Warning Duration Threshold</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.cameraOffWarningSec} seconds</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="3" max="30" step="1"
+                                                value={proctorSettings.cameraOffWarningSec}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, cameraOffWarningSec: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Termination Duration Threshold</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.cameraOffTerminateSec} seconds</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="10" max="120" step="5"
+                                                value={proctorSettings.cameraOffTerminateSec}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, cameraOffTerminateSec: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Mic Off Rules */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-5">
+                                    <h4 className="font-bold text-slate-800 text-sm border-b border-slate-100 pb-3 flex items-center gap-2">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500" /> Microphone Disconnection
+                                    </h4>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Warning Duration Threshold</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.micOffWarningSec} seconds</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="3" max="30" step="1"
+                                                value={proctorSettings.micOffWarningSec}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, micOffWarningSec: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="font-semibold text-slate-650">Termination Duration Threshold</span>
+                                                <span className="font-bold text-indigo-600">{proctorSettings.micOffTerminateSec} seconds</span>
+                                            </div>
+                                            <input 
+                                                type="range" min="10" max="120" step="5"
+                                                value={proctorSettings.micOffTerminateSec}
+                                                onChange={e => setProctorSettings({ ...proctorSettings, micOffTerminateSec: parseInt(e.target.value) })}
+                                                className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-650"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* TAB 3: SYSTEM HEALTH */}
                     {activeTab === 'system' && (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300 pb-20">
                             <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-200/80 shadow-sm">
                                 <div className="space-y-1">
                                     <h3 className="font-bold text-slate-800 text-lg">System Verification Panel</h3>
-                                    <p className="text-xs text-slate-400">Live operational status of services.</p>
+                                    <p className="text-xs text-slate-400">Live operational status of API tokens and database services.</p>
                                 </div>
                                 {health && (
                                     <div className="text-xs text-slate-500 flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-lg font-mono">
@@ -2421,7 +3350,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                 )}
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 {/* Core Services check */}
                                 <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-6">
                                     <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2 pb-3 border-b border-slate-100">
@@ -2448,12 +3377,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                             {health?.storage ? (
                                                 <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 border border-emerald-200/50 px-2.5 py-1 rounded-full uppercase tracking-wider">CONNECTED</span>
                                             ) : (
-                                                <span className="text-[10px] font-black text-red-600 bg-red-50 border border-red-200/50 px-2.5 py-1 rounded-full uppercase tracking-wider">DISCONNECTED</span>
+                                                <span className="text-[10px] font-black text-red-600 bg-red-50 border border-red-200/50 px-2.5 py-1 rounded-full uppercase tracking-wider">MISSING</span>
                                             )}
                                         </div>
                                         <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200/40">
                                             <div className="flex items-center gap-3">
-                                                <Terminal size={18} className="text-slate-400 shrink-0" />
+                                                <Lock size={18} className="text-slate-400 shrink-0" />
                                                 <span className="font-semibold text-xs text-slate-700">Authentication Service</span>
                                             </div>
                                             {health?.auth ? (
@@ -2486,6 +3415,63 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                 {new Set(sessions.map(s => s.candidate.email)).size} candidates
                                             </span>
                                         </div>
+                                    </div>
+                                </div>
+
+                                {/* OpenRouter Token Tracker */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-6">
+                                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2 pb-3 border-b border-slate-100">
+                                        <Terminal className="text-indigo-500 shrink-0" size={18} /> OpenRouter Token Tracker
+                                    </h3>
+                                    
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/40">
+                                            <span className="text-[10px] font-bold text-slate-400 block">Total Tokens Consumed</span>
+                                            <span className="text-slate-800 font-black text-lg font-mono block mt-1">{(tokenStats.total_tokens || 0).toLocaleString()}</span>
+                                        </div>
+                                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/40">
+                                            <span className="text-[10px] font-bold text-slate-400 block">Total LLM Calls</span>
+                                            <span className="text-slate-800 font-black text-lg font-mono block mt-1">{tokenStats.total_calls || 0} calls</span>
+                                        </div>
+                                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/40">
+                                            <span className="text-[10px] font-bold text-slate-400 block font-semibold">Prompt / Completion Ratio</span>
+                                            <span className="text-slate-850 font-bold text-xs mt-1 block">
+                                                P: {(tokenStats.prompt_tokens || 0).toLocaleString()} <br/>
+                                                C: {(tokenStats.completion_tokens || 0).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/40">
+                                            <span className="text-[10px] font-bold text-slate-400 block">Average Tokens / Session</span>
+                                            <span className="text-slate-800 font-black text-lg font-mono block mt-1">
+                                                {sessions.filter(s => !s.isDeleted && s.status === 'COMPLETED').length > 0 
+                                                    ? Math.round((tokenStats.total_tokens || 0) / sessions.filter(s => !s.isDeleted && s.status === 'COMPLETED').length).toLocaleString()
+                                                    : (tokenStats.total_tokens || 0).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Speech STT Capability Check */}
+                                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-sm p-6 space-y-6">
+                                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2 pb-3 border-b border-slate-100">
+                                        <Activity className="text-indigo-500 shrink-0" size={18} /> Browser Speech STT Capability
+                                    </h3>
+                                    
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-200/40">
+                                            <div className="flex items-center gap-3">
+                                                <Activity size={18} className="text-slate-400 shrink-0" />
+                                                <span className="font-semibold text-xs text-slate-700">Web Speech API Support</span>
+                                            </div>
+                                            {('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) ? (
+                                                <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 border border-emerald-200/50 px-2.5 py-1 rounded-full uppercase tracking-wider">COMPATIBLE</span>
+                                            ) : (
+                                                <span className="text-[10px] font-black text-red-600 bg-red-50 border border-red-200/50 px-2.5 py-1 rounded-full uppercase tracking-wider">UNSUPPORTED</span>
+                                            )}
+                                        </div>
+                                        <p className="text-[11px] text-slate-400 leading-normal pl-1">
+                                            The platform utilizes the native browser Web Speech API for high-speed, zero-latency speech-to-text transcriptions during voice-interviews. Ensure Google Chrome, Microsoft Edge or Safari is used.
+                                        </p>
                                     </div>
                                 </div>
                             </div>
@@ -2617,6 +3603,68 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                     )}
                 </div>
             </main>
+
+            {/* Confirmation Modals */}
+            {showConfirmModal && sessionToConfirm && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-200 p-6 animate-in zoom-in-95 duration-200 text-left">
+                        <div className="flex items-center gap-4 text-slate-800">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                                showConfirmModal === 'delete' ? 'bg-red-105 text-red-600' : 'bg-amber-100 text-amber-600'
+                            }`}>
+                                {showConfirmModal === 'delete' ? <Trash2 size={24} /> : <AlertTriangle size={24} />}
+                            </div>
+                            <div>
+                                <h3 className="font-extrabold text-base">
+                                    {showConfirmModal === 'archive' && 'Archive Report'}
+                                    {showConfirmModal === 'restore' && 'Restore Report'}
+                                    {showConfirmModal === 'delete' && 'Permanent Delete'}
+                                </h3>
+                                <p className="text-slate-500 text-xs mt-0.5">{sessionToConfirm.candidate.name}</p>
+                            </div>
+                        </div>
+                        
+                        <p className="text-xs text-slate-500 mt-4 leading-relaxed">
+                            {showConfirmModal === 'archive' && 'Are you sure you want to archive this report? It will be moved to the Archived Reports filter.'}
+                            {showConfirmModal === 'restore' && 'Are you sure you want to restore this report back to the active dashboard?'}
+                            {showConfirmModal === 'delete' && 'Warning: This action is permanent and cannot be undone. All candidate responses, transcripts, and evaluation metrics will be deleted forever.'}
+                        </p>
+                        
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button
+                                onClick={() => {
+                                    setShowConfirmModal(null);
+                                    setSessionToConfirm(null);
+                                }}
+                                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    if (showConfirmModal === 'archive') {
+                                        await SupabaseService.softDeleteSession(sessionToConfirm.id);
+                                    } else if (showConfirmModal === 'restore') {
+                                        await SupabaseService.restoreSession(sessionToConfirm.id);
+                                    } else if (showConfirmModal === 'delete') {
+                                        await SupabaseService.hardDeleteSession(sessionToConfirm.id);
+                                    }
+                                    setShowConfirmModal(null);
+                                    setSessionToConfirm(null);
+                                    loadSessionsAndErrors();
+                                }}
+                                className={`px-5 py-2.5 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-[0.98] ${
+                                    showConfirmModal === 'delete' ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                                }`}
+                            >
+                                {showConfirmModal === 'archive' && 'Archive'}
+                                {showConfirmModal === 'restore' && 'Restore'}
+                                {showConfirmModal === 'delete' && 'Delete Forever'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

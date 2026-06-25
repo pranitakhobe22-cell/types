@@ -6,7 +6,8 @@ import { CameraMonitor } from './CameraMonitor';
 import { SupabaseService } from '../services/supabaseService';
 import { 
   ProctoringReport, ProctoringState, ProctoringAction, 
-  Question, TimelineEvent, ProctorViolation, RawDetectionFrame, HeartbeatMetrics
+  Question, TimelineEvent, ProctorViolation, RawDetectionFrame, HeartbeatMetrics,
+  DEFAULT_PROCTORING_SETTINGS
 } from '../types';
 import { ErrorLogService } from '../services/errorLogService';
 
@@ -40,12 +41,14 @@ const createInitialState = (): ProctoringState => ({
   violationScore: 0,
   integrityScore: 100,
   totalGazeAwayDurationMs: 0,
-  lastViolationTime: 0
+  lastViolationTime: 0,
+  settings: DEFAULT_PROCTORING_SETTINGS
 });
 
 const proctoringReducer = (state: ProctoringState, action: ProctoringAction): ProctoringState => {
   const now = Date.now();
   switch (action.type) {
+    case 'SET_SETTINGS': return { ...state, settings: action.settings };
     case 'SET_UNSUPPORTED_BROWSER': return { ...state, engineState: 'UNSUPPORTED_BROWSER' };
     case 'SET_PERMISSION_DENIED': return { ...state, engineState: 'PERMISSION_DENIED' };
     case 'ENGINE_READY': return { ...state, engineState: 'READY', monitoringStartTime: state.monitoringStartTime || now };
@@ -276,6 +279,24 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
   const totalTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isTerminatedRef = useRef<boolean>(false);
 
+  // Load proctoring settings once on mount
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const settings = await SupabaseService.getSystemSettings('proctoring_settings');
+        if (settings) {
+          console.log("[AptitudeTest] Loaded system proctoring settings:", settings);
+          dispatch({ type: 'SET_SETTINGS', settings });
+        } else {
+          console.log("[AptitudeTest] No system proctoring settings found. Using client defaults.");
+        }
+      } catch (err) {
+        console.error("[AptitudeTest] Failed to load proctoring settings:", err);
+      }
+    };
+    fetchSettings();
+  }, []);
+
   // 1. Initialize assessment questions, session recovery
   useEffect(() => {
     const recoveryKey = `reicrew_mcq_recovery_${sessionIdRef.current}`;
@@ -421,16 +442,40 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
 
   // 6. Terminate interview on extreme proctoring violations
   useEffect(() => {
-    if (proctoring.violationScore >= 15 && !isTerminatedRef.current && hasStarted) {
+    if (!hasStarted || isTerminatedRef.current) return;
+    const settings = proctoring.settings || DEFAULT_PROCTORING_SETTINGS;
+
+    const tabSwitchCount = proctoring.violations.filter(v => v.type === 'TAB_HIDDEN').length;
+    const fullscreenExitCount = proctoring.violations.filter(v => v.type === 'FULLSCREEN_EXIT').length;
+
+    // --- TERMINATION CHECKS ---
+    if (tabSwitchCount >= settings.tabSwitchTerminateCount) {
       isTerminatedRef.current = true;
-      setToastWarning({ message: "Test Terminated: Multiple integrity violations detected.", type: 'danger' });
+      setToastWarning({ message: `Test Terminated: Too many tab switches (${tabSwitchCount}/${settings.tabSwitchTerminateCount}).`, type: 'danger' });
       submitAndComplete(true);
-    } else if (proctoring.violationScore >= 10 && proctoring.violationScore < 15 && hasStarted) {
-      setToastWarning({ message: `Severe Warning: Integrity violations detected. Score: ${proctoring.violationScore}/15. Further violations will terminate your test.`, type: 'danger' });
-    } else if (proctoring.violationScore >= 5 && proctoring.violationScore < 10 && hasStarted) {
-      setToastWarning({ message: `Warning: Please remain focused on the screen. Warning Score: ${proctoring.violationScore}/15.`, type: 'warning' });
+      return;
     }
-  }, [proctoring.violationScore, hasStarted]);
+    if (fullscreenExitCount >= settings.fullscreenExitTerminateCount) {
+      isTerminatedRef.current = true;
+      setToastWarning({ message: `Test Terminated: Exited fullscreen mode too many times (${fullscreenExitCount}/${settings.fullscreenExitTerminateCount}).`, type: 'danger' });
+      submitAndComplete(true);
+      return;
+    }
+
+    // --- WARNING CHECKS ---
+    if (tabSwitchCount >= settings.tabSwitchWarningCount) {
+      setToastWarning({
+        message: `Warning: Tab switch detected. Total: ${tabSwitchCount}/${settings.tabSwitchTerminateCount}. Please focus on the screen.`,
+        type: 'danger'
+      });
+    }
+    else if (fullscreenExitCount >= settings.fullscreenExitWarningCount) {
+      setToastWarning({
+        message: `Warning: Fullscreen mode exited. Total: ${fullscreenExitCount}/${settings.fullscreenExitTerminateCount}. Please return to fullscreen.`,
+        type: 'danger'
+      });
+    }
+  }, [proctoring.violations, proctoring.settings, hasStarted]);
 
   // Toast warning automatic fade out
   useEffect(() => {

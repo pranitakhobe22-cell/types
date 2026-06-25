@@ -21,3 +21,25 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
 if (supabase) {
   console.log('✅ Supabase initialized successfully.');
 }
+
+export const setSupabaseAdminMode = (active: boolean) => {
+  if (!supabase) return;
+  const key = 'x-admin-key';
+  const val = 'ReicrewAdminSecretKey';
+  
+  if (active) {
+    if (supabase.postgrest && supabase.postgrest.headers) {
+      supabase.postgrest.headers[key] = val;
+    }
+    if (supabase.rest && supabase.rest.headers) {
+      supabase.rest.headers[key] = val;
+    }
+  } else {
+    if (supabase.postgrest && supabase.postgrest.headers) {
+      delete supabase.postgrest.headers[key];
+    }
+    if (supabase.rest && supabase.rest.headers) {
+      delete supabase.rest.headers[key];
+    }
+  }
+};
