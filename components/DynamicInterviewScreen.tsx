@@ -996,7 +996,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       answerType: 'partial_explanation' as const,
       answerQuality: 'SURFACE_LEVEL' as const,
       verdict: local.score >= 8 ? 'Excellent' : local.score >= 6 ? 'Good' : local.score >= 4 ? 'Borderline' : 'Fail',
-      feedback: `Evaluating answer with AI...`,
+      feedback: { observation: "Evaluating answer with AI...", demonstrated: [], gaps: [], nextSteps: [] },
       confidenceScore: 0,
       expressionAnalysis: "N/A",
       timestamp: new Date().toISOString(),

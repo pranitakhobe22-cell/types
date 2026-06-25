@@ -68,6 +68,76 @@ export interface JobPost {
   mode: 'AI' | 'Custom';
 }
 
+export interface FeedbackStructure {
+  observation: string;
+  demonstrated: string[];
+  gaps: string[];
+  nextSteps: string[];
+}
+
+export function formatFeedbackToString(feedback: any): string {
+  if (!feedback) return "";
+  if (typeof feedback === 'string') {
+    if (feedback.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(feedback);
+        return formatFeedbackToString(parsed);
+      } catch (e) {
+        // ignore and return string
+      }
+    }
+    return feedback;
+  }
+  let parts: string[] = [];
+  if (feedback.observation) {
+    parts.push(`Observation: ${feedback.observation}`);
+  }
+  if (feedback.demonstrated && feedback.demonstrated.length > 0) {
+    parts.push(`Demonstrated: ${feedback.demonstrated.join(', ')}`);
+  }
+  if (feedback.gaps && feedback.gaps.length > 0) {
+    parts.push(`Gaps: ${feedback.gaps.join(', ')}`);
+  }
+  if (feedback.nextSteps && feedback.nextSteps.length > 0) {
+    parts.push(`Next Steps: ${feedback.nextSteps.join(', ')}`);
+  }
+  return parts.join(' | ');
+}
+
+export function ensureFeedbackStructure(feedback: any): FeedbackStructure {
+  if (!feedback) {
+    return { observation: "", demonstrated: [], gaps: [], nextSteps: [] };
+  }
+  if (typeof feedback === 'object' && 'observation' in feedback) {
+    return feedback as FeedbackStructure;
+  }
+  if (typeof feedback === 'string') {
+    const trimmed = feedback.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            observation: parsed.observation || "",
+            demonstrated: parsed.demonstrated || [],
+            gaps: parsed.gaps || [],
+            nextSteps: parsed.nextSteps || []
+          };
+        }
+      } catch (e) {
+        // ignore and fall through
+      }
+    }
+    return {
+      observation: feedback,
+      demonstrated: [],
+      gaps: [],
+      nextSteps: []
+    };
+  }
+  return { observation: "", demonstrated: [], gaps: [], nextSteps: [] };
+}
+
 export interface EvaluationResult {
   questionId: number;
   questionText: string;
@@ -85,16 +155,18 @@ export interface EvaluationResult {
   honestyScore?: number; // 0-10
   knowledgeAdmissionScore?: number; // 0-10
   bluffRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
+  misconceptionRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
+  confidenceCalibration?: 'UNDERCONFIDENT' | 'CALIBRATED' | 'OVERCONFIDENT';
 
   // Qualitative Analysis
   mentionedConcepts: string[];   // Concepts the candidate named/identified
   explainedConcepts: string[];   // Concepts the candidate actually explained with understanding
   matchedKeyPoints: string[];    // Backward compat: = mentionedConcepts
   missingKeyPoints: string[];
-  answerType: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
-  answerQuality: 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
+  answerType: 'honest_unknown' | 'keyword_list_only' | 'incorrect_attempt' | 'mixed_understanding' | 'partial_explanation' | 'full_explanation';
+  answerQuality: 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'INCORRECT_ATTEMPT' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
   verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
-  feedback: string;
+  feedback: FeedbackStructure;
 
   // Strict Evaluation Segments (New)
   analysis?: {
@@ -482,16 +554,18 @@ export interface MasterEvaluationReport {
     difficulty: 'easy' | 'medium' | 'hard';
     score: number; // 0-10
     userAnswer: string;
-    feedback: string;
+    feedback: FeedbackStructure;
     mentionedConcepts?: string[];
     explainedConcepts?: string[];
     matchedKeyPoints: string[];
     missingKeyPoints: string[];
-    answerType?: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation';
-    answerQuality?: 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
+    answerType?: 'honest_unknown' | 'keyword_list_only' | 'incorrect_attempt' | 'mixed_understanding' | 'partial_explanation' | 'full_explanation';
+    answerQuality?: 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'INCORRECT_ATTEMPT' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT';
     honestyScore?: number;
     knowledgeAdmissionScore?: number;
     bluffRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
+    misconceptionRisk?: 'LOW' | 'MEDIUM' | 'HIGH';
+    confidenceCalibration?: 'UNDERCONFIDENT' | 'CALIBRATED' | 'OVERCONFIDENT';
     technicalErrors: { error: string; severity: 'low' | 'medium' | 'high' }[];
     analysis: {
       coverage: number; // 0-10

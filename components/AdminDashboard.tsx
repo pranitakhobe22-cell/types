@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StorageService } from '../services/storageService';
-import { InterviewSession, Question, ErrorLog, JobPost } from '../types';
+import { InterviewSession, Question, ErrorLog, JobPost, formatFeedbackToString } from '../types';
 import {
     Users, LogOut, Search, Shield, Edit, Plus, Save, X, Trash2, Play,
     Activity, ToggleLeft, ToggleRight, ChevronRight, Link, Copy, CheckCircle,
@@ -476,7 +476,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                 <div class="score-badge">Score: ${r.contentScore}/10</div>
                             </div>
                             <div class="ans-text"><strong>Response:</strong> ${r.userAnswer || 'No response provided.'}</div>
-                            ${r.feedback ? `<div class="feedback-text"><strong>Evaluator Feedback:</strong> ${r.feedback}</div>` : ''}
+                            ${r.feedback ? `<div class="feedback-text"><strong>Evaluator Feedback:</strong> ${formatFeedbackToString(r.feedback)}</div>` : ''}
                         </div>
                     `).join('') : '<p>No question transcripts recorded.</p>'}
 
@@ -2960,9 +2960,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                                         <div className="text-[11px] space-y-2.5">
                                                                             <div>
                                                                                 <span className="font-bold text-slate-650 block mb-0.5">AI Feedback:</span>
-                                                                                <p className="text-slate-500 italic bg-white p-2.5 rounded-xl border border-slate-100 leading-relaxed font-sans">{testResult.feedback}</p>
+                                                                                <p className="text-slate-500 italic bg-white p-2.5 rounded-xl border border-slate-100 leading-relaxed font-sans">{formatFeedbackToString(testResult.feedback)}</p>
                                                                             </div>
-                                                                            <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100/85">
+                                                                            <div className="grid grid-cols-5 gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100/85">
                                                                                 <div>
                                                                                     <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Honesty Score</span>
                                                                                     <span className="font-bold text-slate-700">{testResult.honestyScore !== undefined ? `${testResult.honestyScore}/10` : 'N/A'}</span>
@@ -2978,6 +2978,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                                                         testResult.bluffRisk === 'MEDIUM' ? 'text-amber-600' :
                                                                                         'text-emerald-600'
                                                                                     }`}>{testResult.bluffRisk || 'LOW'}</span>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Misconception Risk</span>
+                                                                                    <span className={`font-black uppercase text-[10px] ${
+                                                                                        testResult.misconceptionRisk === 'HIGH' ? 'text-rose-600' :
+                                                                                        testResult.misconceptionRisk === 'MEDIUM' ? 'text-amber-600' :
+                                                                                        'text-emerald-605'
+                                                                                    }`}>{testResult.misconceptionRisk || 'LOW'}</span>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Calibration</span>
+                                                                                    <span className={`font-black uppercase text-[9px] ${
+                                                                                        testResult.confidenceCalibration === 'OVERCONFIDENT' ? 'text-rose-600' :
+                                                                                        testResult.confidenceCalibration === 'UNDERCONFIDENT' ? 'text-amber-600' :
+                                                                                        'text-emerald-605'
+                                                                                    }`}>{testResult.confidenceCalibration || 'CALIBRATED'}</span>
                                                                                 </div>
                                                                             </div>
                                                                             <div className="grid grid-cols-2 gap-2">

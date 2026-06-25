@@ -1,4 +1,4 @@
-import { Candidate, EvaluationResult, Question, RoleSettings, VisualMetrics } from "../types";
+import { Candidate, EvaluationResult, Question, RoleSettings, VisualMetrics, FeedbackStructure } from "../types";
 import { StorageService } from "./storageService";
 import { ErrorLogService } from "./errorLogService";
 import { SupabaseService } from "./supabaseService";
@@ -321,14 +321,18 @@ export const startInterview = async (candidate: Candidate): Promise<{ question: 
 
 // Derive answerQuality from answerType primarily, score secondarily
 function deriveAnswerQuality(
-  answerType: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation',
+  answerType: 'honest_unknown' | 'keyword_list_only' | 'incorrect_attempt' | 'mixed_understanding' | 'partial_explanation' | 'full_explanation',
   contentScore: number
-): 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT' {
+): 'HONEST_UNKNOWN' | 'KEYWORD_LIST' | 'INCORRECT_ATTEMPT' | 'SURFACE_LEVEL' | 'COMPETENT' | 'STRONG' | 'EXPERT' {
   if (answerType === 'honest_unknown') return 'HONEST_UNKNOWN';
-  // answerType is the primary signal — structure over score
+  if (answerType === 'incorrect_attempt') return 'INCORRECT_ATTEMPT';
   if (answerType === 'keyword_list_only') return 'KEYWORD_LIST';
+  if (answerType === 'mixed_understanding') {
+    if (contentScore >= 6) return 'COMPETENT';
+    return 'SURFACE_LEVEL';
+  }
   if (answerType === 'partial_explanation') {
-    if (contentScore >= 8) return 'COMPETENT'; // partial but high-scoring edge case
+    if (contentScore >= 8) return 'COMPETENT';
     if (contentScore >= 5) return 'SURFACE_LEVEL';
     return 'SURFACE_LEVEL';
   }
@@ -337,6 +341,162 @@ function deriveAnswerQuality(
   if (contentScore >= 8) return 'STRONG';
   if (contentScore >= 6) return 'COMPETENT';
   return 'SURFACE_LEVEL'; // full_explanation but low score = weak explanation
+}
+
+function getQuestionSubject(questionText: string): string {
+  let clean = questionText.trim();
+  if (clean.endsWith('?')) {
+    clean = clean.slice(0, -1);
+  }
+  
+  const prefixes = [
+    /^[Ww]hat is\s+/i,
+    /^[Ww]hat are\s+/i,
+    /^[Ee]xplain\s+/i,
+    /^[Dd]escribe\s+/i,
+    /^[Cc]an you explain\s+/i,
+    /^[Ww]hy do we use\s+/i,
+    /^[Ww]hat do you understand by\s+/i
+  ];
+  
+  for (const regex of prefixes) {
+    if (regex.test(clean)) {
+      clean = clean.replace(regex, '').trim();
+      break;
+    }
+  }
+  
+  // Strip trailing " work" or " works"
+  clean = clean.replace(/\s+works?$/i, '').trim();
+  
+  // Lowercase the subject if it doesn't start with or contain multi-letter acronyms
+  if (clean && !/^[A-Z]{2,}/.test(clean)) {
+    if (!/[A-Z]{2,}/.test(clean)) {
+      clean = clean.toLowerCase();
+    } else {
+      clean = clean.charAt(0).toLowerCase() + clean.slice(1);
+    }
+  }
+  
+  return clean || 'the topic';
+}
+
+function generateFeedback(
+  question: Question,
+  answerType: 'honest_unknown' | 'keyword_list_only' | 'incorrect_attempt' | 'mixed_understanding' | 'partial_explanation' | 'full_explanation',
+  knowledgeScore: number,
+  explainedConcepts: string[],
+  mentionedConcepts: string[],
+  missingKeyPoints: string[],
+  technicalErrors: { error: string; severity: 'low' | 'medium' | 'high' }[]
+): FeedbackStructure {
+  const subject = getQuestionSubject(question.question);
+  
+  let observation = "";
+  let demonstrated: string[] = [];
+  let gaps: string[] = [];
+  let nextSteps: string[] = [];
+  
+  if (answerType === 'honest_unknown') {
+    observation = `You indicated that this topic was outside your current knowledge.`;
+    demonstrated.push("Demonstrated honesty and self-awareness");
+    
+    const checklist = missingKeyPoints.length > 0 ? missingKeyPoints : (question.evaluationGuide || []);
+    checklist.slice(0, 3).forEach(item => {
+      gaps.push(item);
+      nextSteps.push(`Study and review: ${item}`);
+    });
+  } 
+  else if (answerType === 'keyword_list_only') {
+    observation = `Your response listed relevant terminology but did not explain the underlying concepts.`;
+    if (mentionedConcepts.length > 0) {
+      demonstrated.push(`Identified key terms: ${mentionedConcepts.slice(0, 3).join(', ')}`);
+    } else {
+      demonstrated.push("Recognized relevant keywords");
+    }
+    
+    const checklist = missingKeyPoints.length > 0 ? missingKeyPoints : (question.evaluationGuide || []);
+    checklist.slice(0, 3).forEach(item => {
+      gaps.push(`Detailed explanation of ${item}`);
+      nextSteps.push(`Learn how to explain the mechanics of ${item}`);
+    });
+  }
+  else if (answerType === 'incorrect_attempt') {
+    observation = `Your answer attempted to explain ${subject}, but the explanation contained technical inaccuracies.`;
+    demonstrated.push("Attempted an explanation");
+    demonstrated.push("Kept communication active");
+    
+    if (technicalErrors && technicalErrors.length > 0) {
+      technicalErrors.forEach(err => gaps.push(err.error));
+    } else {
+      gaps.push(`Incorrect definition or characteristics of ${subject}`);
+    }
+    
+    const checklist = missingKeyPoints.length > 0 ? missingKeyPoints : (question.evaluationGuide || []);
+    checklist.slice(0, 3).forEach(item => {
+      nextSteps.push(`Understand the core principles of ${item}`);
+    });
+  }
+  else if (answerType === 'mixed_understanding') {
+    observation = `You demonstrated mixed understanding: you are familiar with some parts of ${subject} but hold gaps or errors in others.`;
+    
+    if (explainedConcepts.length > 0) {
+      demonstrated.push(`Correctly explained: ${explainedConcepts.slice(0, 2).join(', ')}`);
+    } else {
+      demonstrated.push("Recalled some correct details");
+    }
+    
+    if (technicalErrors && technicalErrors.length > 0) {
+      technicalErrors.forEach(err => gaps.push(err.error));
+    }
+    
+    const checklist = missingKeyPoints.length > 0 ? missingKeyPoints : (question.evaluationGuide || []);
+    checklist.slice(0, 3).forEach(item => {
+      if (!gaps.includes(item)) gaps.push(`Unclear on: ${item}`);
+      nextSteps.push(`Review traversal, operations, or structures for ${item}`);
+    });
+  }
+  else if (answerType === 'partial_explanation') {
+    observation = `You provided a partially correct explanation of ${subject}, but missed some key concepts.`;
+    
+    if (explainedConcepts.length > 0) {
+      demonstrated.push(`Correctly explained: ${explainedConcepts.slice(0, 3).join(', ')}`);
+    } else {
+      demonstrated.push("Explained several key aspects correctly");
+    }
+    
+    if (technicalErrors && technicalErrors.length > 0) {
+      technicalErrors.forEach(err => gaps.push(err.error));
+    }
+    
+    const checklist = missingKeyPoints.length > 0 ? missingKeyPoints : (question.evaluationGuide || []);
+    checklist.slice(0, 3).forEach(item => {
+      gaps.push(`Missing details on ${item}`);
+      nextSteps.push(`Deepen your understanding of ${item}`);
+    });
+  }
+  else { // full_explanation
+    observation = `You provided a clear and well-structured explanation of ${subject}.`;
+    
+    if (explainedConcepts.length > 0) {
+      demonstrated.push(`Explained core concepts: ${explainedConcepts.join(', ')}`);
+    } else {
+      demonstrated.push("Explained all required concepts in depth");
+    }
+    
+    if (technicalErrors && technicalErrors.length > 0) {
+      technicalErrors.forEach(err => gaps.push(err.error));
+    }
+    
+    nextSteps.push("Explore real-world edge cases, architectural trade-offs, and scalability implications");
+  }
+  
+  return {
+    observation,
+    demonstrated,
+    gaps,
+    nextSteps
+  };
 }
 
 const honestUnknownPatterns = [
@@ -353,8 +513,8 @@ export function buildEvaluationResult(
   isBehavioral = false
 ): EvaluationResult {
   // ── 0. Classify answer type ──
-  let answerType: 'honest_unknown' | 'keyword_list_only' | 'partial_explanation' | 'full_explanation' =
-    (evalJson.answerType === 'honest_unknown' || evalJson.answerType === 'keyword_list_only' || evalJson.answerType === 'partial_explanation' || evalJson.answerType === 'full_explanation')
+  let answerType: 'honest_unknown' | 'keyword_list_only' | 'incorrect_attempt' | 'mixed_understanding' | 'partial_explanation' | 'full_explanation' =
+    (evalJson.answerType === 'honest_unknown' || evalJson.answerType === 'keyword_list_only' || evalJson.answerType === 'incorrect_attempt' || evalJson.answerType === 'mixed_understanding' || evalJson.answerType === 'partial_explanation' || evalJson.answerType === 'full_explanation')
       ? evalJson.answerType
       : 'partial_explanation'; // safe default
 
@@ -420,9 +580,9 @@ export function buildEvaluationResult(
     knowledgeScore = Math.min(4, knowledgeScore);
   }
 
-  // ── 5. Conditional Positive Evidence Bonus (blocked for keyword-only) ──
+  // ── 5. Conditional Positive Evidence Bonus (blocked for keyword-only & incorrect_attempt) ──
   let evidenceBonus = 0;
-  if (answerType !== 'keyword_list_only' && answerType !== 'honest_unknown' && (knowledgeScore >= 6 || problemSolvingScore >= 6)) {
+  if (answerType !== 'keyword_list_only' && answerType !== 'honest_unknown' && answerType !== 'incorrect_attempt' && (knowledgeScore >= 6 || problemSolvingScore >= 6)) {
     if (evalJson.positiveEvidence?.strongExample) evidenceBonus += 0.25;
     if (evalJson.positiveEvidence?.realProject) evidenceBonus += 0.25;
     if (evalJson.positiveEvidence?.tradeoffDiscussion) evidenceBonus += 0.25;
@@ -440,12 +600,11 @@ export function buildEvaluationResult(
   }
   errorDeduction = Math.min(1.5, errorDeduction);
 
-  // ── 7. Final Adjusted Content Score with HARD CAP for keyword-only ──
+  // ── 7. Final Adjusted Content Score with HARD CAP for keyword-only & incorrect_attempt ──
   const rawContent = (0.60 * knowledgeScore) + (0.40 * problemSolvingScore);
   let contentScore = Math.round(Math.max(0, Math.min(10, rawContent + evidenceBonus - errorDeduction)) * 10) / 10;
 
-  // HARD CAP: keyword-only answers can never exceed 4.0 regardless of bonuses
-  if (answerType === 'keyword_list_only') {
+  if (answerType === 'keyword_list_only' || answerType === 'incorrect_attempt') {
     contentScore = Math.min(4.0, contentScore);
   }
 
@@ -511,6 +670,27 @@ export function buildEvaluationResult(
     }
   }
 
+  let misconceptionRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
+  if (evalJson.misconceptionRisk === 'LOW' || evalJson.misconceptionRisk === 'MEDIUM' || evalJson.misconceptionRisk === 'HIGH') {
+    misconceptionRisk = evalJson.misconceptionRisk;
+  } else {
+    if (answerType === 'incorrect_attempt') {
+      misconceptionRisk = confidenceScoreVal >= 6 ? 'HIGH' : 'MEDIUM';
+    } else if (answerType === 'mixed_understanding') {
+      misconceptionRisk = 'MEDIUM';
+    } else {
+      misconceptionRisk = 'LOW';
+    }
+  }
+
+  let confidenceCalibration: 'UNDERCONFIDENT' | 'CALIBRATED' | 'OVERCONFIDENT' = 'CALIBRATED';
+  const confidenceGapValForCalib = confidenceScoreVal - knowledgeScore;
+  if (confidenceGapValForCalib >= 3) {
+    confidenceCalibration = 'OVERCONFIDENT';
+  } else if (confidenceGapValForCalib <= -3) {
+    confidenceCalibration = 'UNDERCONFIDENT';
+  }
+
   // ── 11. Verdict ──
   let verdict: 'Excellent' | 'Good' | 'Pass' | 'Borderline' | 'Fail';
   if (contentScore >= 8) verdict = 'Excellent';
@@ -529,23 +709,16 @@ export function buildEvaluationResult(
   // ── 13. Answer Quality (answerType-primary, score-secondary) ──
   const answerQuality = deriveAnswerQuality(answerType, contentScore);
 
-  // ── 14. Generate beautiful mentor feedback ──
-  let feedback = '';
-  if (answerType === 'honest_unknown') {
-    const checklist = currentQuestion.evaluationGuide || [];
-    const checklistStr = checklist.length > 0
-      ? checklist.slice(0, 3).map(area => `\n• ${area}`).join('')
-      : '\n• Core fundamentals';
-    feedback = `You correctly identified that this topic was outside your current knowledge. For future interviews, review:${checklistStr}\n\nHonest answers are preferable to confident guesses because they help interviewers accurately assess your strengths and learning needs.`;
-  } else if (answerType === 'keyword_list_only') {
-    feedback = `You listed several relevant terms (${mentionedConcepts.join(', ') || 'keywords'}), but did not explain them. In future discussions, try to elaborate on what these terms mean and how they apply in practice.`;
-  } else if (answerType === 'partial_explanation') {
-    const explained = explainedConcepts.length > 0 ? explainedConcepts.join(', ') : 'some parts';
-    const missed = (evalJson.missingKeyPoints || []).length > 0 ? (evalJson.missingKeyPoints || []).join(', ') : 'other expected areas';
-    feedback = `You explained ${explained} well, but missed key technical concepts like ${missed}. Try to structure your answers to cover both theoretical principles and practical trade-offs.`;
-  } else {
-    feedback = `You provided a clear and well-structured explanation of the concepts. To stand out, try adding examples from your past projects or discussing architectural alternatives.`;
-  }
+  // ── 14. Generate beautiful structured mentor feedback ──
+  const feedback = generateFeedback(
+    currentQuestion,
+    answerType,
+    knowledgeScore,
+    explainedConcepts,
+    mentionedConcepts,
+    evalJson.missingKeyPoints || [],
+    errors
+  );
 
   return {
     questionId: Number(currentQuestion.id),
@@ -570,6 +743,8 @@ export function buildEvaluationResult(
     honestyScore: finalHonestyScore,
     knowledgeAdmissionScore: finalKnowledgeAdmissionScore,
     bluffRisk,
+    misconceptionRisk,
+    confidenceCalibration,
     analysis: {
       technicalAccuracy: isHonestUnknown ? 0 : accuracy,
       problemSolving: isHonestUnknown ? 0 : depth,
@@ -637,10 +812,17 @@ CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
 === CRITICAL RULE (HIGHEST PRIORITY) ===
 FIRST, classify the answer as one of:
-- "honest_unknown": Candidate admits they do not know or are unfamiliar with the topic/concept.
+- "honest_unknown": Candidate explicitly admits they do not know, are unfamiliar, haven't studied, or cannot recall the topic.
 - "keyword_list_only": Candidate ONLY lists names/terms without explaining what they mean, how they work, or giving context/examples.
-- "partial_explanation": Candidate explains SOME concepts but not all expected areas.
-- "full_explanation": Candidate explains the concepts with understanding, examples, or reasoning.
+- "incorrect_attempt": Candidate attempts to explain the concept, but the explanation is technically incorrect, contains major factual errors, or represents a guess/hallucination.
+- "mixed_understanding": Candidate demonstrates partial knowledge, but also holds significant misconceptions or gets key details incorrect.
+- "partial_explanation": Candidate explains SOME concepts correctly but not all expected areas.
+- "full_explanation": Candidate explains the concepts with correct understanding, examples, or reasoning.
+
+RULES FOR CLASSIFICATION:
+1. HONEST_UNKNOWN requires an explicit admission of not knowing. Examples: "I don't know", "I haven't studied that", "I am not familiar with that topic", "I cannot recall". Do NOT classify as HONEST_UNKNOWN merely because the answer is incorrect. If the candidate attempts to explain but the explanation is incorrect, classify it as "incorrect_attempt".
+2. If the answer is incorrect but they made an attempt (confident or hesitant), classify as "incorrect_attempt".
+3. If they explain some parts correctly but clearly get other parts wrong or show deep confusion, classify as "mixed_understanding".
 
 IF answerType is "honest_unknown":
 - accuracy, conceptCoverage, conceptUnderstanding, reasoning, depth, clarity, structure, confidence, consistency, and answerDirectnessScore MUST all be 0/10.
@@ -660,6 +842,12 @@ IF answerType is "keyword_list_only":
 - depth MUST NOT exceed 1/10
 - reasoning MUST NOT exceed 2/10
 
+IF answerType is "incorrect_attempt":
+- accuracy and conceptCoverage MUST NOT exceed 2/10
+- conceptUnderstanding MUST NOT exceed 1/10
+- depth MUST NOT exceed 1/10
+- reasoning MUST NOT exceed 2/10
+
 IF answerType is NOT "honest_unknown":
 - Evaluate honestyScore (0-10):
   * 9-10: Demonstrates strong self-awareness, calls out areas of uncertainty or limits of their knowledge.
@@ -667,6 +855,10 @@ IF answerType is NOT "honest_unknown":
   * 3-6: Overstates weak knowledge (weak explanation but confident).
   * 0-2: Confidently wrong / bluffing.
 - knowledgeAdmissionScore should default to 0 (or low score unless they explicitly admitted a sub-concept gap within a larger answer).
+- Evaluate misconceptionRisk ("LOW" | "MEDIUM" | "HIGH"):
+  * "HIGH": Candidate confidently asserts incorrect/false concepts, or has severe technical errors.
+  * "MEDIUM": Candidate has some correct knowledge but holds active misconceptions/errors.
+  * "LOW": Candidate has accurate understanding, or is keyword-only with no major errors.
 === END CRITICAL RULE ===
 
 SCORING BANDS:
@@ -684,7 +876,8 @@ A concept in explainedConcepts MUST also appear in mentionedConcepts.
 
 Return strictly the following JSON (no markdown, no extra text):
 {
-  "answerType": "honest_unknown" | "keyword_list_only" | "partial_explanation" | "full_explanation",
+  "answerType": "honest_unknown" | "keyword_list_only" | "incorrect_attempt" | "mixed_understanding" | "partial_explanation" | "full_explanation",
+  "misconceptionRisk": "LOW" | "MEDIUM" | "HIGH",
   "accuracy": number,
   "conceptCoverage": number,
   "conceptUnderstanding": number,
@@ -758,10 +951,17 @@ CANDIDATE'S SPOKEN ANSWER: "${answer}"
 
 === CRITICAL RULE (HIGHEST PRIORITY) ===
 FIRST, classify the answer as one of:
-- "honest_unknown": Candidate admits they do not know or are unfamiliar with the topic/concept.
+- "honest_unknown": Candidate explicitly admits they do not know, are unfamiliar, haven't studied, or cannot recall the topic.
 - "keyword_list_only": Candidate ONLY lists names/terms without explaining what they mean, how they work, or giving context/examples.
-- "partial_explanation": Candidate explains SOME concepts but not all expected areas.
-- "full_explanation": Candidate explains the concepts with understanding, examples, or reasoning.
+- "incorrect_attempt": Candidate attempts to explain the concept, but the explanation is technically incorrect, contains major factual errors, or represents a guess/hallucination.
+- "mixed_understanding": Candidate demonstrates partial knowledge, but also holds significant misconceptions or gets key details incorrect.
+- "partial_explanation": Candidate explains SOME concepts correctly but not all expected areas.
+- "full_explanation": Candidate explains the concepts with correct understanding, examples, or reasoning.
+
+RULES FOR CLASSIFICATION:
+1. HONEST_UNKNOWN requires an explicit admission of not knowing. Examples: "I don't know", "I haven't studied that", "I am not familiar with that topic", "I cannot recall". Do NOT classify as HONEST_UNKNOWN merely because the answer is incorrect. If the candidate attempts to explain but the explanation is incorrect, classify it as "incorrect_attempt".
+2. If the answer is incorrect but they made an attempt (confident or hesitant), classify as "incorrect_attempt".
+3. If they explain some parts correctly but clearly get other parts wrong or show deep confusion, classify as "mixed_understanding".
 
 IF answerType is "honest_unknown":
 - accuracy, conceptCoverage, conceptUnderstanding, reasoning, depth, clarity, structure, confidence, consistency, and answerDirectnessScore MUST all be 0/10.
@@ -781,6 +981,12 @@ IF answerType is "keyword_list_only":
 - depth MUST NOT exceed 1/10
 - reasoning MUST NOT exceed 2/10
 
+IF answerType is "incorrect_attempt":
+- accuracy and conceptCoverage MUST NOT exceed 2/10
+- conceptUnderstanding MUST NOT exceed 1/10
+- depth MUST NOT exceed 1/10
+- reasoning MUST NOT exceed 2/10
+
 IF answerType is NOT "honest_unknown":
 - Evaluate honestyScore (0-10):
   * 9-10: Demonstrates strong self-awareness, calls out areas of uncertainty or limits of their knowledge.
@@ -788,6 +994,10 @@ IF answerType is NOT "honest_unknown":
   * 3-6: Overstates weak knowledge (weak explanation but confident).
   * 0-2: Confidently wrong / bluffing.
 - knowledgeAdmissionScore should default to 0 (or low score unless they explicitly admitted a sub-concept gap within a larger answer).
+- Evaluate misconceptionRisk ("LOW" | "MEDIUM" | "HIGH"):
+  * "HIGH": Candidate confidently asserts incorrect/false concepts, or has severe technical errors.
+  * "MEDIUM": Candidate has some correct knowledge but holds active misconceptions/errors.
+  * "LOW": Candidate has accurate understanding, or is keyword-only with no major errors.
 === END CRITICAL RULE ===
 
 SCORING BANDS:
@@ -805,7 +1015,8 @@ A concept in explainedConcepts MUST also appear in mentionedConcepts.
 
 Return strictly the following JSON (no markdown, no extra text):
 {
-  "answerType": "honest_unknown" | "keyword_list_only" | "partial_explanation" | "full_explanation",
+  "answerType": "honest_unknown" | "keyword_list_only" | "incorrect_attempt" | "mixed_understanding" | "partial_explanation" | "full_explanation",
+  "misconceptionRisk": "LOW" | "MEDIUM" | "HIGH",
   "accuracy": number,
   "conceptCoverage": number,
   "conceptUnderstanding": number,

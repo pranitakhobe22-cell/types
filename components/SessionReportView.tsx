@@ -370,6 +370,7 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
             <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wide ${
               answerQualityVal === 'HONEST_UNKNOWN' ? 'bg-slate-100 text-slate-600 border border-slate-200' :
               answerQualityVal === 'KEYWORD_LIST' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
+              answerQualityVal === 'INCORRECT_ATTEMPT' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
               answerQualityVal === 'SURFACE_LEVEL' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
               answerQualityVal === 'COMPETENT' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
               answerQualityVal === 'STRONG' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
@@ -451,11 +452,63 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
             <>
               {/* 3. Mentor Feedback */}
               {item.feedback && (
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mentor Feedback</p>
-                  <p className="text-sm text-slate-755 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-200/60 italic">
-                    "{item.feedback}"
-                  </p>
+                <div className="space-y-3 bg-white p-5 rounded-3xl border border-slate-200/60 font-sans shadow-sm">
+                  <p className="text-xs font-black text-slate-450 uppercase tracking-wider mb-2">Mentor Feedback</p>
+                  
+                  {/* Observation */}
+                  {item.feedback.observation && (
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Observation</p>
+                      <p className="text-sm text-slate-700 leading-relaxed font-semibold italic">
+                        "{item.feedback.observation}"
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* What You Demonstrated */}
+                  {item.feedback.demonstrated && item.feedback.demonstrated.length > 0 && (
+                    <div className="space-y-1 pt-1.5">
+                      <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">What You Demonstrated</p>
+                      <ul className="space-y-0.5">
+                        {item.feedback.demonstrated.map((demo, idx) => (
+                          <li key={idx} className="text-xs text-slate-655 font-semibold flex items-start gap-1.5 leading-relaxed">
+                            <span className="text-emerald-500 font-bold">✓</span>
+                            {demo}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Knowledge Gaps */}
+                  {item.feedback.gaps && item.feedback.gaps.length > 0 && (
+                    <div className="space-y-1 pt-1.5">
+                      <p className="text-[10px] font-bold text-rose-600 uppercase tracking-wider">Knowledge Gaps</p>
+                      <ul className="space-y-0.5">
+                        {item.feedback.gaps.map((gap, idx) => (
+                          <li key={idx} className="text-xs text-slate-655 font-semibold flex items-start gap-1.5 leading-relaxed">
+                            <span className="text-rose-500 font-bold">✗</span>
+                            {gap}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Next Steps */}
+                  {item.feedback.nextSteps && item.feedback.nextSteps.length > 0 && (
+                    <div className="space-y-1 pt-1.5">
+                      <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Next Steps</p>
+                      <ul className="space-y-0.5">
+                        {item.feedback.nextSteps.map((step, idx) => (
+                          <li key={idx} className="text-xs text-slate-655 font-semibold flex items-start gap-1.5 leading-relaxed">
+                            <span className="text-indigo-500 font-bold">•</span>
+                            {step}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
 

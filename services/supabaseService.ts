@@ -3,7 +3,8 @@ import {
     Candidate, JobPost, Question, RoleSettings, 
     EvaluationResult, InterviewSession, ProctoringReport, 
     ProctorViolation, TimelineEvent, DashboardTelemetry,
-    ProctoringSettings, DEFAULT_PROCTORING_SETTINGS
+    ProctoringSettings, DEFAULT_PROCTORING_SETTINGS,
+    ensureFeedbackStructure
 } from '../types';
 import { ErrorLogService } from './errorLogService';
 import { CSE_QUESTION_BANK, ECE_QUESTION_BANK, APTITUDE_QUESTION_BANK } from './questionBank';
@@ -232,7 +233,7 @@ export class SupabaseService {
                         grammar_score: r.grammar_score,
                         fluency_score: r.fluency_score,
                         verdict: r.verdict,
-                        feedback: r.feedback
+                        feedback: ensureFeedbackStructure(r.feedback)
                     })),
                     all_proctoring_events: sessionViolations.map(v => ({
                         type: v.event_type || v.type,
@@ -325,7 +326,7 @@ export class SupabaseService {
                 if (v.includes('fail') || v.includes('poor')) return 'Fail';
                 return 'Borderline';
             })(),
-            feedback: result.feedback || null,
+            feedback: result.feedback ? JSON.stringify(result.feedback) : null,
             
             // Auditable Fields — use explainedConcepts (actually demonstrated) for detected, mentionedConcepts for identified
             expected_key_points: result.mentionedConcepts ? [...result.mentionedConcepts, ...(result.missingKeyPoints || [])] : (result.matchedKeyPoints ? [...result.matchedKeyPoints, ...(result.missingKeyPoints || [])] : null),
