@@ -494,21 +494,6 @@ const QuestionCard: React.FC<{ item: MasterEvaluationReport['questionBreakdown']
                       </ul>
                     </div>
                   )}
-
-                  {/* Next Steps */}
-                  {item.feedback.nextSteps && item.feedback.nextSteps.length > 0 && (
-                    <div className="space-y-1 pt-1.5">
-                      <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">Next Steps</p>
-                      <ul className="space-y-0.5">
-                        {item.feedback.nextSteps.map((step, idx) => (
-                          <li key={idx} className="text-xs text-slate-655 font-semibold flex items-start gap-1.5 leading-relaxed">
-                            <span className="text-indigo-500 font-bold">•</span>
-                            {step}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                 </div>
               )}
 
