@@ -1760,56 +1760,105 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         <div className="flex-1 flex flex-col h-full relative overflow-hidden bg-[#F8FAFC]">
           <main className="flex-1 w-full p-4 md:p-8 flex flex-col justify-start md:justify-center space-y-6 md:space-y-12 pb-8 overflow-y-auto">
         {!hasStarted ? (
-          <div className="text-center space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 mt-12 md:mt-0">
-            <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900">Ready to begin?</h1>
-            <p className="text-lg text-slate-500 max-w-lg mx-auto">Please ensure you are in a quiet room with good lighting. Your camera and microphone will be monitored during the interview.</p>
-            <button 
-              onClick={() => {
-                // Request fullscreen first
-                document.documentElement.requestFullscreen().catch(e => console.warn("Fullscreen error", e));
+          <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 mt-6 pb-12">
+            <div className="text-center space-y-3">
+              <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900">Ready to begin?</h1>
+              <p className="text-slate-500 font-medium max-w-xl mx-auto">
+                Please review these quick guidelines to ensure a smooth interview session.
+              </p>
+            </div>
 
-                let firstQuestionText = '';
-                const savedStateStr = localStorage.getItem('reicrew_autosave_' + sessionIdRef.current);
-                if (savedStateStr) {
-                  try {
-                    const savedState = JSON.parse(savedStateStr);
-                    if (savedState.questions && savedState.questions.length > 0) {
-                      const savedQ = savedState.questions[savedState.currentIndex || 0];
-                      if (savedQ) {
-                        firstQuestionText = savedQ.question;
-                        setQuestions(savedState.questions);
-                        setCurrentIndex(savedState.currentIndex || 0);
-                        updateHistory(savedState.history || []);
-                        if (savedState.transcript) {
-                          setTranscript(savedState.transcript);
+            {/* Instruction Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Mic Card */}
+              <div className="bg-white border border-slate-200/60 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center text-center space-y-3">
+                <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
+                  <Mic size={24} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-800 text-sm">Microphone Usage</h3>
+                  <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
+                    Click the microphone button at the bottom to record. Speak clearly, or edit/type your answer if needed.
+                  </p>
+                </div>
+              </div>
+
+              {/* Questions Card */}
+              <div className="bg-white border border-slate-200/60 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center text-center space-y-3">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
+                  <Volume2 size={24} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-800 text-sm">Questions & Flow</h3>
+                  <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
+                    Listen to the AI read each question. Replay it at any time. There are 5 dynamic questions in total.
+                  </p>
+                </div>
+              </div>
+
+              {/* Proctoring Card */}
+              <div className="bg-white border border-slate-200/60 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center text-center space-y-3">
+                <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center">
+                  <AlertTriangle size={24} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-800 text-sm">Proctoring Rules</h3>
+                  <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
+                    Stay in camera view. Switching tabs or exiting fullscreen mode may automatically terminate the interview.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="text-center pt-4">
+              <button 
+                onClick={() => {
+                  // Request fullscreen first
+                  document.documentElement.requestFullscreen().catch(e => console.warn("Fullscreen error", e));
+
+                  let firstQuestionText = '';
+                  const savedStateStr = localStorage.getItem('reicrew_autosave_' + sessionIdRef.current);
+                  if (savedStateStr) {
+                    try {
+                      const savedState = JSON.parse(savedStateStr);
+                      if (savedState.questions && savedState.questions.length > 0) {
+                        const savedQ = savedState.questions[savedState.currentIndex || 0];
+                        if (savedQ) {
+                          firstQuestionText = savedQ.question;
+                          setQuestions(savedState.questions);
+                          setCurrentIndex(savedState.currentIndex || 0);
+                          updateHistory(savedState.history || []);
+                          if (savedState.transcript) {
+                            setTranscript(savedState.transcript);
+                          }
                         }
                       }
+                    } catch (e) {
+                      console.warn("Failed to parse recovery state", e);
                     }
-                  } catch (e) {
-                    console.warn("Failed to parse recovery state", e);
                   }
-                }
 
-                if (!firstQuestionText) {
-                  const newBranch = AIService.selectInterviewBranch(candidate.role);
-                  setBranch(newBranch);
-                  setQuestions([newBranch.q1]);
-                  firstQuestionText = newBranch.q1.question;
-                }
+                  if (!firstQuestionText) {
+                    const newBranch = AIService.selectInterviewBranch(candidate.role);
+                    setBranch(newBranch);
+                    setQuestions([newBranch.q1]);
+                    firstQuestionText = newBranch.q1.question;
+                  }
 
-                // Speak the first question synchronously in this user gesture handler to bypass autoplay policies
-                if (firstQuestionText) {
-                  speak(firstQuestionText);
-                }
+                  // Speak the first question synchronously in this user gesture handler to bypass autoplay policies
+                  if (firstQuestionText) {
+                    speak(firstQuestionText);
+                  }
 
-                setLoading(false);
-                setHasStarted(true);
-              }}
-              disabled={!cameraReady || proctoring.engineState !== 'READY'}
-              className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white rounded-2xl font-bold text-xl shadow-xl shadow-indigo-200 disabled:shadow-none transition-all active:scale-95"
-            >
-              {(!cameraReady || proctoring.engineState !== 'READY') ? 'Initializing Engine...' : 'Start Interview'}
-            </button>
+                  setLoading(false);
+                  setHasStarted(true);
+                }}
+                disabled={!cameraReady || proctoring.engineState !== 'READY'}
+                className="px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white rounded-2xl font-bold text-lg shadow-xl shadow-indigo-200 disabled:shadow-none transition-all active:scale-95 w-full sm:w-auto"
+              >
+                {(!cameraReady || proctoring.engineState !== 'READY') ? 'Initializing Engine...' : 'Start Interview'}
+              </button>
+            </div>
           </div>
         ) : loading ? (
           <div className="flex flex-col items-center justify-center space-y-4 h-full animate-in fade-in duration-500">
