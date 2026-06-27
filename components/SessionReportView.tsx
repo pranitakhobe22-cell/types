@@ -705,6 +705,24 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
   const report = evalReport;
   const isAptitudeReport = !!report.aptitudeSummary || candidate.role === 'APTITUDE' || report.questionBreakdown?.some(q => q.options && q.options.length > 0);
 
+  const expectedQuestions = isAptitudeReport ? 10 : 5;
+  const actualQuestions = report.questionBreakdown?.length || 0;
+  const isTerminatedEarly = actualQuestions < expectedQuestions;
+
+  const terminationWarningBanner = isTerminatedEarly ? (
+    <div className="bg-rose-50 border border-rose-200 rounded-3xl p-6 flex flex-col md:flex-row items-start md:items-center gap-4 text-rose-700 shadow-sm animate-in fade-in duration-305">
+      <div className="w-12 h-12 bg-rose-100 rounded-2xl flex items-center justify-center shrink-0 border border-rose-200">
+        <AlertTriangle className="w-6 h-6 text-rose-600" />
+      </div>
+      <div className="space-y-1">
+        <h4 className="font-extrabold text-sm md:text-base text-rose-900 tracking-tight">Early Interview Termination Detected</h4>
+        <p className="text-xs md:text-sm font-medium text-rose-650 leading-relaxed font-sans">
+          This session ended prematurely after answering only {actualQuestions} of {expectedQuestions} questions. This is typically caused by the candidate closing or refreshing the tab, or being automatically terminated by the system's proctoring engine (e.g., camera disconnected, tab switches, or face missing for more than 30 seconds).
+        </p>
+      </div>
+    </div>
+  ) : null;
+
   if (isAptitudeReport) {
     const aptSummary = report.aptitudeSummary || {
       correct: report.questionBreakdown?.filter(q => q.score === 10).length || 0,
@@ -756,6 +774,8 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
               <Logo className="w-10 h-10 opacity-70" />
             </div>
           </header>
+
+          {terminationWarningBanner}
 
           {/* Core Decision Cards */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
@@ -1028,6 +1048,8 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
             <Logo className="w-10 h-10 opacity-70" />
           </header>
 
+          {terminationWarningBanner}
+
           {/* Performance Overview & Level */}
           <div className="grid md:grid-cols-12 gap-6">
             
@@ -1255,6 +1277,8 @@ export const SessionReportView: React.FC<SessionReportViewProps> = ({
             <Logo className="w-10 h-10 opacity-70" />
           </div>
         </header>
+
+        {terminationWarningBanner}
 
         {/* 1. Decision Grid & Primary Scores */}
         <div className="grid md:grid-cols-12 gap-6">
