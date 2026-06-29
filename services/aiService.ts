@@ -6,7 +6,7 @@ const getOpenRouterKey = () => {
   return (import.meta.env?.VITE_OPENROUTER_API_KEY) || (typeof process !== 'undefined' ? process.env.VITE_OPENROUTER_API_KEY : "") || "";
 };
 
-export const FAST_MODEL = (import.meta.env?.VITE_FAST_MODEL) || "google/gemini-2.5-flash";
+export const FAST_MODEL = (import.meta.env?.VITE_FAST_MODEL) || "deepseek/deepseek-chat";
 export const EVAL_MODEL = (import.meta.env?.VITE_EVAL_MODEL) || "deepseek/deepseek-chat";
 
 async function resilientGenerate(

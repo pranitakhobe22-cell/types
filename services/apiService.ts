@@ -33,7 +33,7 @@ async function generateWithOpenRouter(
     throw new Error("OpenRouter API key not configured. Please set VITE_OPENROUTER_API_KEY.");
   }
 
-  const fastModel = (import.meta.env?.VITE_FAST_MODEL) || "google/gemini-2.5-flash";
+  const fastModel = (import.meta.env?.VITE_FAST_MODEL) || "deepseek/deepseek-chat";
   const evalModel = (import.meta.env?.VITE_EVAL_MODEL) || "deepseek/deepseek-chat";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
