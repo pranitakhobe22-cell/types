@@ -487,6 +487,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const audioStreamRef = useRef<MediaStream | null>(null);
   const [pairingQrUrl, setPairingQrUrl] = useState<string>('');
   const [pairingTokenExpiry, setPairingTokenExpiry] = useState<Date | null>(null);
+  const [phonePreviewStream, setPhonePreviewStream] = useState<MediaStream | null>(null);
   // Recovery overlay countdown (seconds remaining before FAILED)
   const [phoneReconnectCountdown, setPhoneReconnectCountdown] = useState<number | null>(null);
   const phoneReconnectTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -843,6 +844,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             if (providerRef.current?.type === 'phone_camera') {
               const stateVal = (providerRef.current as PhoneCameraProvider).getConnectionState();
               dispatch({ type: 'SET_PHONE_CONNECTION_STATE', state: stateVal });
+
+              // Update phone preview stream — picks up WebRTC remote video when it arrives
+              const stream = providerRef.current.getPreviewStream();
+              setPhonePreviewStream(stream);
 
               // Start countdown overlay when entering RECONNECTING
               if (stateVal === 'RECONNECTING') {
@@ -2067,9 +2072,9 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             {/* Camera Preview */}
             <div className="w-full aspect-[4/3] bg-black rounded-xl overflow-hidden relative shadow-2xl md:shadow-lg shrink-0">
               <CameraPreview 
-                stream={providerRef.current?.getPreviewStream() ?? null}
+                stream={proctoring.cameraProvider === 'phone_camera' ? phonePreviewStream : (providerRef.current?.getPreviewStream() ?? null)}
                 mirrored={proctoring.cameraProvider === 'local_webcam'}
-                showPlaceholder={proctoring.cameraProvider === 'phone_camera' && !providerRef.current?.getPreviewStream()}
+                showPlaceholder={proctoring.cameraProvider === 'phone_camera' && !phonePreviewStream}
                 statusOverlay={
                   <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg">
                     <div className={`w-1.5 h-1.5 rounded-full ${cameraReady ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />

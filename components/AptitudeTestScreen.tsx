@@ -366,6 +366,7 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
   const audioStreamRef = useRef<MediaStream | null>(null);
   const [pairingQrUrl, setPairingQrUrl] = useState<string>('');
   const [pairingTokenExpiry, setPairingTokenExpiry] = useState<Date | null>(null);
+  const [phonePreviewStream, setPhonePreviewStream] = useState<MediaStream | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const totalTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -570,6 +571,10 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
             if (providerRef.current?.type === 'phone_camera') {
               const stateVal = (providerRef.current as PhoneCameraProvider).getConnectionState();
               dispatch({ type: 'SET_PHONE_CONNECTION_STATE', state: stateVal });
+              
+              // Update phone preview stream
+              const stream = providerRef.current.getPreviewStream();
+              setPhonePreviewStream(stream);
             }
           }
         });
@@ -1090,9 +1095,9 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
         <div className="lg:col-span-1 flex flex-col gap-4">
           <div className="bg-slate-900 aspect-video lg:aspect-square rounded-3xl overflow-hidden shadow-md relative border border-slate-800">
             <CameraPreview 
-              stream={providerRef.current?.getPreviewStream() ?? null}
+              stream={proctoring.cameraProvider === 'phone_camera' ? phonePreviewStream : (providerRef.current?.getPreviewStream() ?? null)}
               mirrored={proctoring.cameraProvider === 'local_webcam'}
-              showPlaceholder={proctoring.cameraProvider === 'phone_camera' && !providerRef.current?.getPreviewStream()}
+              showPlaceholder={proctoring.cameraProvider === 'phone_camera' && !phonePreviewStream}
               statusOverlay={
                 <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${proctoring.engineState === 'READY' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
