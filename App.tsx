@@ -4,6 +4,7 @@ import { DynamicInterviewScreen } from './components/DynamicInterviewScreen';
 import { EndScreen } from './components/EndScreen';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AdminLoginModal, isAdminSessionActive, clearAdminSession } from './components/AdminLoginModal';
+import { MobileProctorScreen } from './components/MobileProctorScreen';
 
 import { HealthService, SystemHealth } from './services/healthService';
 import { SupabaseService } from './services/supabaseService';
@@ -12,6 +13,11 @@ import { setSupabaseAdminMode } from './services/supabaseClient';
 import { AlertTriangle, Server, Database, Lock, Loader2, CheckCircle2 } from 'lucide-react';
 
 function App() {
+  // Route interception for mobile companion
+  if (window.location.pathname.startsWith('/proctor/phone-camera')) {
+    return <MobileProctorScreen />;
+  }
+
   const [flowState, setFlowState] = useState<'landing' | 'interview' | 'completed'>('landing');
   const [candidate, setCandidate] = useState<{ name: string; email: string; role: string } | null>(null);
   const [interviewHistory, setInterviewHistory] = useState<{ question: string; answer: string; ideal_answer: string; evaluation?: any }[]>([]);
@@ -105,7 +111,7 @@ function App() {
         const session = await SupabaseService.createSession(candidateRecord.id, jobPostId as any, fp, {}, candidateRecord.name);
         localStorage.setItem('current_session_id', session.id);
         
-        setCandidate({ ...data, jobPostId });
+        setCandidate({ ...data, jobPostId, session });
         setFlowState('interview');
     } catch (e: any) {
         console.error("Failed to start session in Supabase:", e);

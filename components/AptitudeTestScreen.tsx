@@ -1,15 +1,21 @@
 import React, { useState, useEffect, useRef, useReducer } from 'react';
-import { Camera, AlertTriangle, CheckCircle, ArrowRight, Clock, ShieldAlert, Check } from 'lucide-react';
+import { Camera, AlertTriangle, CheckCircle, ArrowRight, Clock, ShieldAlert, Check, Mic, Volume2 } from 'lucide-react';
 import { AIService } from '../services/aiService';
 import { APTITUDE_QUESTION_BANK } from '../services/questionBank';
-import { CameraMonitor } from './CameraMonitor';
+import { CameraPreview } from './CameraPreview';
+import { CameraAnalysis } from './CameraAnalysis';
+import { PreFlightCheck } from './PreFlightCheck';
+import { LocalCameraProvider } from '../services/cameraProviders/LocalCameraProvider';
+import { PhoneCameraProvider } from '../services/cameraProviders/PhoneCameraProvider';
 import { SupabaseService } from '../services/supabaseService';
 import { 
   ProctoringReport, ProctoringState, ProctoringAction, 
   Question, TimelineEvent, ProctorViolation, RawDetectionFrame, HeartbeatMetrics,
-  DEFAULT_PROCTORING_SETTINGS
+  DEFAULT_PROCTORING_SETTINGS, PhoneConnectionState, CameraProvider,
+  ProctoringConfiguration
 } from '../types';
 import { ErrorLogService } from '../services/errorLogService';
+import { CameraProviderFactory } from '../services/cameraProviders/CameraProviderFactory';
 
 const generateViolationId = () => Math.random().toString(36).substring(2, 9);
 const VIOLATION_COOLDOWN = 5000;
@@ -42,7 +48,34 @@ const createInitialState = (): ProctoringState => ({
   integrityScore: 100,
   totalGazeAwayDurationMs: 0,
   lastViolationTime: 0,
-  settings: DEFAULT_PROCTORING_SETTINGS
+  settings: DEFAULT_PROCTORING_SETTINGS,
+  cameraOffStartTime: null,
+  micOffStartTime: null,
+
+  // ─── Phone Camera Proctoring Defaults ──────────────────────────────
+  cameraProvider: 'none',
+  phoneConnectionState: 'WAITING',
+  phoneConnectionId: null,
+  phoneReconnectCount: 0,
+  lastReceivedSequence: 0,
+  phoneTimeOffsetMs: 0,
+  networkQuality: {
+    avgLatencyMs: 0,
+    packetLossRate: 0,
+    heartbeatAgeMs: 0,
+    reconnectCount: 0,
+  },
+  setupCheck: {
+    microphone: false,
+    cameraPermission: false,
+    faceDetected: false,
+    lightingGood: false,
+    cameraStable: false,
+    distanceAppropriate: false,
+    networkStable: false,
+    batteryOk: false,
+  },
+  setupProgressMs: 0,
 });
 
 const proctoringReducer = (state: ProctoringState, action: ProctoringAction): ProctoringState => {
@@ -52,7 +85,20 @@ const proctoringReducer = (state: ProctoringState, action: ProctoringAction): Pr
     case 'SET_UNSUPPORTED_BROWSER': return { ...state, engineState: 'UNSUPPORTED_BROWSER' };
     case 'SET_PERMISSION_DENIED': return { ...state, engineState: 'PERMISSION_DENIED' };
     case 'ENGINE_READY': return { ...state, engineState: 'READY', monitoringStartTime: state.monitoringStartTime || now };
-    case 'HEARTBEAT': return { ...state, heartbeat: action.metrics, heartbeatCount: state.heartbeatCount + 1 };
+    
+    case 'HEARTBEAT':
+    case 'REMOTE_HEARTBEAT': {
+      if (action.type === 'REMOTE_HEARTBEAT') {
+        if (action.sequence <= state.lastReceivedSequence) return state;
+        return { 
+          ...state, 
+          heartbeat: action.metrics, 
+          heartbeatCount: state.heartbeatCount + 1,
+          lastReceivedSequence: action.sequence
+        };
+      }
+      return { ...state, heartbeat: action.metrics, heartbeatCount: state.heartbeatCount + 1 };
+    }
     
     case 'DECAY_RISK': {
       if (state.currentRiskScore === 0) return state;
@@ -143,8 +189,47 @@ const proctoringReducer = (state: ProctoringState, action: ProctoringAction): Pr
     case 'NETWORK_LOST': return { ...state, networkHealthy: false };
     case 'NETWORK_RECOVERED': return { ...state, networkHealthy: true };
 
-    case 'DETECTION_FRAME': {
+    // ─── Phone Camera Proctoring Actions ────────────────────────────────
+    case 'SET_CAMERA_PROVIDER': return { ...state, cameraProvider: action.provider };
+    case 'SET_PHONE_CONNECTION_STATE': return { ...state, phoneConnectionState: action.state };
+    case 'PHONE_CONNECTED': {
+      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'PHONE_CONNECTED', severity: 0, detail: `Connection ID bound: ${action.connectionId}` };
+      return { 
+        ...state, 
+        phoneConnectionState: 'CONNECTED', 
+        phoneConnectionId: action.connectionId,
+        timeline: [...state.timeline, t] 
+      };
+    }
+    case 'PHONE_DISCONNECTED': {
+      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'PHONE_DISCONNECTED', severity: 2, detail: 'Phone connection lost' };
+      return { 
+        ...state, 
+        phoneConnectionState: 'RECONNECTING',
+        timeline: [...state.timeline, t] 
+      };
+    }
+    case 'PHONE_RECONNECTED': {
+      const t: TimelineEvent = { sessionId: '', timestamp: now, event: 'PHONE_RECONNECTED', severity: 0, detail: `Reconnected device: ${action.connectionId}` };
+      return { 
+        ...state, 
+        phoneConnectionState: 'CONNECTED',
+        phoneReconnectCount: state.phoneReconnectCount + 1,
+        timeline: [...state.timeline, t] 
+      };
+    }
+    case 'UPDATE_NETWORK_QUALITY': return { ...state, networkQuality: action.quality };
+    case 'UPDATE_SETUP_CHECK': return { ...state, setupCheck: { ...state.setupCheck, ...action.check } };
+    case 'UPDATE_SETUP_PROGRESS': return { ...state, setupProgressMs: action.progressMs };
+    case 'SET_PHONE_TIME_OFFSET': return { ...state, phoneTimeOffsetMs: action.offsetMs };
+
+    case 'DETECTION_FRAME':
+    case 'REMOTE_DETECTION_FRAME': {
       let newState = { ...state };
+      if (action.type === 'REMOTE_DETECTION_FRAME') {
+        if (action.sequence <= state.lastReceivedSequence) return state;
+        newState.lastReceivedSequence = action.sequence;
+      }
       if (action.frame.faceCount > state.maxConcurrentFaces) newState.maxConcurrentFaces = action.frame.faceCount;
 
       // No Face State Machine
@@ -271,13 +356,240 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
   const [loading, setLoading] = useState(false);
   const [loadingText, setLoadingText] = useState('Submitting answers and compiling results...');
   const [cameraReady, setCameraReady] = useState(false);
+  const [isCalibrationComplete, setIsCalibrationComplete] = useState(false);
   const [toastWarning, setToastWarning] = useState<{ message: string; type: 'warning' | 'danger' } | null>(null);
 
   const sessionIdRef = useRef<string>(localStorage.getItem('current_session_id') || "");
   const [proctoring, dispatch] = useReducer(proctoringReducer, createInitialState());
+  
+  const providerRef = useRef<CameraProvider | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const [pairingQrUrl, setPairingQrUrl] = useState<string>('');
+  const [pairingTokenExpiry, setPairingTokenExpiry] = useState<Date | null>(null);
+
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const totalTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isTerminatedRef = useRef<boolean>(false);
+
+  // Initialize CameraProvider
+  useEffect(() => {
+    let mounted = true;
+
+    const wireAudioTrack = (audioTrack: MediaStreamTrack) => {
+      audioTrack.addEventListener('ended', () => {
+        ErrorLogService.logError('proctoring', "Microphone track ended unexpectedly", undefined, sessionIdRef.current, candidate.name);
+        dispatch({ type: 'MICROPHONE_LOST' });
+      });
+      audioTrack.addEventListener('mute', () => {
+        setTimeout(() => {
+          if (audioTrack.muted) {
+            ErrorLogService.logError('proctoring', "Microphone muted by user/system", undefined, sessionIdRef.current, candidate.name);
+            dispatch({ type: 'MICROPHONE_LOST' });
+          }
+        }, 3000);
+      });
+      audioTrack.addEventListener('unmute', () => dispatch({ type: 'MICROPHONE_RECOVERED' }));
+    };
+
+    const initMediaAndDevice = async () => {
+      // 1. Read configuration from the snapshot in the session prop
+      const proctorSnapshot = candidate.session?.interview_metadata?.job_settings_snapshot?.proctoring;
+
+      let enabled = proctorSnapshot?.enabled !== false && proctorSnapshot?.aiProctoringEnabled !== false;
+      let cameraMode: 'auto' | 'webcam' | 'phone' = proctorSnapshot?.camera?.mode || proctorSnapshot?.cameraMode || 'auto';
+
+      // 2. Development overrides
+      if (import.meta.env.DEV) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlCamera = urlParams.get('camera') || urlParams.get('forcePhone') || urlParams.get('forcePhoneProctor');
+        if (urlCamera === 'phone' || urlCamera === 'true') {
+          cameraMode = 'phone';
+        } else if (urlCamera === 'webcam') {
+          cameraMode = 'webcam';
+        } else if (urlCamera === 'none') {
+          enabled = false;
+        }
+      }
+
+      const config: ProctoringConfiguration = {
+        enabled,
+        camera: { mode: cameraMode }
+      };
+
+      if (!config.enabled) {
+        console.log("[CameraProvider] AI Proctoring is disabled for this session.");
+        dispatch({ type: 'SET_CAMERA_PROVIDER', provider: 'none' });
+        if (sessionIdRef.current) {
+          SupabaseService.updateSessionMetadata(sessionIdRef.current, {
+            runtime: { cameraProvider: 'none' }
+          }).catch(err => console.warn("Failed to update runtime proctoring metadata", err));
+        }
+        setCameraReady(true);
+        return;
+      }
+
+      // 3. Create and initialize primary provider
+      let provider = CameraProviderFactory.createPrimary(sessionIdRef.current, config);
+      if (!provider) {
+        dispatch({ type: 'SET_CAMERA_PROVIDER', provider: 'none' });
+        setCameraReady(true);
+        return;
+      }
+
+      try {
+        // For phone provider as primary: acquire local microphone first (audio-only, no video)
+        if (provider.type === 'phone_camera') {
+          try {
+            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            if (!mounted) {
+              audioStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            audioStreamRef.current = audioStream;
+
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack) {
+              wireAudioTrack(audioTrack);
+            }
+          } catch (micErr: any) {
+            console.error("[CameraProvider] Microphone access denied for phone mode:", micErr);
+            ErrorLogService.logError('proctoring', `Microphone access denied: ${micErr.message || micErr}`, micErr, sessionIdRef.current, candidate.name);
+            dispatch({ type: 'SET_PERMISSION_DENIED' });
+            return;
+          }
+        }
+
+        await provider.initialize();
+        if (!mounted) {
+          provider.dispose();
+          return;
+        }
+        providerRef.current = provider;
+        dispatch({ type: 'SET_CAMERA_PROVIDER', provider: provider.type });
+
+        // Record provider in audit metadata
+        if (sessionIdRef.current) {
+          SupabaseService.updateSessionMetadata(sessionIdRef.current, {
+            runtime: { cameraProvider: provider.type }
+          }).catch(err => console.warn("Failed to update runtime proctoring metadata", err));
+        }
+
+        // For phone provider: generate QR pairing URL
+        if (provider.type === 'phone_camera') {
+          const origin = window.location.origin;
+          const tokenVal = (provider as PhoneCameraProvider).getPairingToken();
+          setPairingQrUrl(`${origin}/proctor/phone-camera?token=${tokenVal}`);
+          setPairingTokenExpiry((provider as PhoneCameraProvider).getTokenExpiresAt());
+        }
+
+        const stream = provider.getPreviewStream();
+        if (stream) {
+          const audioTrack = stream.getAudioTracks()[0];
+          if (audioTrack) {
+            wireAudioTrack(audioTrack);
+          }
+        }
+        setCameraReady(true);
+
+      } catch (err: any) {
+        console.warn("[CameraProvider] Primary provider failed in Aptitude, trying fallback...", err);
+
+        const fallbackProvider = CameraProviderFactory.createFallback(sessionIdRef.current, config);
+        if (fallbackProvider) {
+          try {
+            // Fallback (e.g. phone camera): Request local microphone first, then initialize phone camera
+            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            if (!mounted) {
+              audioStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            audioStreamRef.current = audioStream;
+
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack) {
+              wireAudioTrack(audioTrack);
+            }
+
+            await fallbackProvider.initialize();
+            if (!mounted) {
+              fallbackProvider.dispose();
+              audioStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            provider = fallbackProvider;
+            providerRef.current = provider;
+            dispatch({ type: 'SET_CAMERA_PROVIDER', provider: provider.type });
+
+            // Record provider in audit metadata
+            if (sessionIdRef.current) {
+              SupabaseService.updateSessionMetadata(sessionIdRef.current, {
+                runtime: { cameraProvider: provider.type }
+              }).catch(err => console.warn("Failed to update runtime proctoring metadata", err));
+            }
+
+            const origin = window.location.origin;
+            const tokenVal = (provider as PhoneCameraProvider).getPairingToken();
+            setPairingQrUrl(`${origin}/proctor/phone-camera?token=${tokenVal}`);
+            setPairingTokenExpiry((provider as PhoneCameraProvider).getTokenExpiresAt());
+
+            setCameraReady(true);
+
+          } catch (fallbackErr: any) {
+            console.error("[CameraProvider] Fallback initialization failed in Aptitude:", fallbackErr);
+            ErrorLogService.logError('proctoring', `Fallback initialization failed in Aptitude: ${fallbackErr.message || fallbackErr}`, fallbackErr, sessionIdRef.current, candidate.name);
+            dispatch({ type: 'SET_PERMISSION_DENIED' });
+          }
+        } else {
+          // No fallback configuration allowed (e.g. Webcam Only)
+          dispatch({ type: 'SET_PERMISSION_DENIED' });
+        }
+      }
+
+      // Wire provider callbacks
+      if (providerRef.current) {
+        providerRef.current.subscribe({
+          onDetectionFrame: (frame) => {
+            dispatch({ type: 'REMOTE_DETECTION_FRAME', frame, sequence: (frame as any).sequence || 0 });
+          },
+          onHeartbeat: (metrics) => {
+            dispatch({ type: 'REMOTE_HEARTBEAT', metrics, sequence: (metrics as any).sequence || 0 });
+          },
+          onEngineReady: () => {
+            dispatch({ type: 'ENGINE_READY' });
+          },
+          onError: (error) => {
+            if (error.code === 'PHONE_DISCONNECTED') {
+              dispatch({ type: 'PHONE_DISCONNECTED' });
+            } else if (error.code === 'CAMERA_LOST') {
+              dispatch({ type: 'CAMERA_LOST' });
+            }
+          },
+          onStatusChange: (status) => {
+            if (providerRef.current?.type === 'phone_camera') {
+              const stateVal = (providerRef.current as PhoneCameraProvider).getConnectionState();
+              dispatch({ type: 'SET_PHONE_CONNECTION_STATE', state: stateVal });
+            }
+          }
+        });
+      }
+    };
+
+    initMediaAndDevice();
+
+    return () => {
+      mounted = false;
+      if (providerRef.current) {
+        providerRef.current.dispose();
+        providerRef.current = null;
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(t => t.stop());
+        audioStreamRef.current = null;
+      }
+    };
+  }, []);
 
   // Load proctoring settings once on mount
   useEffect(() => {
@@ -487,14 +799,23 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
 
   const handleDetectionFrame = (frame: RawDetectionFrame) => {
     dispatch({ type: 'DETECTION_FRAME', frame });
+    if (providerRef.current && providerRef.current.type === 'local_webcam') {
+      (providerRef.current as LocalCameraProvider).emitDetectionFrame(frame);
+    }
   };
 
   const handleEngineReady = () => {
     dispatch({ type: 'ENGINE_READY' });
+    if (providerRef.current && providerRef.current.type === 'local_webcam') {
+      (providerRef.current as LocalCameraProvider).emitEngineReady();
+    }
   };
 
   const handleHeartbeat = (metrics: HeartbeatMetrics) => {
     dispatch({ type: 'HEARTBEAT', metrics });
+    if (providerRef.current && providerRef.current.type === 'local_webcam') {
+      (providerRef.current as LocalCameraProvider).emitHeartbeat(metrics);
+    }
   };
 
   const compileProctorReport = (): ProctoringReport => {
@@ -603,6 +924,89 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
   const currentQ = questions[currentIndex];
   const hasSelected = selectedAnswers[currentIndex] !== undefined;
 
+  if (!hasStarted) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-6 text-slate-900">
+        <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 pb-12">
+          <div className="text-center space-y-3">
+            <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900">Ready to start the Aptitude Assessment?</h1>
+            <p className="text-slate-500 font-medium max-w-xl mx-auto">
+              Please review the rules and complete camera calibration before beginning the test.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white border border-slate-200/60 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center text-center space-y-3">
+              <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
+                <Clock size={24} />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-sm">60s Timer per Question</h3>
+                <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
+                  Each question has a strict 60-second limit. The timer resets automatically.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200/60 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center text-center space-y-3">
+              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center">
+                <Check size={24} />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-sm">MCQ Selection</h3>
+                <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
+                  Select your answers from the options. They are saved dynamically.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200/60 p-6 rounded-3xl shadow-sm hover:shadow-md transition-all flex flex-col items-center text-center space-y-3">
+              <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-sm">Proctoring Rules</h3>
+                <p className="text-slate-500 text-xs mt-1.5 leading-relaxed">
+                  Remain centered in the camera feed. Tab switches and shortcuts are restricted.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Pre-Flight Calibration Check */}
+          <div className="flex justify-center">
+            {providerRef.current && (
+              <PreFlightCheck
+                provider={providerRef.current}
+                onReady={() => {
+                  setIsCalibrationComplete(true);
+                }}
+                showQrCode={proctoring.cameraProvider === 'phone_camera'}
+                qrCodeUrl={pairingQrUrl}
+                qrTokenExpiry={pairingTokenExpiry ?? undefined}
+                phoneConnectionState={proctoring.phoneConnectionState}
+              />
+            )}
+          </div>
+
+          <div className="text-center pt-4">
+            <button
+              onClick={() => {
+                document.documentElement.requestFullscreen().catch(e => console.warn("Fullscreen error", e));
+                setHasStarted(true);
+                setRemainingTimeSeconds(60);
+              }}
+              disabled={!isCalibrationComplete}
+              className="px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white rounded-2xl font-bold text-lg shadow-xl shadow-indigo-200 disabled:shadow-none transition-all active:scale-95 w-full sm:w-auto cursor-pointer"
+            >
+              {!isCalibrationComplete ? 'Complete Calibration Above' : 'Start Assessment'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col justify-between p-6">
       {/* Toast Warnings */}
@@ -685,19 +1089,30 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
         {/* Left Side: Proctor Preview */}
         <div className="lg:col-span-1 flex flex-col gap-4">
           <div className="bg-slate-900 aspect-video lg:aspect-square rounded-3xl overflow-hidden shadow-md relative border border-slate-800">
-            <CameraMonitor
-              onDetectionFrame={handleDetectionFrame}
-              onEngineReady={handleEngineReady}
-              onHeartbeat={handleHeartbeat}
-              devOverlay={false}
-              onVideoReady={() => setCameraReady(true)}
+            <CameraPreview 
+              stream={providerRef.current?.getPreviewStream() ?? null}
+              mirrored={proctoring.cameraProvider === 'local_webcam'}
+              showPlaceholder={proctoring.cameraProvider === 'phone_camera' && !providerRef.current?.getPreviewStream()}
+              statusOverlay={
+                <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 flex items-center gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full ${proctoring.engineState === 'READY' ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+                  <span className="text-white text-[10px] font-mono tracking-wider">
+                    {proctoring.cameraProvider === 'phone_camera' ? 'PHONE LIVE' : 'WEBCAM LIVE'}
+                  </span>
+                </div>
+              }
             />
-            <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full ${proctoring.engineState === 'READY' ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`} />
-              <span className="text-white text-[10px] font-mono tracking-wider">
-                {proctoring.engineState === 'READY' ? 'VISION LOGGED' : 'CALIBRATING'}
-              </span>
-            </div>
+
+            {proctoring.cameraProvider === 'local_webcam' && (
+              <CameraAnalysis
+                stream={providerRef.current?.getPreviewStream() ?? null}
+                onDetectionFrame={handleDetectionFrame}
+                onEngineReady={handleEngineReady}
+                onHeartbeat={handleHeartbeat}
+                devOverlay={false}
+                enabled={true}
+              />
+            )}
           </div>
           
           <div className="bg-white border border-slate-200 p-5 rounded-3xl shadow-sm flex flex-col justify-between flex-1">

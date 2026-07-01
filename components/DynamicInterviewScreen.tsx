@@ -11,11 +11,18 @@ import { MediaCaptureService, RollingRecorder } from '../services/mediaCaptureSe
 import { 
   InterviewMediaResources, RawDetectionFrame, ProctorViolation, TimelineEvent, 
   HeartbeatMetrics, ProctoringEngineState, ProctoringReport, DashboardTelemetry,
-  Question, DEFAULT_PROCTORING_SETTINGS
+  Question, DEFAULT_PROCTORING_SETTINGS, PhoneConnectionState, CameraProvider,
+  ProctoringConfiguration
 } from '../types';
 import { getDeviceFingerprint } from '../services/deviceFingerprint';
 import { ErrorLogService } from '../services/errorLogService';
 import { TelemetryService } from '../services/telemetryService';
+import { CameraPreview } from './CameraPreview';
+import { CameraAnalysis } from './CameraAnalysis';
+import { CameraProviderFactory } from '../services/cameraProviders/CameraProviderFactory';
+import { PreFlightCheck } from './PreFlightCheck';
+import { LocalCameraProvider } from '../services/cameraProviders/LocalCameraProvider';
+import { PhoneCameraProvider } from '../services/cameraProviders/PhoneCameraProvider';
 
 // Speech Recognition Types removed, using useSpeech hook
 import { ProctoringState, ProctoringAction } from '../types';
@@ -49,7 +56,32 @@ const createInitialState = (): ProctoringState => ({
   lastViolationTime: 0,
   settings: DEFAULT_PROCTORING_SETTINGS,
   cameraOffStartTime: null,
-  micOffStartTime: null
+  micOffStartTime: null,
+
+  // ─── Phone Camera Proctoring Defaults ──────────────────────────────
+  cameraProvider: 'none',
+  phoneConnectionState: 'WAITING',
+  phoneConnectionId: null,
+  phoneReconnectCount: 0,
+  lastReceivedSequence: 0,
+  phoneTimeOffsetMs: 0,
+  networkQuality: {
+    avgLatencyMs: 0,
+    packetLossRate: 0,
+    heartbeatAgeMs: 0,
+    reconnectCount: 0,
+  },
+  setupCheck: {
+    microphone: false,
+    cameraPermission: false,
+    faceDetected: false,
+    lightingGood: false,
+    cameraStable: false,
+    distanceAppropriate: false,
+    networkStable: false,
+    batteryOk: false,
+  },
+  setupProgressMs: 0,
 });
 
 const generateViolationId = () => Math.random().toString(36).substring(2, 9);
@@ -62,7 +94,20 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
     case 'SET_UNSUPPORTED_BROWSER': return { ...state, engineState: 'UNSUPPORTED_BROWSER' };
     case 'SET_PERMISSION_DENIED': return { ...state, engineState: 'PERMISSION_DENIED' };
     case 'ENGINE_READY': return { ...state, engineState: 'READY', monitoringStartTime: state.monitoringStartTime || now };
-    case 'HEARTBEAT': return { ...state, heartbeat: action.metrics, heartbeatCount: state.heartbeatCount + 1 };
+    
+    case 'HEARTBEAT':
+    case 'REMOTE_HEARTBEAT': {
+      if (action.type === 'REMOTE_HEARTBEAT') {
+        if (action.sequence <= state.lastReceivedSequence) return state;
+        return { 
+          ...state, 
+          heartbeat: action.metrics, 
+          heartbeatCount: state.heartbeatCount + 1,
+          lastReceivedSequence: action.sequence
+        };
+      }
+      return { ...state, heartbeat: action.metrics, heartbeatCount: state.heartbeatCount + 1 };
+    }
     
     case 'UPDATE_VIOLATION_MEDIA': {
       const violations = state.violations.map(v => 
@@ -121,8 +166,47 @@ const baseReducer = (state: ProctoringState, action: ProctoringAction): Proctori
     case 'NETWORK_LOST': return { ...state, networkHealthy: false };
     case 'NETWORK_RECOVERED': return { ...state, networkHealthy: true };
 
-    case 'DETECTION_FRAME': {
+    // ─── Phone Camera Proctoring Actions ────────────────────────────────
+    case 'SET_CAMERA_PROVIDER': return { ...state, cameraProvider: action.provider };
+    case 'SET_PHONE_CONNECTION_STATE': return { ...state, phoneConnectionState: action.state };
+    case 'PHONE_CONNECTED': {
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'PHONE_CONNECTED', severity: 0, detail: `Connection ID bound: ${action.connectionId}` };
+      return { 
+        ...state, 
+        phoneConnectionState: 'CONNECTED', 
+        phoneConnectionId: action.connectionId,
+        timeline: [...state.timeline, t] 
+      };
+    }
+    case 'PHONE_DISCONNECTED': {
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'PHONE_DISCONNECTED', severity: 2, detail: 'Phone connection lost' };
+      return { 
+        ...state, 
+        phoneConnectionState: 'RECONNECTING',
+        timeline: [...state.timeline, t] 
+      };
+    }
+    case 'PHONE_RECONNECTED': {
+      const t: TimelineEvent = { id: generateViolationId(), sessionId: '', timestamp: now, event: 'PHONE_RECONNECTED', severity: 0, detail: `Reconnected device: ${action.connectionId}` };
+      return { 
+        ...state, 
+        phoneConnectionState: 'CONNECTED',
+        phoneReconnectCount: state.phoneReconnectCount + 1,
+        timeline: [...state.timeline, t] 
+      };
+    }
+    case 'UPDATE_NETWORK_QUALITY': return { ...state, networkQuality: action.quality };
+    case 'UPDATE_SETUP_CHECK': return { ...state, setupCheck: { ...state.setupCheck, ...action.check } };
+    case 'UPDATE_SETUP_PROGRESS': return { ...state, setupProgressMs: action.progressMs };
+    case 'SET_PHONE_TIME_OFFSET': return { ...state, phoneTimeOffsetMs: action.offsetMs };
+
+    case 'DETECTION_FRAME':
+    case 'REMOTE_DETECTION_FRAME': {
       let newState = { ...state };
+      if (action.type === 'REMOTE_DETECTION_FRAME') {
+        if (action.sequence <= state.lastReceivedSequence) return state;
+        newState.lastReceivedSequence = action.sequence;
+      }
       if (action.frame.faceCount > state.maxConcurrentFaces) newState.maxConcurrentFaces = action.frame.faceCount;
 
       // No Face State Machine
@@ -396,6 +480,21 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
   const rollingRecorderRef = useRef<RollingRecorder | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
   const [cameraReady, setCameraReady] = useState(false);
+  const [isCalibrationComplete, setIsCalibrationComplete] = useState(false);
+
+  // New Phone Camera Proctoring Refs/State
+  const providerRef = useRef<CameraProvider | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const [pairingQrUrl, setPairingQrUrl] = useState<string>('');
+  const [pairingTokenExpiry, setPairingTokenExpiry] = useState<Date | null>(null);
+  // Recovery overlay countdown (seconds remaining before FAILED)
+  const [phoneReconnectCountdown, setPhoneReconnectCountdown] = useState<number | null>(null);
+  const phoneReconnectTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const proctoringRef = useRef(proctoring);
+
+  useEffect(() => {
+    proctoringRef.current = proctoring;
+  }, [proctoring]);
   
   const heartbeatSamplesRef = useRef<{timestamp: number; fps: number}[]>([]);
   const latestHeartbeatRef = useRef<{fps: number, health: string}>({ fps: 0, health: 'GOOD' });
@@ -459,70 +558,361 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
 
     let mounted = true;
 
+    const wireAudioTrack = (audioTrack: MediaStreamTrack) => {
+      audioTrack.addEventListener('ended', () => {
+        ErrorLogService.logError('proctoring', "Microphone track ended unexpectedly", undefined, sessionIdRef.current, candidate.name);
+        dispatch({ type: 'MICROPHONE_LOST' });
+      });
+      audioTrack.addEventListener('mute', () => {
+        setTimeout(() => {
+          if (audioTrack.muted) {
+            ErrorLogService.logError('proctoring', "Microphone muted by user/system", undefined, sessionIdRef.current, candidate.name);
+            dispatch({ type: 'MICROPHONE_LOST' });
+          }
+        }, 3000);
+      });
+      audioTrack.addEventListener('unmute', () => dispatch({ type: 'MICROPHONE_RECOVERED' }));
+    };
+
     const initMediaAndDevice = async () => {
+      // 1. Read configuration from the snapshot in the session prop
+      const proctorSnapshot = candidate.session?.interview_metadata?.job_settings_snapshot?.proctoring;
+
+      let enabled = proctorSnapshot?.enabled !== false && proctorSnapshot?.aiProctoringEnabled !== false;
+      let cameraMode: 'auto' | 'webcam' | 'phone' = proctorSnapshot?.camera?.mode || proctorSnapshot?.cameraMode || 'auto';
+
+      // 2. Development overrides
+      if (import.meta.env.DEV) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlCamera = urlParams.get('camera') || urlParams.get('forcePhone') || urlParams.get('forcePhoneProctor');
+        if (urlCamera === 'phone' || urlCamera === 'true') {
+          cameraMode = 'phone';
+        } else if (urlCamera === 'webcam') {
+          cameraMode = 'webcam';
+        } else if (urlCamera === 'none') {
+          enabled = false;
+        }
+      }
+
+      const config: ProctoringConfiguration = {
+        enabled,
+        camera: { mode: cameraMode }
+      };
+
+      if (!config.enabled) {
+        console.log("[CameraProvider] AI Proctoring is disabled for this session.");
+        dispatch({ type: 'SET_CAMERA_PROVIDER', provider: 'none' });
+        if (sessionIdRef.current) {
+          SupabaseService.updateSessionMetadata(sessionIdRef.current, {
+            runtime: { cameraProvider: 'none' }
+          }).catch(err => console.warn("Failed to update runtime proctoring metadata", err));
+        }
+        setCameraReady(true);
+        return;
+      }
+
+      // 3. Create and initialize primary provider
+      let provider = CameraProviderFactory.createPrimary(sessionIdRef.current, config);
+      if (!provider) {
+        dispatch({ type: 'SET_CAMERA_PROVIDER', provider: 'none' });
+        setCameraReady(true);
+        return;
+      }
+
       try {
-        // Record Device Fingerprint
-        const fp = await getDeviceFingerprint();
-        console.log("[Device Fingerprint]", fp);
-        // TODO: Save device fingerprint to session via SupabaseService once the session ID is properly mapped
+        // For phone provider as primary: acquire local microphone first (audio-only, no video)
+        if (provider.type === 'phone_camera') {
+          try {
+            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            if (!mounted) {
+              audioStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            audioStreamRef.current = audioStream;
 
-        const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, frameRate: { ideal: 30 } },
-          audio: !isMobileDevice,
-        });
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack) {
+              wireAudioTrack(audioTrack);
+            }
 
+            mediaRef.current = {
+              stream: audioStream,
+              videoTrack: null as any,
+              audioTrack,
+            };
+          } catch (micErr: any) {
+            console.error("[CameraProvider] Microphone access denied for phone mode:", micErr);
+            ErrorLogService.logError('proctoring', `Microphone access denied: ${micErr.message || micErr}`, micErr, sessionIdRef.current, candidate.name);
+            dispatch({ type: 'SET_PERMISSION_DENIED' });
+            return;
+          }
+        }
+
+        await provider.initialize();
         if (!mounted) {
-          stream.getTracks().forEach(t => t.stop());
+          provider.dispose();
           return;
         }
+        providerRef.current = provider;
+        dispatch({ type: 'SET_CAMERA_PROVIDER', provider: provider.type });
 
-        mediaRef.current = {
-          stream,
-          videoTrack: stream.getVideoTracks()[0],
-          audioTrack: stream.getAudioTracks()[0],
-        };
-        
-        // Initialize rolling recorder
-        rollingRecorderRef.current = new RollingRecorder(stream, 10, 5);
-        
-        setCameraReady(true);
-
-        const audioTrack = stream.getAudioTracks()[0];
-        if (audioTrack) {
-          audioTrack.addEventListener('ended', () => {
-            ErrorLogService.logError('proctoring', "Microphone track ended unexpectedly", undefined, sessionIdRef.current, candidate.name);
-            dispatch({ type: 'MICROPHONE_LOST' });
-          });
-          audioTrack.addEventListener('mute', () => {
-            setTimeout(() => {
-              if (audioTrack.muted) {
-                ErrorLogService.logError('proctoring', "Microphone muted by user/system", undefined, sessionIdRef.current, candidate.name);
-                dispatch({ type: 'MICROPHONE_LOST' });
-              }
-            }, 3000);
-          });
-          audioTrack.addEventListener('unmute', () => dispatch({ type: 'MICROPHONE_RECOVERED' }));
+        // Record provider in audit metadata
+        if (sessionIdRef.current) {
+          SupabaseService.updateSessionMetadata(sessionIdRef.current, {
+            runtime: { cameraProvider: provider.type }
+          }).catch(err => console.warn("Failed to update runtime proctoring metadata", err));
         }
 
-        const videoTrack = stream.getVideoTracks()[0];
-        videoTrack.addEventListener('ended', () => {
-          ErrorLogService.logError('proctoring', "Camera track ended unexpectedly", undefined, sessionIdRef.current, candidate.name);
-          dispatch({ type: 'CAMERA_LOST' });
-        });
+        // For phone provider: generate QR pairing URL
+        if (provider.type === 'phone_camera') {
+          const origin = window.location.origin;
+          const tokenVal = (provider as PhoneCameraProvider).getPairingToken();
+          setPairingQrUrl(`${origin}/proctor/phone-camera?token=${tokenVal}`);
+          setPairingTokenExpiry((provider as PhoneCameraProvider).getTokenExpiresAt());
+        }
+
+        // For local webcam provider: wire up the preview stream
+        const stream = provider.getPreviewStream();
+        if (stream) {
+          mediaRef.current = {
+            stream,
+            videoTrack: stream.getVideoTracks()[0],
+            audioTrack: stream.getAudioTracks()[0],
+          };
+
+          const audioTrack = stream.getAudioTracks()[0];
+          if (audioTrack) {
+            wireAudioTrack(audioTrack);
+          }
+
+          const videoTrack = stream.getVideoTracks()[0];
+          if (videoTrack) {
+            videoTrack.addEventListener('ended', () => {
+              ErrorLogService.logError('proctoring', "Camera track ended unexpectedly", undefined, sessionIdRef.current, candidate.name);
+              dispatch({ type: 'CAMERA_LOST' });
+            });
+          }
+
+          rollingRecorderRef.current = new RollingRecorder(stream, 10, 5);
+        }
+
+        setCameraReady(true);
 
       } catch (err: any) {
-        console.error("Camera access denied:", err);
-        ErrorLogService.logError('proctoring', `Media initialization failed (camera/mic permissions): ${err.message || err}`, err, sessionIdRef.current, candidate.name);
-        dispatch({ type: 'SET_PERMISSION_DENIED' });
+        console.warn("[CameraProvider] Primary provider failed, trying fallback...", err);
+
+        const fallbackProvider = CameraProviderFactory.createFallback(sessionIdRef.current, config);
+        if (fallbackProvider) {
+          try {
+            // Fallback (e.g. phone camera): Request local microphone first, then initialize phone camera
+            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            if (!mounted) {
+              audioStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            audioStreamRef.current = audioStream;
+
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack) {
+              wireAudioTrack(audioTrack);
+            }
+
+            await fallbackProvider.initialize();
+            if (!mounted) {
+              fallbackProvider.dispose();
+              audioStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            provider = fallbackProvider;
+            providerRef.current = provider;
+            dispatch({ type: 'SET_CAMERA_PROVIDER', provider: provider.type });
+
+            // Record provider in audit metadata
+            if (sessionIdRef.current) {
+              SupabaseService.updateSessionMetadata(sessionIdRef.current, {
+                runtime: { cameraProvider: provider.type }
+              }).catch(err => console.warn("Failed to update runtime proctoring metadata", err));
+            }
+
+            const origin = window.location.origin;
+            const tokenVal = (provider as PhoneCameraProvider).getPairingToken();
+            setPairingQrUrl(`${origin}/proctor/phone-camera?token=${tokenVal}`);
+            setPairingTokenExpiry((provider as PhoneCameraProvider).getTokenExpiresAt());
+
+            mediaRef.current = {
+              stream: audioStream,
+              videoTrack: null as any,
+              audioTrack,
+            };
+
+            setCameraReady(true);
+
+          } catch (fallbackErr: any) {
+            console.error("[CameraProvider] Fallback initialization failed:", fallbackErr);
+            ErrorLogService.logError('proctoring', `Fallback initialization failed: ${fallbackErr.message || fallbackErr}`, fallbackErr, sessionIdRef.current, candidate.name);
+            dispatch({ type: 'SET_PERMISSION_DENIED' });
+          }
+        } else {
+          // No fallback configuration allowed (e.g. Webcam Only)
+          dispatch({ type: 'SET_PERMISSION_DENIED' });
+        }
+      }
+
+      // Wire provider callbacks
+      if (providerRef.current) {
+        providerRef.current.subscribe({
+          onDetectionFrame: (frame) => {
+            dispatch({ type: 'REMOTE_DETECTION_FRAME', frame, sequence: (frame as any).sequence || 0 });
+
+            const stats = healthStatsRef.current;
+            stats.totalFrames++;
+            if (frame.faceDetected) {
+              stats.framesWithFace++;
+              stats.confidenceSum += frame.trackingConfidence;
+              if (stats.longestNoFaceStart !== null) {
+                const duration = Date.now() - stats.longestNoFaceStart;
+                if (duration > stats.longestNoFaceDurationMs) stats.longestNoFaceDurationMs = duration;
+                stats.longestNoFaceStart = null;
+              }
+            } else if (stats.longestNoFaceStart === null) {
+              stats.longestNoFaceStart = Date.now();
+            }
+
+            const isAway = frame.gazeDirection !== 'center' || Math.abs(frame.headYaw) > 30 || frame.facePosition === 'PARTIAL_OUT';
+
+            if (isAway && frame.faceCount > 0) {
+              if (stats.longestGazeAwayStart === null) stats.longestGazeAwayStart = Date.now();
+            } else {
+              if (stats.longestGazeAwayStart !== null) {
+                const duration = Date.now() - stats.longestGazeAwayStart;
+                if (duration > stats.longestGazeAwayDurationMs) stats.longestGazeAwayDurationMs = duration;
+                stats.longestGazeAwayStart = null;
+              }
+            }
+
+            if (frame.gazeDirection !== stats.currentGazeDirection) {
+              stats.currentGazeDirection = frame.gazeDirection;
+              stats.currentGazeDirectionStart = Date.now();
+            }
+            const gazeDurationMs = Date.now() - stats.currentGazeDirectionStart;
+
+            const fpsVal = latestHeartbeatRef.current.fps;
+            const fpsScore = Math.min(100, Math.max(0, (fpsVal / 24) * 100));
+            const facePresenceScore = frame.faceDetected ? 100 : 0;
+            const monitoringQualityScore = Math.round(
+              (frame.trackingConfidence * 0.6) +
+              (fpsScore * 0.2) +
+              (facePresenceScore * 0.2)
+            );
+
+            telemetryRef.current = {
+              faceDetected: frame.faceDetected,
+              trackingConfidence: frame.trackingConfidence,
+              monitoringQualityScore,
+              gazeDirection: frame.gazeDirection,
+              gazeDurationMs,
+              headPitch: frame.headPitch,
+              headYaw: frame.headYaw,
+              headRoll: frame.headRoll,
+              fps: latestHeartbeatRef.current.fps,
+              facePosition: frame.facePosition,
+              detectionHealth: latestHeartbeatRef.current.health as any,
+              lastUpdated: Date.now()
+            };
+          },
+          onHeartbeat: (metrics) => {
+            latestHeartbeatRef.current = {
+              fps: metrics.fps,
+              health: metrics.detectionHealth,
+            };
+            dispatch({ type: 'REMOTE_HEARTBEAT', metrics, sequence: (metrics as any).sequence || 0 });
+          },
+          onEngineReady: () => {
+            dispatch({ type: 'ENGINE_READY' });
+          },
+          onError: (error) => {
+            if (error.code === 'PHONE_DISCONNECTED') {
+              dispatch({ type: 'PHONE_DISCONNECTED' });
+            } else if (error.code === 'CAMERA_LOST') {
+              dispatch({ type: 'CAMERA_LOST' });
+            }
+          },
+          onStatusChange: (status) => {
+            if (providerRef.current?.type === 'phone_camera') {
+              const stateVal = (providerRef.current as PhoneCameraProvider).getConnectionState();
+              dispatch({ type: 'SET_PHONE_CONNECTION_STATE', state: stateVal });
+
+              // Start countdown overlay when entering RECONNECTING
+              if (stateVal === 'RECONNECTING') {
+                if (!phoneReconnectTimerRef.current) {
+                  // DISCONNECT_TIMEOUT_MS = 20s, RECONNECT_TIMEOUT_MS = 9s → ~11s window shown
+                  let secondsLeft = 11;
+                  setPhoneReconnectCountdown(secondsLeft);
+                  phoneReconnectTimerRef.current = setInterval(() => {
+                    secondsLeft--;
+                    if (secondsLeft <= 0) {
+                      clearInterval(phoneReconnectTimerRef.current!);
+                      phoneReconnectTimerRef.current = null;
+                      setPhoneReconnectCountdown(null);
+                    } else {
+                      setPhoneReconnectCountdown(secondsLeft);
+                    }
+                  }, 1000);
+                }
+              } else if (stateVal === 'CONNECTED') {
+                // Phone recovered — clear countdown
+                if (phoneReconnectTimerRef.current) {
+                  clearInterval(phoneReconnectTimerRef.current);
+                  phoneReconnectTimerRef.current = null;
+                }
+                setPhoneReconnectCountdown(null);
+              }
+            }
+          },
+          onMediaUploaded: (violationId, snapshotUrl, clipUrl) => {
+            dispatch({ type: 'UPDATE_VIOLATION_MEDIA', id: violationId, snapshotUrl, clipUrl });
+            
+            const currentViolations = proctoringRef.current?.violations || [];
+            const violation = currentViolations.find(v => v.id === violationId);
+            if (violation) {
+              addViolationToQueue({
+                ...violation,
+                snapshot_url: snapshotUrl || undefined,
+                clip_url: clipUrl || undefined
+              });
+            }
+          }
+        });
       }
     };
+
     initMediaAndDevice();
 
     return () => {
       mounted = false;
-      if (rollingRecorderRef.current) rollingRecorderRef.current.stop();
-      if (mediaRef.current) mediaRef.current.stream.getTracks().forEach(t => t.stop());
+      if (rollingRecorderRef.current) {
+        rollingRecorderRef.current.stop();
+        rollingRecorderRef.current = null;
+      }
+      if (providerRef.current) {
+        providerRef.current.dispose();
+        providerRef.current = null;
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(t => t.stop());
+        audioStreamRef.current = null;
+      }
+      if (mediaRef.current) {
+        mediaRef.current.stream.getTracks().forEach(t => t.stop());
+        mediaRef.current = null;
+      }
+      // Clean up any running reconnect countdown
+      if (phoneReconnectTimerRef.current) {
+        clearInterval(phoneReconnectTimerRef.current);
+        phoneReconnectTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -536,6 +926,14 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
       const sessionStrId = candidate.email.replace(/[^a-zA-Z0-9]/g, '');
 
       newViolations.forEach(async (violation) => {
+        if (proctoring.cameraProvider === 'phone_camera') {
+          // Request media capture from phone companion
+          if (providerRef.current && providerRef.current.type === 'phone_camera') {
+            (providerRef.current as PhoneCameraProvider).requestViolationCapture(violation.id);
+          }
+          return;
+        }
+
         let snapshotUrl = null;
         let clipUrl = null;
         try {
@@ -566,7 +964,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         }
       });
     }
-  }, [proctoring.violations, candidate.email]);
+  }, [proctoring.violations, proctoring.cameraProvider, candidate.email]);
 
   // Handle Timeline Events: Queue them as they are logged
   const prevTimelineLengthRef = useRef(0);
@@ -1668,79 +2066,111 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             
             {/* Camera Preview */}
             <div className="w-full aspect-[4/3] bg-black rounded-xl overflow-hidden relative shadow-2xl md:shadow-lg shrink-0">
-              <CameraMonitor 
-                mediaStream={mediaRef.current?.stream || undefined}
-                onVideoReady={(v) => { videoElRef.current = v; }}
-                onDetectionFrame={frame => {
-                  dispatch({ type: 'DETECTION_FRAME', frame });
-                  
-                  const stats = healthStatsRef.current;
-                  stats.totalFrames++;
-                  if (frame.faceDetected) {
-                    stats.framesWithFace++;
-                    stats.confidenceSum += frame.confidence * 100;
-                    if (stats.longestNoFaceStart !== null) {
-                      const duration = Date.now() - stats.longestNoFaceStart;
-                      if (duration > stats.longestNoFaceDurationMs) stats.longestNoFaceDurationMs = duration;
-                      stats.longestNoFaceStart = null;
+              <CameraPreview 
+                stream={providerRef.current?.getPreviewStream() ?? null}
+                mirrored={proctoring.cameraProvider === 'local_webcam'}
+                showPlaceholder={proctoring.cameraProvider === 'phone_camera' && !providerRef.current?.getPreviewStream()}
+                statusOverlay={
+                  <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg">
+                    <div className={`w-1.5 h-1.5 rounded-full ${cameraReady ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                    <span className="text-[10px] font-bold text-white uppercase tracking-wider">
+                      {proctoring.cameraProvider === 'phone_camera' ? 'Phone' : 'Webcam'}
+                    </span>
+                  </div>
+                }
+              />
+
+              {/* Headless local analysis only when using LocalCameraProvider */}
+              {proctoring.cameraProvider === 'local_webcam' && (
+                <CameraAnalysis
+                  stream={providerRef.current?.getPreviewStream() ?? null}
+                  onDetectionFrame={(frame) => {
+                    dispatch({ type: 'DETECTION_FRAME', frame });
+                    
+                    // Forward events to local provider so subscribers like PreFlightCheck receive them
+                    if (providerRef.current && providerRef.current.type === 'local_webcam') {
+                      (providerRef.current as LocalCameraProvider).emitDetectionFrame(frame);
                     }
-                  } else if (stats.longestNoFaceStart === null) {
-                    stats.longestNoFaceStart = Date.now();
-                  }
-
-                  const isAway = frame.gazeDirection !== 'center' || Math.abs(frame.headYaw) > 30 || frame.facePosition === 'PARTIAL_OUT';
-
-                  if (isAway && frame.faceCount > 0) {
-                    if (stats.longestGazeAwayStart === null) stats.longestGazeAwayStart = Date.now();
-                  } else {
-                    if (stats.longestGazeAwayStart !== null) {
-                      const duration = Date.now() - stats.longestGazeAwayStart;
-                      if (duration > stats.longestGazeAwayDurationMs) stats.longestGazeAwayDurationMs = duration;
-                      stats.longestGazeAwayStart = null;
+                    
+                    // Stats updates
+                    const stats = healthStatsRef.current;
+                    stats.totalFrames++;
+                    if (frame.faceDetected) {
+                      stats.framesWithFace++;
+                      stats.confidenceSum += frame.trackingConfidence;
+                      if (stats.longestNoFaceStart !== null) {
+                        const duration = Date.now() - stats.longestNoFaceStart;
+                        if (duration > stats.longestNoFaceDurationMs) stats.longestNoFaceDurationMs = duration;
+                        stats.longestNoFaceStart = null;
+                      }
+                    } else if (stats.longestNoFaceStart === null) {
+                      stats.longestNoFaceStart = Date.now();
                     }
-                  }
 
-                  if (frame.gazeDirection !== stats.currentGazeDirection) {
-                    stats.currentGazeDirection = frame.gazeDirection;
-                    stats.currentGazeDirectionStart = Date.now();
-                  }
-                  const gazeDurationMs = Date.now() - stats.currentGazeDirectionStart;
-                  
-                  // Calculate monitoring quality score
-                  const fps = latestHeartbeatRef.current.fps;
-                  const fpsScore = Math.min(100, Math.max(0, (fps / 24) * 100));
-                  const facePresenceScore = frame.faceDetected ? 100 : 0;
-                  const monitoringQualityScore = Math.round(
+                    const isAway = frame.gazeDirection !== 'center' || Math.abs(frame.headYaw) > 30 || frame.facePosition === 'PARTIAL_OUT';
+
+                    if (isAway && frame.faceCount > 0) {
+                      if (stats.longestGazeAwayStart === null) stats.longestGazeAwayStart = Date.now();
+                    } else {
+                      if (stats.longestGazeAwayStart !== null) {
+                        const duration = Date.now() - stats.longestGazeAwayStart;
+                        if (duration > stats.longestGazeAwayDurationMs) stats.longestGazeAwayDurationMs = duration;
+                        stats.longestGazeAwayStart = null;
+                      }
+                    }
+
+                    if (frame.gazeDirection !== stats.currentGazeDirection) {
+                      stats.currentGazeDirection = frame.gazeDirection;
+                      stats.currentGazeDirectionStart = Date.now();
+                    }
+                    const gazeDurationMs = Date.now() - stats.currentGazeDirectionStart;
+                    
+                    // Calculate monitoring quality score
+                    const fpsVal = latestHeartbeatRef.current.fps;
+                    const fpsScore = Math.min(100, Math.max(0, (fpsVal / 24) * 100));
+                    const facePresenceScore = frame.faceDetected ? 100 : 0;
+                    const monitoringQualityScore = Math.round(
                       (frame.trackingConfidence * 0.6) + 
                       (fpsScore * 0.2) + 
                       (facePresenceScore * 0.2)
-                  );
+                    );
 
-                  telemetryRef.current = {
-                    faceDetected: frame.faceDetected,
-                    trackingConfidence: frame.trackingConfidence,
-                    monitoringQualityScore,
-                    gazeDirection: frame.gazeDirection,
-                    gazeDurationMs,
-                    headPitch: frame.headPitch,
-                    headYaw: frame.headYaw,
-                    headRoll: frame.headRoll,
-                    fps: latestHeartbeatRef.current.fps,
-                    facePosition: frame.facePosition,
-                    detectionHealth: latestHeartbeatRef.current.health,
-                    lastUpdated: Date.now()
-                  };
-                }}
-                onHeartbeat={handleHeartbeat}
-                onEngineReady={() => dispatch({ type: 'ENGINE_READY' })}
-                devOverlay={true} 
-              />
-              <div className="absolute bottom-2 left-2 flex items-center gap-1.5 bg-black/60 backdrop-blur-md px-2 py-1 rounded-lg">
-                <div className={`w-1.5 h-1.5 rounded-full ${cameraReady ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-                <span className="text-[10px] font-bold text-white uppercase tracking-wider">
-                  {cameraReady ? 'Live' : 'Init'}
-                </span>
-              </div>
+                    telemetryRef.current = {
+                      faceDetected: frame.faceDetected,
+                      trackingConfidence: frame.trackingConfidence,
+                      monitoringQualityScore,
+                      gazeDirection: frame.gazeDirection,
+                      gazeDurationMs,
+                      headPitch: frame.headPitch,
+                      headYaw: frame.headYaw,
+                      headRoll: frame.headRoll,
+                      fps: latestHeartbeatRef.current.fps,
+                      facePosition: frame.facePosition,
+                      detectionHealth: latestHeartbeatRef.current.health as any,
+                      lastUpdated: Date.now()
+                    };
+                  }}
+                  onHeartbeat={(metrics) => {
+                    latestHeartbeatRef.current = {
+                      fps: metrics.fps,
+                      health: metrics.detectionHealth,
+                    };
+                    dispatch({ type: 'HEARTBEAT', metrics });
+                    
+                    if (providerRef.current && providerRef.current.type === 'local_webcam') {
+                      (providerRef.current as LocalCameraProvider).emitHeartbeat(metrics);
+                    }
+                  }}
+                  onEngineReady={() => {
+                    dispatch({ type: 'ENGINE_READY' });
+                    
+                    if (providerRef.current && providerRef.current.type === 'local_webcam') {
+                      (providerRef.current as LocalCameraProvider).emitEngineReady();
+                    }
+                  }}
+                  enabled={true}
+                />
+              )}
             </div>
 
             {/* V8 Dashboard UI Components */}
@@ -1810,6 +2240,22 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
               </div>
             </div>
 
+            {/* Calibration Checklist */}
+            <div className="flex justify-center py-4">
+              {providerRef.current && (
+                <PreFlightCheck
+                  provider={providerRef.current}
+                  onReady={() => {
+                    setIsCalibrationComplete(true);
+                  }}
+                  showQrCode={proctoring.cameraProvider === 'phone_camera'}
+                  qrCodeUrl={pairingQrUrl}
+                  qrTokenExpiry={pairingTokenExpiry ?? undefined}
+                  phoneConnectionState={proctoring.phoneConnectionState}
+                />
+              )}
+            </div>
+
             <div className="text-center pt-4">
               <button 
                 onClick={() => {
@@ -1853,10 +2299,10 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
                   setLoading(false);
                   setHasStarted(true);
                 }}
-                disabled={!cameraReady || proctoring.engineState !== 'READY'}
-                className="px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white rounded-2xl font-bold text-lg shadow-xl shadow-indigo-200 disabled:shadow-none transition-all active:scale-95 w-full sm:w-auto"
+                disabled={!isCalibrationComplete}
+                className="px-10 py-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-white rounded-2xl font-bold text-lg shadow-xl shadow-indigo-200 disabled:shadow-none transition-all active:scale-95 w-full sm:w-auto cursor-pointer"
               >
-                {(!cameraReady || proctoring.engineState !== 'READY') ? 'Initializing Engine...' : 'Start Interview'}
+                {!isCalibrationComplete ? 'Complete Calibration Above' : 'Start Interview'}
               </button>
             </div>
           </div>
@@ -1968,7 +2414,63 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
             <ArrowRight size={20} className="shrink-0" />
           </button>
         </div>
-      </footer>
+        </footer>
+
+        {/* ─── Phone Reconnection Recovery Overlay ─────────────────────────── */}
+        {proctoring.cameraProvider === 'phone_camera' && phoneReconnectCountdown !== null && (
+          <div
+            style={{
+              position: 'fixed', inset: 0, zIndex: 9999,
+              background: 'rgba(0,0,0,0.72)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            <div style={{
+              background: '#fff',
+              borderRadius: 20,
+              padding: '36px 40px',
+              maxWidth: 420,
+              width: '90vw',
+              textAlign: 'center',
+              boxShadow: '0 24px 80px rgba(0,0,0,0.3)',
+            }}>
+              {/* Animated phone icon */}
+              <div style={{
+                width: 64, height: 64, borderRadius: '50%',
+                background: '#FFF3CD',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 20px',
+                fontSize: 30,
+                animation: 'pulse 1.2s ease-in-out infinite',
+              }}>
+                📱
+              </div>
+              <h2 style={{ fontSize: 22, fontWeight: 700, color: '#1a1a2e', marginBottom: 8 }}>
+                Phone connection lost
+              </h2>
+              <p style={{ fontSize: 15, color: '#64748b', marginBottom: 24, lineHeight: 1.6 }}>
+                Please unlock or reopen the companion app on your phone.<br />
+                The interview will resume automatically.
+              </p>
+
+              {/* Countdown progress bar */}
+              <div style={{ background: '#f1f5f9', borderRadius: 999, height: 8, marginBottom: 12, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  borderRadius: 999,
+                  background: phoneReconnectCountdown > 5 ? '#f59e0b' : '#ef4444',
+                  width: `${(phoneReconnectCountdown / 11) * 100}%`,
+                  transition: 'width 1s linear, background 0.3s ease',
+                }} />
+              </div>
+              <p style={{ fontSize: 13, color: '#94a3b8' }}>
+                {phoneReconnectCountdown} second{phoneReconnectCountdown !== 1 ? 's' : ''} remaining before camera lost is recorded
+              </p>
+            </div>
+          </div>
+        )}
+
         </div>
       </div>
     </div>

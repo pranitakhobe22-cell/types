@@ -30,7 +30,13 @@ export class SupabaseService {
                         preset: 'Normal',
                         assessmentType: 'VOICE_INTERVIEW',
                         weights: { concept: 50, grammar: 20, fluency: 20, camera: 10 },
-                        proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
+                        proctoring: { 
+                            maxWarnings: 3, 
+                            sensitivity: 'Medium', 
+                            includeInScore: true,
+                            enabled: true,
+                            camera: { mode: 'auto' }
+                        }
                     }
                 },
                 {
@@ -43,7 +49,13 @@ export class SupabaseService {
                         preset: 'Normal',
                         assessmentType: 'VOICE_INTERVIEW',
                         weights: { concept: 50, grammar: 20, fluency: 20, camera: 10 },
-                        proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
+                        proctoring: { 
+                            maxWarnings: 3, 
+                            sensitivity: 'Medium', 
+                            includeInScore: true,
+                            enabled: true,
+                            camera: { mode: 'auto' }
+                        }
                     }
                 },
                 {
@@ -56,7 +68,13 @@ export class SupabaseService {
                         preset: 'Normal',
                         assessmentType: 'MCQ',
                         weights: { concept: 100, grammar: 0, fluency: 0, camera: 0 },
-                        proctoring: { maxWarnings: 3, sensitivity: 'Medium', includeInScore: true }
+                        proctoring: { 
+                            maxWarnings: 3, 
+                            sensitivity: 'Medium', 
+                            includeInScore: true,
+                            enabled: true,
+                            camera: { mode: 'auto' }
+                        }
                     }
                 }
             ];
@@ -149,11 +167,28 @@ export class SupabaseService {
     // INTERVIEW SESSIONS
     // ==========================================
     static async createSession(candidateId: string, jobPostId: string, deviceInfo: any, metadata: any, candidateName?: string) {
+        let jobSettingsSnapshot = {};
+        try {
+            if (jobPostId) {
+                const { data: job } = await supabase
+                    .from('job_posts')
+                    .select('settings')
+                    .eq('id', jobPostId)
+                    .single();
+                if (job && job.settings) {
+                    jobSettingsSnapshot = job.settings;
+                }
+            }
+        } catch (jobErr) {
+            console.warn("[createSession] Failed to fetch job settings for snapshot:", jobErr);
+        }
+
         const payload: any = {
             candidate_id: candidateId,
             status: 'CREATED',
             interview_metadata: {
                 device_info: deviceInfo || {},
+                job_settings_snapshot: jobSettingsSnapshot,
                 ...metadata
             }
         };
@@ -172,6 +207,44 @@ export class SupabaseService {
         }
         
         return data;
+    }
+
+    static async getSession(sessionId: string) {
+        const { data, error } = await supabase
+            .from('interview_sessions')
+            .select('*')
+            .eq('id', sessionId)
+            .single();
+        if (error) throw error;
+        return data;
+    }
+
+    static async updateSessionMetadata(sessionId: string, patch: any) {
+        // Fetch current session
+        const { data: current } = await supabase
+            .from('interview_sessions')
+            .select('interview_metadata')
+            .eq('id', sessionId)
+            .single();
+            
+        const currentMeta = current?.interview_metadata || {};
+        const updatedMeta = {
+            ...currentMeta,
+            ...patch,
+            runtime: {
+                ...(currentMeta.runtime || {}),
+                ...(patch.runtime || {})
+            }
+        };
+
+        const { error } = await supabase
+            .from('interview_sessions')
+            .update({ interview_metadata: updatedMeta })
+            .eq('id', sessionId);
+            
+        if (error) {
+            console.error("[supabaseService] updateSessionMetadata error:", error);
+        }
     }
 
     static async getAllSessions() {
@@ -730,5 +803,113 @@ export class SupabaseService {
             console.error("Failed to initialize system settings:", e);
             return false;
         }
+    }
+
+    // ─── Phone Camera Proctoring: Pairing Token Management ───────────────
+
+    /**
+     * Generate an 8-character uppercase alphanumeric pairing token with 10-minute expiry.
+     * The token is one-time-use: once a phone connects, consumed_at is set.
+     */
+    static async generatePairingToken(sessionId: string): Promise<string> {
+        if (!supabase) throw new Error('Supabase not initialized');
+
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No I/O/0/1 to avoid confusion
+        let token = '';
+        const randomValues = new Uint8Array(8);
+        crypto.getRandomValues(randomValues);
+        for (let i = 0; i < 8; i++) {
+            token += chars[randomValues[i] % chars.length];
+        }
+
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
+
+        const { error } = await supabase.from('proctoring_pairing_tokens').insert({
+            session_id: sessionId,
+            token,
+            expires_at: expiresAt,
+        });
+
+        if (error) {
+            // If token collision (extremely rare with 8 chars), retry once
+            if (error.code === '23505') {
+                return SupabaseService.generatePairingToken(sessionId);
+            }
+            throw error;
+        }
+
+        console.log(`[PairingToken] Generated token ${token} for session ${sessionId}, expires ${expiresAt}`);
+        return token;
+    }
+
+    /**
+     * Resolve a pairing token to a session. Returns null if expired, already consumed, or not found.
+     */
+    static async getSessionFromToken(token: string): Promise<{
+        sessionId: string;
+        candidateName: string;
+    } | null> {
+        if (!supabase) return null;
+
+        const { data, error } = await supabase
+            .from('proctoring_pairing_tokens')
+            .select('session_id, consumed_at, expires_at')
+            .eq('token', token.toUpperCase().trim())
+            .single();
+
+        if (error || !data) return null;
+
+        // Check if already consumed
+        if (data.consumed_at) {
+            console.warn(`[PairingToken] Token ${token} already consumed`);
+            return null;
+        }
+
+        // Check expiry
+        if (new Date(data.expires_at) < new Date()) {
+            console.warn(`[PairingToken] Token ${token} expired`);
+            return null;
+        }
+
+        // Fetch candidate name from the linked session
+        const { data: session, error: sessionError } = await supabase
+            .from('interview_sessions')
+            .select('id, candidate_name')
+            .eq('id', data.session_id)
+            .single();
+
+        if (sessionError || !session) return null;
+
+        return {
+            sessionId: session.id,
+            candidateName: session.candidate_name,
+        };
+    }
+
+    /**
+     * Mark a pairing token as consumed (one-time-use) and bind the phone's connectionId.
+     * Returns false if the token was already consumed or not found.
+     */
+    static async consumePairingToken(token: string, connectionId: string): Promise<boolean> {
+        if (!supabase) return false;
+
+        const { data, error } = await supabase
+            .from('proctoring_pairing_tokens')
+            .update({
+                consumed_at: new Date().toISOString(),
+                connection_id: connectionId,
+            })
+            .eq('token', token.toUpperCase().trim())
+            .is('consumed_at', null)
+            .select('id')
+            .single();
+
+        if (error || !data) {
+            console.warn(`[PairingToken] Failed to consume token ${token}:`, error);
+            return false;
+        }
+
+        console.log(`[PairingToken] Token ${token} consumed by connection ${connectionId}`);
+        return true;
     }
 }

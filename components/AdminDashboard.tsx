@@ -110,6 +110,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
     const [proctorSuccessMsg, setProctorSuccessMsg] = useState<string | null>(null);
     const [tokenStats, setTokenStats] = useState<any>({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, total_calls: 0 });
     
+    // Per-job proctoring configuration states
+    const [aiProctoringEnabled, setAiProctoringEnabled] = useState(true);
+    const [cameraMode, setCameraMode] = useState<'auto' | 'webcam' | 'phone'>('auto');
+    
     // Modal states for delete confirmation
     const [showConfirmModal, setShowConfirmModal] = useState<'archive' | 'delete' | 'restore' | null>(null);
     const [sessionToConfirm, setSessionToConfirm] = useState<InterviewSession | null>(null);
@@ -255,6 +259,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                             Core: 'Adaptive',
                             Scenario: 'Adaptive'
                         });
+                        const proctor = matchedJob.settings.proctoring;
+                        setAiProctoringEnabled(proctor?.enabled !== false && proctor?.aiProctoringEnabled !== false);
+                        setCameraMode(proctor?.camera?.mode || proctor?.cameraMode || 'auto');
                     } else {
                         setDifficultyStrategy('Adaptive');
                         setStageOverrides({
@@ -262,6 +269,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                             Core: 'Adaptive',
                             Scenario: 'Adaptive'
                         });
+                        setAiProctoringEnabled(true);
+                        setCameraMode('auto');
                     }
 
                     if (matchedJob.questions && matchedJob.questions.length > 0) {
@@ -282,6 +291,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                         Core: 'Adaptive',
                         Scenario: 'Adaptive'
                     });
+                    setAiProctoringEnabled(true);
+                    setCameraMode('auto');
                     console.log(`Loaded ${fallback.length} fallback questions for ${selectedRole}`);
                 }
             } catch (err) {
@@ -323,7 +334,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                     settings: {
                         ...matchedJob.settings,
                         difficultyStrategy,
-                        stageOverrides
+                        stageOverrides,
+                        proctoring: {
+                            ...matchedJob.settings?.proctoring,
+                            enabled: aiProctoringEnabled,
+                            camera: { mode: cameraMode },
+                            aiProctoringEnabled: aiProctoringEnabled,
+                            cameraMode: cameraMode
+                        }
                     }
                 };
                 // Sync using existing StorageService or SupabaseService
@@ -2123,6 +2141,82 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout, health
                                                     <option value="Medium Only">Medium Only</option>
                                                     <option value="Hard Only">Hard Only</option>
                                                 </select>
+                                            </div>
+                                        </div>
+
+                                        {/* Proctoring Rules Configuration */}
+                                        <div className="border-t border-slate-100 pt-6 space-y-4">
+                                            <div className="space-y-1">
+                                                <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                                                    <ShieldAlert size={18} className="text-indigo-500" /> Proctoring & Camera Rules
+                                                </h4>
+                                                <p className="text-[11px] text-slate-400">Configure whether candidate session proctoring is enabled and which camera device to enforce.</p>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                                                {/* Enable/Disable Proctoring */}
+                                                <div className="space-y-3 p-5 bg-slate-50/50 rounded-2xl border border-slate-100 flex flex-col justify-between">
+                                                    <div>
+                                                        <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider">AI Proctoring Policy</label>
+                                                        <p className="text-[11px] text-slate-400 mb-2">Enable or disable anti-cheat event detection for this role.</p>
+                                                    </div>
+                                                    <label className="relative inline-flex items-center cursor-pointer mt-1">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={aiProctoringEnabled}
+                                                            onChange={(e) => setAiProctoringEnabled(e.target.checked)}
+                                                            className="sr-only peer"
+                                                        />
+                                                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                                                        <span className="ml-3 text-xs font-bold text-slate-750">
+                                                            {aiProctoringEnabled ? "AI Proctoring Enabled" : "Proctoring Disabled"}
+                                                        </span>
+                                                    </label>
+                                                </div>
+
+                                                {/* Camera Source Selector */}
+                                                <div className="space-y-3 p-5 bg-slate-50/50 rounded-2xl border border-slate-100">
+                                                    <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider">Enforced Camera Source</label>
+                                                    <p className="text-[11px] text-slate-400 mb-2">Determine the primary recording hardware required of candidates.</p>
+                                                    <div className="flex flex-col gap-2 mt-1">
+                                                        <label className="inline-flex items-center text-xs font-bold text-slate-750 cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                name="cameraMode"
+                                                                value="auto"
+                                                                checked={cameraMode === 'auto'}
+                                                                onChange={() => setCameraMode('auto')}
+                                                                className="text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+                                                                disabled={!aiProctoringEnabled}
+                                                            />
+                                                            <span className="ml-2">Auto Detect (Webcam first, fallback to Phone)</span>
+                                                        </label>
+                                                        <label className="inline-flex items-center text-xs font-bold text-slate-750 cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                name="cameraMode"
+                                                                value="webcam"
+                                                                checked={cameraMode === 'webcam'}
+                                                                onChange={() => setCameraMode('webcam')}
+                                                                className="text-indigo-650 focus:ring-indigo-500 h-4 w-4"
+                                                                disabled={!aiProctoringEnabled}
+                                                            />
+                                                            <span className="ml-2">Desktop Webcam Only</span>
+                                                        </label>
+                                                        <label className="inline-flex items-center text-xs font-bold text-slate-750 cursor-pointer">
+                                                            <input
+                                                                type="radio"
+                                                                name="cameraMode"
+                                                                value="phone"
+                                                                checked={cameraMode === 'phone'}
+                                                                onChange={() => setCameraMode('phone')}
+                                                                className="text-indigo-650 focus:ring-indigo-500 h-4 w-4"
+                                                                disabled={!aiProctoringEnabled}
+                                                            />
+                                                            <span className="ml-2">Phone Camera Only</span>
+                                                        </label>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
 

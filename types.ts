@@ -37,8 +37,18 @@ export interface Candidate {
   profilePhoto?: string;
   idCardImage?: string;
   isVerified?: boolean;
+
+  // Strongly typed session snapshot
+  session?: InterviewSession;
 }
 // Note: Keep other types the same, we will append MasterEvaluationReport at the end.
+
+export interface ProctoringConfiguration {
+  enabled: boolean;
+  camera: {
+    mode: 'auto' | 'webcam' | 'phone';
+  };
+}
 
 export interface RoleSettings {
   difficulty: 'Very Easy' | 'Easy' | 'Medium' | 'Hard' | 'Very Hard';
@@ -53,6 +63,16 @@ export interface RoleSettings {
     maxWarnings: number; // 1-5
     sensitivity: 'Low' | 'Medium' | 'High';
     includeInScore: boolean;
+
+    // Structured proctoring configuration settings
+    enabled?: boolean;
+    camera?: {
+      mode: 'auto' | 'webcam' | 'phone';
+    };
+
+    // TODO: Remove legacy compatibility fields after v1.x migration
+    aiProctoringEnabled?: boolean;
+    cameraMode?: 'auto' | 'webcam' | 'phone';
   };
 }
 
@@ -401,6 +421,31 @@ export type ProctoringState = {
   settings?: ProctoringSettings;
   cameraOffStartTime?: number | null;
   micOffStartTime?: number | null;
+
+  // ─── Phone Camera Proctoring State ──────────────────────────────────
+  cameraProvider: 'local_webcam' | 'phone_camera' | 'none';
+  phoneConnectionState: PhoneConnectionState;
+  phoneConnectionId: string | null;
+  phoneReconnectCount: number;
+  lastReceivedSequence: number;
+  phoneTimeOffsetMs: number;
+  networkQuality: {
+    avgLatencyMs: number;
+    packetLossRate: number;
+    heartbeatAgeMs: number;
+    reconnectCount: number;
+  };
+  setupCheck: {
+    microphone: boolean;
+    cameraPermission: boolean;
+    faceDetected: boolean;
+    lightingGood: boolean;
+    cameraStable: boolean;
+    distanceAppropriate: boolean;
+    networkStable: boolean;
+    batteryOk: boolean;
+  };
+  setupProgressMs: number;
 };
 
 export type ProctoringAction = 
@@ -420,7 +465,19 @@ export type ProctoringAction =
   | { type: 'SET_UNSUPPORTED_BROWSER' }
   | { type: 'SET_PERMISSION_DENIED' }
   | { type: 'UPDATE_VIOLATION_MEDIA'; id: string; snapshotUrl: string | null; clipUrl: string | null }
-  | { type: 'SET_SETTINGS'; settings: ProctoringSettings };
+  | { type: 'SET_SETTINGS'; settings: ProctoringSettings }
+  // ─── Phone Camera Proctoring Actions ────────────────────────────────
+  | { type: 'SET_CAMERA_PROVIDER'; provider: 'local_webcam' | 'phone_camera' | 'none' }
+  | { type: 'SET_PHONE_CONNECTION_STATE'; state: PhoneConnectionState }
+  | { type: 'PHONE_CONNECTED'; connectionId: string }
+  | { type: 'PHONE_DISCONNECTED' }
+  | { type: 'PHONE_RECONNECTED'; connectionId: string }
+  | { type: 'REMOTE_DETECTION_FRAME'; frame: RawDetectionFrame; sequence: number }
+  | { type: 'REMOTE_HEARTBEAT'; metrics: HeartbeatMetrics; sequence: number }
+  | { type: 'UPDATE_NETWORK_QUALITY'; quality: ProctoringState['networkQuality'] }
+  | { type: 'UPDATE_SETUP_CHECK'; check: Partial<ProctoringState['setupCheck']> }
+  | { type: 'UPDATE_SETUP_PROGRESS'; progressMs: number }
+  | { type: 'SET_PHONE_TIME_OFFSET'; offsetMs: number };
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -437,6 +494,24 @@ export interface InterviewSession {
   deletedAt?: string;
   evaluationReport?: any;
   proctoringReport?: any;
+  interview_metadata?: {
+    device_info?: any;
+    job_settings_snapshot?: {
+      proctoring?: ProctoringConfiguration;
+      difficultyStrategy?: string;
+      stageOverrides?: {
+        Fundamentals?: string;
+        Core?: string;
+        Scenario?: string;
+      };
+      [key: string]: any;
+    };
+    runtime?: {
+      cameraProvider?: 'local_webcam' | 'phone_camera' | 'none';
+      [key: string]: any;
+    };
+    [key: string]: any;
+  };
 }
 
 export interface AdminConfig {
@@ -660,4 +735,145 @@ export const DEFAULT_PROCTORING_SETTINGS: ProctoringSettings = {
   micOffTerminateSec: 30,
   fullscreenExitWarningCount: 1,
   fullscreenExitTerminateCount: 3,
-};
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHONE CAMERA PROCTORING — CameraProvider Abstraction & Realtime Protocol
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── Phone Connection States ─────────────────────────────────────────────────
+export type PhoneConnectionState =
+  | 'WAITING'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'RECONNECTING'
+  | 'FAILED';
+
+// ─── CameraProvider Interface ────────────────────────────────────────────────
+// Interview screens never check if(phone) else(webcam).
+// They call provider.initialize(), provider.getPreviewStream(), etc.
+
+export interface CameraProviderStatus {
+  connected: boolean;
+  battery?: number;            // 0–100, phone only
+  latencyMs?: number;          // phone only
+  fps: number;
+  thermal: 'normal' | 'warm' | 'hot';
+}
+
+export type CameraProviderError =
+  | { code: 'PHONE_DISCONNECTED'; canReconnect: boolean }
+  | { code: 'CAMERA_LOST'; reason: string }
+  | { code: 'PERMISSION_DENIED' }
+  | { code: 'THERMAL_THROTTLE'; currentFps: number }
+  | { code: 'LOW_BATTERY'; level: number };
+
+export interface CameraProviderListener {
+  onDetectionFrame(frame: RawDetectionFrame): void;
+  onHeartbeat(metrics: HeartbeatMetrics): void;
+  onEngineReady(): void;
+  onError(error: CameraProviderError): void;
+  onStatusChange(status: CameraProviderStatus): void;
+  onMediaUploaded?(violationId: string, snapshotUrl: string | null, clipUrl: string | null): void;
+}
+
+export interface CameraProvider {
+  readonly type: 'local_webcam' | 'phone_camera';
+
+  /** Request permissions and establish the feed. Resolves when ready. */
+  initialize(): Promise<void>;
+
+  /** Begin emitting detection frames via the subscriber. */
+  start(): void;
+
+  /** Pause frame emission without tearing down. */
+  stop(): void;
+
+  /**
+   * Returns a MediaStream for live preview in the camera tile.
+   * Local webcam: the getUserMedia stream directly.
+   * Phone camera: the WebRTC remote video track (360p), or null if WebRTC failed.
+   */
+  getPreviewStream(): MediaStream | null;
+
+  /** Returns current provider status for UI polling. */
+  getStatus(): CameraProviderStatus;
+
+  /** Register a listener for detection frames, heartbeats, and errors. */
+  subscribe(listener: CameraProviderListener): void;
+
+  /** Tear down all resources, streams, and connections. */
+  dispose(): void;
+}
+
+// ─── Versioned Realtime Protocol ─────────────────────────────────────────────
+// Every message between phone and desktop follows this structure.
+// Sequence numbers enable out-of-order rejection.
+// ACKs are required for critical messages (PHONE_CONNECTED, MEDIA_UPLOADED, CAPTURE_VIOLATION).
+
+export const PROCTOR_PROTOCOL_VERSION = 1;
+
+export const PHONE_PROCTORING = {
+  HEARTBEAT_INTERVAL_MS: 3000,
+  RECONNECT_TIMEOUT_MS: 9000,
+  DISCONNECT_TIMEOUT_MS: 20000,
+  PRE_FLIGHT_DURATION_MS: 5000,
+  DETECTION_FPS: 3,
+  TOKEN_EXPIRY_MINUTES: 10,
+};
+
+export type ProctorMessageType =
+  | 'PHONE_CONNECTED'
+  | 'PHONE_DISCONNECTED'
+  | 'HEARTBEAT'
+  | 'DETECTION_FRAME'
+  | 'CAPTURE_VIOLATION'
+  | 'MEDIA_UPLOADED'
+  | 'WEBRTC_SIGNAL'
+  | 'ACK';
+
+export interface ProctorMessage<T = any> {
+  version: number;               // Always PROCTOR_PROTOCOL_VERSION
+  type: ProctorMessageType;
+  timestamp: number;             // Date.now() on sender
+  sequence: number;              // Monotonically increasing per sender
+  ackSequence?: number;          // For ACK messages: which sequence is being acknowledged
+  payload: T;
+}
+
+// ─── Typed Payloads ──────────────────────────────────────────────────────────
+
+export interface PhoneConnectedPayload {
+  connectionId: string;
+  batteryLevel: number | null;
+  screenResolution: string;
+}
+
+export interface DetectionFramePayload {
+  frame: RawDetectionFrame;
+  inferenceTimeMs: number;
+}
+
+export interface HeartbeatPayload {
+  metrics: HeartbeatMetrics;
+  batteryLevel: number | null;
+  avgInferenceTimeMs: number;
+  reconnectCount: number;
+}
+
+export interface TimeSyncPayload {
+  desktopTimestamp: number;
+  phoneTimestamp?: number;
+  calculatedOffsetMs?: number;
+}
+
+export interface MediaUploadedPayload {
+  violationId: string;
+  snapshotUrl: string | null;
+  clipUrl: string | null;
+}
+
+export interface WebRTCSignalPayload {
+  signalType: 'offer' | 'answer' | 'ice-candidate';
+  data: any;
+}
