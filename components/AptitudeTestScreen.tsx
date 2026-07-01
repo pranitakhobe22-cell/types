@@ -441,8 +441,7 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
         // For phone provider as primary: acquire local microphone first (audio-only, no video)
         if (provider.type === 'phone_camera') {
           try {
-            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             if (!mounted) {
               audioStream.getTracks().forEach(t => t.stop());
               return;
@@ -500,8 +499,7 @@ export const AptitudeTestScreen: React.FC<AptitudeTestScreenProps> = ({ candidat
         if (fallbackProvider) {
           try {
             // Fallback (e.g. phone camera): Request local microphone first, then initialize phone camera
-            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             if (!mounted) {
               audioStream.getTracks().forEach(t => t.stop());
               return;

@@ -624,8 +624,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         // For phone provider as primary: acquire local microphone first (audio-only, no video)
         if (provider.type === 'phone_camera') {
           try {
-            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             if (!mounted) {
               audioStream.getTracks().forEach(t => t.stop());
               return;
@@ -707,8 +706,7 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
         if (fallbackProvider) {
           try {
             // Fallback (e.g. phone camera): Request local microphone first, then initialize phone camera
-            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: !isMobileDevice });
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             if (!mounted) {
               audioStream.getTracks().forEach(t => t.stop());
               return;
@@ -1318,8 +1316,16 @@ export const DynamicInterviewScreen: React.FC<DynamicInterviewScreenProps> = ({ 
     
     const interval = setInterval(() => {
       // 1. Check camera track state
-      const videoTrack = mediaRef.current?.videoTrack;
-      const isCameraOff = !videoTrack || !videoTrack.enabled || videoTrack.readyState === 'ended' || (videoTrack as any).muted;
+      let isCameraOff = false;
+      if (proctoring.cameraProvider === 'none') {
+        isCameraOff = false;
+      } else if (proctoring.cameraProvider === 'phone_camera') {
+        // In phone camera mode, camera is off if phone is not connected
+        isCameraOff = proctoring.phoneConnectionState !== 'CONNECTED';
+      } else {
+        const videoTrack = mediaRef.current?.videoTrack;
+        isCameraOff = !videoTrack || !videoTrack.enabled || videoTrack.readyState === 'ended' || (videoTrack as any).muted;
+      }
       
       if (isCameraOff) {
         if (cameraOffStartTimeRef.current === null) {
